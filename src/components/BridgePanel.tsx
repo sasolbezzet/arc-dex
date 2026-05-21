@@ -1,13 +1,26 @@
-import { useState } from 'react'
-import { BridgeChain } from '@circle-fin/app-kit'
-declare global { interface Window { ethereum?: any } }
-const API = 'https://43.163.98.128.nip.io'
+import { useState } from 'react';
+import { BridgeChain } from '@circle-fin/app-kit';
+import { Connection, PublicKey, Transaction, TransactionInstruction, clusterApiUrl } from '@solana/web3.js';
+import { Buffer } from 'buffer';
+
+declare global {
+  interface Window {
+    ethereum?: any;
+    solana?: any;
+  }
+}
+
+const API = import.meta.env.VITE_API_URL || 'https://43.163.98.128.nip.io';
+
 const CHAINS = [
   { id: BridgeChain.Arc_Testnet, label: 'Arc Testnet', chainId: '0x4cef52', addParams: { chainId:'0x4cef52', chainName:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:['https://rpc.testnet.arc.network/'], blockExplorerUrls:['https://testnet.arcscan.app'] } },
   { id: BridgeChain.Ethereum_Sepolia, label: 'Ethereum Sepolia', chainId: '0xaa36a7', addParams: null },
   { id: BridgeChain.Base_Sepolia, label: 'Base Sepolia', chainId: '0x14a34', addParams: null },
   { id: BridgeChain.Arbitrum_Sepolia, label: 'Arbitrum Sepolia', chainId: '0x66eee', addParams: null },
-]
+  // Solana Devnet placeholder (no BridgeChain enum)
+  { id: 'Solana_Devnet' as any, label: 'Solana Devnet', chainId: '0x0', addParams: { chainId:'0x0', chainName:'Solana Devnet', nativeCurrency:{name:'SOL',symbol:'SOL',decimals:9}, rpcUrls:['https://api.devnet.solana.com'], blockExplorerUrls:['https://explorer.solana.com'] } },
+];
+
 const BURN_ABI = '0x8e0250ee'
 const ERC20_APPROVE = '0x095ea7b3'
 const CCTP_SRC = {
@@ -32,7 +45,58 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState('')
-  const [status, setStatus] = useState<Status|null>(null)
+  const [status, setStatus] = useState<Status|null>(null);
+  const [attestationInfo, setAttestationInfo] = useState<string | null>(null);
+  const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
+  const claimSolana = async () => {
+    if (!solanaAddress || !attestationInfo) {
+      setStatus({ type: 'error', msg: 'Wallet Solana tidak terhubung atau attestation belum tersedia.' });
+      return;
+    }
+    try {
+      // Parse attestation JSON returned by backend for Solana mint
+      const data = JSON.parse(attestationInfo);
+      // Expected schema (example):
+      // {
+      //   "programId": "Bridge1111111111111111111111111111111111",
+      //   "instructions": ["base64-encoded instruction 1", "base64-encoded instruction 2"],
+      //   "signers": ["publicKey1", "publicKey2"] // optional
+      // }
+      const connection = new Connection(clusterApiUrl('devnet'), 'confirmed');
+      const transaction = new Transaction();
+      const programId = new PublicKey(data.programId);
+      const keys = [{ pubkey: new PublicKey(solanaAddress), isSigner: true, isWritable: true }];
+      // Add any additional accounts required by the bridge program if provided
+      if (Array.isArray(data.additionalKeys)) {
+        data.additionalKeys.forEach((k:any) => {
+          keys.push({ pubkey: new PublicKey(k.pubkey), isSigner: !!k.isSigner, isWritable: !!k.isWritable });
+        });
+      }
+      // Create TransactionInstructions from base64 encoded instructions
+      if (Array.isArray(data.instructions)) {
+        data.instructions.forEach((inst:string) => {
+          const instructionData = Buffer.from(inst, 'base64');
+          const instruction = new TransactionInstruction({ programId, keys, data: instructionData });
+          transaction.add(instruction);
+        });
+      } else {
+        // Fallback: single instruction field (base64)
+        const instructionData = Buffer.from(data.instruction || '', 'base64');
+        const instruction = new TransactionInstruction({ programId, keys, data: instructionData });
+        transaction.add(instruction);
+      }
+      // Request wallet to sign and send
+      const signedTx = await window.solana.signTransaction(transaction);
+      const rawTx = signedTx.serialize();
+      const txid = await connection.sendRawTransaction(rawTx);
+      await connection.confirmTransaction(txid, 'confirmed');
+      setStatus({ type: 'success', msg: `✅ Mint Solana berhasil! Tx: ${txid}` });
+      setAttestationInfo(null);    } catch (e:any) {
+      console.error(e);
+      setStatus({ type: 'error', msg: e.message || 'Klaim Solana gagal' });
+    }
+  };
+
   const circleB = parseFloat(balances.USDC||'0')
   const eoaB = parseFloat(eoaBalances.USDC||'0')
   const totalB = circleB + eoaB
@@ -45,7 +109,42 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
     const amtMicro = BigInt(Math.round(amtNum*1e6))
     const localSteps: BridgeStep[] = []
     try {
-      const srcInfo = CCTP_SRC[fromChain as keyof typeof CCTP_SRC]
+
+        // Bridge from Solana to Arc (reverse) - implement using backend attestation
+        if (fromChain === 'Solana_Devnet') {
+          // 1. Burn USDC on Solana (using connected wallet)
+          setStep('Bridge: Burn USDC on Solana...');
+          setStatus({ type:'info', msg:'⏳ Membakar USDC di Solana...' });
+          const connection = new Connection(clusterApiUrl('devnet'), 'confirmed');
+          const solanaPubKey = new PublicKey(solanaAddress!);
+          // Assume we have a token account for USDC (placeholder address)
+          const usdcMint = new PublicKey('YourUSDCMintAddress'); // replace with actual USDC Mint on devnet
+          const tokenAccount = await connection.getTokenAccountsByOwner(solanaPubKey, {mint: usdcMint});
+          if (tokenAccount.value.length === 0) throw new Error('USDC token account tidak ditemukan di Solana');
+          const accountPubKey = tokenAccount.value[0].pubkey;
+          // Build burn instruction (placeholder – actual program ID needed)
+          const programId = new PublicKey('BridgeProgram1111111111111111111111111111111');
+          const burnIx = new TransactionInstruction({
+            keys:[{pubkey:accountPubKey, isSigner:false, isWritable:true}, {pubkey:solanaPubKey, isSigner:true, isWritable:false}],
+            programId,
+            data: Buffer.alloc(0) // real data depends on bridge program
+          });
+          const tx = new Transaction().add(burnIx);
+          const signed = await window.solana.signTransaction(tx);
+          const raw = signed.serialize();
+          const txid = await connection.sendRawTransaction(raw);
+          await connection.confirmTransaction(txid, 'confirmed');
+          // 2. Request attestation from backend to Bridge to Arc
+          const resp = await fetch(API+'/api/bridge-solana-to-arc', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({burnTxHash:txid, amount, solanaAddress:solanaAddress})});
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error||'Gagal mendapatkan attestation');
+          setAttestationInfo(JSON.stringify(data,null,2));
+          setStatus({type:'info', msg:'✅ Burn selesai. Attestation tersedia, klaim di Arc via backend.'});
+          setLoading(false);
+          return;
+        }
+        const srcInfo = CCTP_SRC[fromChain as keyof typeof CCTP_SRC]
+
       if (!srcInfo) throw new Error('Chain tidak didukung')
       const dstDomain = DST_DOMAIN[toChain as keyof typeof DST_DOMAIN]
       if (dstDomain === undefined) throw new Error('Destination chain tidak didukung')
@@ -102,7 +201,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
       }
       localSteps[localSteps.length-1].state='success'
       localSteps[localSteps.length-1].explorerUrl=fromChain==='Arc_Testnet'?`https://testnet.arcscan.app/tx/${burnTx}`:`https://sepolia.etherscan.io/tx/${burnTx}`
-      // Mint via backend
+      // Mint via backend (or attestation for Solana)
       setStep('Step 3/3: Menunggu attestation Circle (~20 detik)...')
       localSteps.push({ name:'attestation', state:'pending' })
       setStatus({ type:'info', msg:'✓ Burn sukses!\n⏳ Menunggu attestation dari Circle...', steps:[...localSteps] })
@@ -110,6 +209,14 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
       const mintData = await mintResp.json()
       if (!mintResp.ok || !mintData.success) throw new Error(mintData.error||'Mint gagal')
       localSteps[localSteps.length-1].state='success'
+      if (toChain === 'Solana_Devnet') {
+        // Solana mint must be claimed manually via CLI
+        setStatus({ type:'info', msg:'✅ Burn selesai. Attestation tersedia di bawah; salin dan klaim di Solana via CLI Anchor/SDK.', steps:[...localSteps] })
+        setAttestationInfo(JSON.stringify(mintData, null, 2))
+        setLoading(false)
+        return
+      }
+      // Non‑Solana: normal mint step
       localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
       setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
       setAmount('')
@@ -158,9 +265,27 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
               </div>
             </div>
           ))}
+      </div>
+    )}
+      {window.solana && (
+        <div style={{marginBottom:10}}>
+          {solanaAddress ? (
+            <div style={{color:'#10b981'}}>Solana wallet terhubung: {solanaAddress}</div>
+          ) : (
+            <button onClick={async()=>{if(window.solana){try{await window.solana.connect();setSolanaAddress(window.solana.publicKey.toString());}catch(e){console.error(e);}}}} className='btn btn-primary'>Connect Solana Wallet</button>
+          )}
         </div>
       )}
-      <button onClick={handleBridge} disabled={!amount||loading||fromChain===toChain||!address} className='btn btn-primary'>
+      {attestationInfo && (
+        <div style={{marginTop:10,padding:10,borderRadius:10,background:'rgba(99,102,241,0.1)',color:'#818cf8',fontSize:13,whiteSpace:'pre-wrap',fontFamily:'monospace'}}>
+          <div style={{fontWeight:600,marginBottom:6}}>Attestation (Copy untuk klaim di Solana)</div>
+          <pre style={{margin:0}}>{attestationInfo}</pre>
+        </div>
+      )}
+      {attestationInfo && toChain === 'Solana_Devnet' && (
+        <button onClick={claimSolana} className='btn btn-primary' style={{marginTop:8}} disabled={!solanaAddress}>Claim di Solana</button>
+      )}
+<button onClick={handleBridge} disabled={!amount||loading||fromChain===toChain||!address} className='btn btn-primary'>
         {loading?step||'⏳ Memproses...':amount?`Bridge ${amount} USDC`:'Bridge USDC'}
       </button>
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>Bridge via CCTP v2. MetaMask popup 2x untuk konfirmasi.</div>
