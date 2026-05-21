@@ -351,7 +351,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         // Destination Solana — mint relayed off-chain (operator/CCTP relayer). Sediakan attestation untuk klaim.
         const m = message
         const a = attestation
-        const claimNote = `Untuk klaim ke Solana, panggil MessageTransmitterV2.receiveMessage(message, attestation) pada akun Solana Anda menggunakan CLI Anchor.\nmessage: ${m}\nattestation: ${a}`
+        const claimNote = `Untuk klaim ke Solana, panggil MessageTransmitterV2.receiveMessage(message, attestation) pada akun Solana Anda menggunakan CLI Anchor/SDK.\nmessage: ${m}\nattestation: ${a}`
         txHistory.update(txId, { status: 'success', note: claimNote })
         setStatus({
           type: 'success',
