@@ -3,11 +3,41 @@ import { BridgeChain } from '@circle-fin/app-kit'
 declare global { interface Window { ethereum?: any } }
 const API = 'https://43.163.98.128.nip.io'
 const CHAINS = [
-  { id: BridgeChain.Arc_Testnet, label: 'Arc Testnet', chainId: '0x4cef52', addParams: { chainId:'0x4cef52', chainName:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:['https://rpc.testnet.arc.network/'], blockExplorerUrls:['https://testnet.arcscan.app'] } },
-  { id: BridgeChain.Ethereum_Sepolia, label: 'Ethereum Sepolia', chainId: '0xaa36a7', addParams: null },
-  { id: BridgeChain.Base_Sepolia, label: 'Base Sepolia', chainId: '0x14a34', addParams: null },
-  { id: BridgeChain.Arbitrum_Sepolia, label: 'Arbitrum Sepolia', chainId: '0x66eee', addParams: null },
+  { id: BridgeChain.Arc_Testnet, label: 'Arc Testnet', chainId: '0x4cef52', explorer:'https://testnet.arcscan.app', addParams: { chainId:'0x4cef52', chainName:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:['https://rpc.testnet.arc.network/'], blockExplorerUrls:['https://testnet.arcscan.app'] } },
+  { id: BridgeChain.Ethereum_Sepolia, label: 'Ethereum Sepolia', chainId: '0xaa36a7', explorer:'https://sepolia.etherscan.io', addParams: { chainId:'0xaa36a7', chainName:'Ethereum Sepolia', nativeCurrency:{name:'Sepolia ETH',symbol:'ETH',decimals:18}, rpcUrls:['https://ethereum-sepolia-rpc.publicnode.com','https://rpc.sepolia.org'], blockExplorerUrls:['https://sepolia.etherscan.io'] } },
+  { id: BridgeChain.Base_Sepolia, label: 'Base Sepolia', chainId: '0x14a34', explorer:'https://sepolia.basescan.org', addParams: { chainId:'0x14a34', chainName:'Base Sepolia', nativeCurrency:{name:'Sepolia ETH',symbol:'ETH',decimals:18}, rpcUrls:['https://sepolia.base.org'], blockExplorerUrls:['https://sepolia.basescan.org'] } },
+  { id: BridgeChain.Arbitrum_Sepolia, label: 'Arbitrum Sepolia', chainId: '0x66eee', explorer:'https://sepolia.arbiscan.io', addParams: { chainId:'0x66eee', chainName:'Arbitrum Sepolia', nativeCurrency:{name:'Sepolia ETH',symbol:'ETH',decimals:18}, rpcUrls:['https://sepolia-rollup.arbitrum.io/rpc'], blockExplorerUrls:['https://sepolia.arbiscan.io'] } },
 ]
+async function ensureChain(target: typeof CHAINS[number]) {
+  const want = target.chainId.toLowerCase()
+  const cur = (await window.ethereum.request({ method:'eth_chainId' }) as string || '').toLowerCase()
+  if (cur === want) return
+  try {
+    await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{ chainId: target.chainId }] })
+  } catch(e:any) {
+    const msg = String(e?.message||'')
+    const needsAdd = e?.code===4902 || e?.code===-32603 || /Unrecognized chain|not added|chain has not been added/i.test(msg)
+    if (e?.code===4001) throw new Error('Switch network ditolak. Setujui permintaan MetaMask untuk lanjut.')
+    if (!needsAdd) throw new Error(`Gagal switch ke ${target.label}: ${msg||e?.code}`)
+    try {
+      await window.ethereum.request({ method:'wallet_addEthereumChain', params:[target.addParams] })
+    } catch(addErr:any) {
+      if (addErr?.code===4001) throw new Error(`Penambahan ${target.label} ditolak. Tambahkan jaringan ini di MetaMask lalu coba lagi.`)
+      throw new Error(`Gagal menambahkan ${target.label}: ${addErr?.message||addErr?.code}`)
+    }
+  }
+  for (let i=0;i<15;i++) {
+    const now = (await window.ethereum.request({ method:'eth_chainId' }) as string || '').toLowerCase()
+    if (now === want) return
+    await new Promise(r=>setTimeout(r,1000))
+  }
+  throw new Error(`Gagal switch ke ${target.label}. Pilih jaringan ini di MetaMask lalu coba lagi.`)
+}
+async function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = 180000) {
+  const ctrl = new AbortController()
+  const t = setTimeout(()=>ctrl.abort(), ms)
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }) } finally { clearTimeout(t) }
+}
 const BURN_ABI = '0x8e0250ee'
 const ERC20_APPROVE = '0x095ea7b3'
 const CCTP_SRC = {
@@ -60,19 +90,25 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         setStatus({ type:'info', msg:'✓ USDC tiba di MetaMask!\n⏳ Siapkan MetaMask untuk approve...', steps:[...localSteps] })
         await new Promise(r=>setTimeout(r,3000))
       }
-      // Switch network
-      setStep(fromChain==='Arc_Testnet'?'Step 2/3: Switch ke Arc Testnet...':'Switch network...')
+      // Switch network — wajib match sebelum approve/burn
       const fromChainInfo = CHAINS.find(c=>c.id===fromChain)
-      if (fromChainInfo) {
-        try {
-          await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:fromChainInfo.chainId}] })
-          await new Promise(r=>setTimeout(r,2000))
-        } catch(e:any) {
-          if ((e.code===4902||e.code===-32603) && fromChainInfo.addParams) {
-            await window.ethereum.request({ method:'wallet_addEthereumChain', params:[fromChainInfo.addParams] })
-            await new Promise(r=>setTimeout(r,3000))
-          } else if (e.code!==4001) console.warn('Switch warning:', e.message)
+      if (!fromChainInfo) throw new Error('Konfigurasi chain sumber tidak ditemukan')
+      setStep(`Switch ke ${fromChainInfo.label}...`)
+      setStatus({ type:'info', msg:`⏳ Pastikan MetaMask berada di ${fromChainInfo.label}...`, steps:[...localSteps] })
+      await ensureChain(fromChainInfo)
+      // Cek saldo USDC on-chain di source chain sebelum approve
+      try {
+        const balData = '0x70a08231' + encAddr(address)
+        const balHex = await window.ethereum.request({ method:'eth_call', params:[{ to: srcInfo.usdc, data: balData }, 'latest'] }) as string
+        const bal = BigInt(balHex || '0x0')
+        if (bal < amtMicro) {
+          const have = Number(bal) / 1e6
+          throw new Error(`Saldo USDC di ${fromChainInfo.label} tidak cukup (tersedia ${have.toFixed(4)} USDC). Pindahkan USDC ke jaringan ini dulu atau ganti Dari Chain.`)
         }
+      } catch(balErr:any) {
+        if (balErr?.message?.startsWith('Saldo USDC')) throw balErr
+        // RPC issue: jangan blok bridge, hanya warn
+        console.warn('Pre-flight balance check gagal:', balErr?.message)
       }
       // Approve
       setStep('MetaMask: Approve USDC (1/2)...')
@@ -86,7 +122,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         await new Promise(r=>setTimeout(r,4000))
       }
       localSteps[localSteps.length-1].state='success'
-      localSteps[localSteps.length-1].explorerUrl=fromChain==='Arc_Testnet'?`https://testnet.arcscan.app/tx/${approveTx}`:`https://sepolia.etherscan.io/tx/${approveTx}`
+      localSteps[localSteps.length-1].explorerUrl=`${fromChainInfo.explorer}/tx/${approveTx}`
       setStatus({ type:'info', msg:'✓ Approve sukses!\n⏳ MetaMask popup 2/2: Konfirmasi burn...', steps:[...localSteps] })
       // Burn
       setStep('MetaMask: Konfirmasi burn (2/2)...')
@@ -101,14 +137,28 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         await new Promise(r=>setTimeout(r,4000))
       }
       localSteps[localSteps.length-1].state='success'
-      localSteps[localSteps.length-1].explorerUrl=fromChain==='Arc_Testnet'?`https://testnet.arcscan.app/tx/${burnTx}`:`https://sepolia.etherscan.io/tx/${burnTx}`
-      // Mint via backend
+      localSteps[localSteps.length-1].explorerUrl=`${fromChainInfo.explorer}/tx/${burnTx}`
+      // Mint via backend (dengan timeout & retry untuk hindari "Failed to fetch")
       setStep('Step 3/3: Menunggu attestation Circle (~20 detik)...')
       localSteps.push({ name:'attestation', state:'pending' })
       setStatus({ type:'info', msg:'✓ Burn sukses!\n⏳ Menunggu attestation dari Circle...', steps:[...localSteps] })
-      const mintResp = await fetch(API+'/api/mint-cctp', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address}) })
-      const mintData = await mintResp.json()
-      if (!mintResp.ok || !mintData.success) throw new Error(mintData.error||'Mint gagal')
+      let mintResp: Response | null = null
+      let mintErr: any = null
+      for (let attempt=0; attempt<3; attempt++) {
+        try {
+          mintResp = await fetchWithTimeout(API+'/api/mint-cctp', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address}) }, 180000)
+          break
+        } catch(err:any) {
+          mintErr = err
+          if (attempt < 2) {
+            setStatus({ type:'info', msg:`⏳ Jaringan tidak stabil, retry attestation (${attempt+2}/3)...\nBurn tx: ${burnTx.slice(0,10)}...`, steps:[...localSteps] })
+            await new Promise(r=>setTimeout(r,5000))
+          }
+        }
+      }
+      if (!mintResp) throw new Error(`Attestation gagal: ${mintErr?.message||'network error'}. Burn tx ${burnTx} sudah on-chain — gunakan tx ini untuk klaim mint nanti.`)
+      const mintData = await mintResp.json().catch(()=>({error:'Response tidak valid'}))
+      if (!mintResp.ok || !mintData.success) throw new Error(mintData.error||`Mint gagal (HTTP ${mintResp.status}). Burn tx: ${burnTx}`)
       localSteps[localSteps.length-1].state='success'
       localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
       setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
