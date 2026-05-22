@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { CHAINS, IRIS, MESSAGE_TRANSMITTER_V2, findChain, type ChainCfg, type ChainKey } from '../chains'
 import { txHistory } from '../txHistory'
-import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, type AppKitChain } from '../appKit'
+import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, getConnectedSolanaPubkey, type AppKitChain } from '../appKit'
 
 const ERC20_APPROVE = '0x095ea7b3'
 const DEPOSIT_FOR_BURN_SELECTOR = '0x8e0250ee' // depositForBurn(uint256,uint32,bytes32,address,bytes32,uint256,uint32)
@@ -192,12 +192,10 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
   const srcIsSolana = fromChain === 'Solana_Devnet'
   const involvesSolana = dstIsSolana || srcIsSolana
 
-  // Auto-detect Phantom connection on mount
+  // Auto-detect Solflare connection on mount
   useEffect(() => {
-    const sol: any = (window as any).solana
-    if (sol?.isConnected && sol.publicKey) {
-      setSolanaConnected(sol.publicKey.toString())
-    }
+    const pk = getConnectedSolanaPubkey()
+    if (pk) setSolanaConnected(pk)
   }, [])
 
   const handleConnectSolana = async () => {
@@ -205,9 +203,9 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
       const pk = await connectSolanaWallet()
       setSolanaConnected(pk)
       setSolanaRecipient(pk)
-      setStatus({ type: 'info', msg: `✓ Phantom terhubung: ${pk.slice(0, 6)}...${pk.slice(-4)}` })
+      setStatus({ type: 'info', msg: `✓ Solflare terhubung: ${pk.slice(0, 6)}...${pk.slice(-4)}` })
     } catch (e: any) {
-      setStatus({ type: 'error', msg: e?.message || 'Gagal connect Phantom' })
+      setStatus({ type: 'error', msg: e?.message || 'Gagal connect Solflare' })
     }
   }
 
@@ -230,7 +228,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
       return
     }
     if (!solanaConnected) {
-      setStatus({ type: 'error', msg: 'Hubungkan wallet Solana (Phantom) dulu untuk bridge yang melibatkan Solana.' })
+      setStatus({ type: 'error', msg: 'Hubungkan wallet Solana (Solflare) dulu untuk bridge yang melibatkan Solana.' })
       return
     }
     if (!srcIsSolana && !address) {
@@ -252,10 +250,37 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
       dstDomain: dst.domain,
     })
     try {
+      // Pastikan MetaMask berada di chain sumber EVM sebelum App Kit memanggil signer.
+      // Tanpa ini, kit.bridge() akan melakukan tx ke chain yang salah dan gagal —
+      // ini penyebab utama "bridge Arc → Solana error" sebelumnya.
+      if (!srcIsSolana && src.isEvm) {
+        setStep(`Switch MetaMask ke ${src.label}...`)
+        await ensureChain(src)
+      }
+      // Tentukan recipient untuk arah ini:
+      //   Arc → Solana   : recipient = pubkey Solflare yang terhubung
+      //   Solana → Arc   : recipient = alamat MetaMask EVM yang terhubung
+      // Tanpa ini, App Kit akan meminta user mengonfirmasi alamat tujuan
+      // di adapter destinasi (sering bikin gagal di Devnet).
+      let recipient: string | undefined
+      if (dstIsSolana) {
+        recipient = solanaConnected || solanaRecipient.trim() || undefined
+        if (!recipient) {
+          throw new Error('Alamat penerima Solana belum diset. Connect Solflare atau isi pubkey base58.')
+        }
+      } else if (srcIsSolana && dst.isEvm) {
+        if (!address) {
+          throw new Error('Hubungkan MetaMask sebagai penerima sebelum bridge dari Solana.')
+        }
+        recipient = address
+      }
+
       const result: any = await bridgeWithAppKit({
         from: fromChain as AppKitChain,
         to: toChain as AppKitChain,
         amount,
+        speed: 'FAST',
+        recipient,
       })
       const burnTx = result?.burnTx || result?.sourceTx || result?.fromTx?.hash
       const mintTx = result?.mintTx || result?.destinationTx || result?.toTx?.hash
@@ -511,11 +536,11 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
       {involvesSolana && (
         <div className='glass' style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.05)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ color: '#a78bfa', fontSize: 13, fontWeight: 600 }}>👻 Wallet Solana</span>
+            <span style={{ color: '#a78bfa', fontSize: 13, fontWeight: 600 }}>🪐 Wallet Solana</span>
             {solanaConnected ? (
               <button onClick={handleDisconnectSolana} style={{ background: 'transparent', border: '1px solid #4b5563', color: '#94a3b8', padding: '3px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Disconnect</button>
             ) : (
-              <button onClick={handleConnectSolana} style={{ background: '#a855f7', border: 'none', color: 'white', padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Connect Phantom</button>
+              <button onClick={handleConnectSolana} style={{ background: '#fc7227', border: 'none', color: 'white', padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Connect Solflare</button>
             )}
           </div>
           {solanaConnected ? (
@@ -524,12 +549,12 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
             </div>
           ) : (
             <div style={{ fontSize: 11, color: '#64748b' }}>
-              Pasang <a href='https://phantom.com' target='_blank' rel='noreferrer' style={{ color: '#a78bfa' }}>Phantom</a> untuk bridge ke/dari Solana.
+              Pasang <a href='https://solflare.com' target='_blank' rel='noreferrer' style={{ color: '#fc7227' }}>Solflare</a> untuk bridge ke/dari Solana.
             </div>
           )}
           {dstIsSolana && solanaConnected && (
             <div style={{ marginTop: 8, fontSize: 11, color: '#10b981' }}>
-              ✓ Tujuan otomatis: alamat Phantom Anda
+              ✓ Tujuan otomatis: alamat Solflare Anda
             </div>
           )}
         </div>
@@ -538,7 +563,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         <div>
           <label style={{ color: '#64748b', fontSize: 13, display: 'block', marginBottom: 6 }}>Alamat Solana penerima (pubkey base58)</label>
           <input className='input' type='text' placeholder='Contoh: 5xyA...' value={solanaRecipient} onChange={e => setSolanaRecipient(e.target.value)} style={{ fontFamily: 'monospace', fontSize: 12 }} />
-          <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6 }}>⚠ Connect Phantom di atas agar tujuan & klaim mint otomatis ditangani oleh App Kit SDK.</div>
+          <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6 }}>⚠ Connect Solflare di atas agar tujuan & klaim mint otomatis ditangani oleh App Kit SDK.</div>
         </div>
       )}
       <div>
