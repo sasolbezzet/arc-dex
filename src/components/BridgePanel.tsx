@@ -282,21 +282,53 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         speed: 'SLOW',
         recipient,
       })
-      const burnTx = result?.burnTx || result?.sourceTx || result?.fromTx?.hash
-      const mintTx = result?.mintTx || result?.destinationTx || result?.toTx?.hash
+      // Cari step mint dan inspect status sebenarnya — jangan asumsi sukses
+      // hanya karena promise resolve. SDK bisa return dengan state='pending'
+      // (relayer ditunda) atau step.mint dgn errorMessage.
+      const steps: any[] = Array.isArray(result?.steps) ? result.steps : []
+      const burnStep = steps.find((s) => /burn/i.test(s?.name || ''))
+      const mintStep = steps.find((s) => /mint/i.test(s?.name || ''))
+      const burnTx = burnStep?.txHash || result?.burnTx || result?.sourceTx || result?.fromTx?.hash
+      const mintTx = mintStep?.txHash || result?.mintTx || result?.destinationTx || result?.toTx?.hash
+      const overallState: string = result?.state || 'unknown'
+      const mintState: string = mintStep?.state || 'unknown'
+      const mintErrorMsg: string | undefined = mintStep?.errorMessage
+      const wasForwarded: boolean = mintStep?.forwarded === true
+      const stateLine = `state=${overallState} | mint=${mintState}${wasForwarded ? ' (forwarder)' : ''}`
       txHistory.update(txId, {
-        status: 'success',
+        status: overallState === 'success' && mintState === 'success' ? 'success' : 'pending',
         burnTx,
         mintTx,
         burnExplorerUrl: burnTx && src.explorer ? `${src.explorer}/tx/${burnTx}` : undefined,
         mintExplorerUrl: mintTx && dst.explorer ? `${dst.explorer}/tx/${mintTx}` : undefined,
       })
-      setStatus({
-        type: 'success',
-        msg: `✓ Bridge sukses via App Kit SDK!\n${amount} USDC: ${src.label} → ${dst.label}` +
-          (burnTx ? `\nSource tx: ${String(burnTx).slice(0, 16)}...` : '') +
-          (mintTx ? `\nDest tx: ${String(mintTx).slice(0, 16)}...` : ''),
-      })
+      // Susun pesan status yang akurat — tampil langsung di layar HP
+      // tanpa perlu DevTools. Ini menggantikan asumsi "selalu sukses".
+      if (mintState === 'success' && overallState === 'success') {
+        setStatus({
+          type: 'success',
+          msg: `✓ Bridge sukses!\n${amount} USDC: ${src.label} → ${dst.label}\n${stateLine}` +
+            (burnTx ? `\nBurn tx: ${String(burnTx).slice(0, 16)}...` : '') +
+            (mintTx ? `\nMint tx: ${String(mintTx).slice(0, 16)}...` : ''),
+        })
+      } else if (mintState === 'error' || overallState === 'error') {
+        setStatus({
+          type: 'error',
+          msg: `✗ Mint GAGAL di ${dst.label}\n${stateLine}` +
+            (mintErrorMsg ? `\nAlasan: ${mintErrorMsg}` : '') +
+            (burnTx ? `\nBurn tx (USDC sudah di-burn): ${String(burnTx).slice(0, 24)}...` : '') +
+            `\n\nUSDC Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
+        })
+      } else {
+        // pending — relayer/forwarder belum eksekusi
+        setStatus({
+          type: 'success',
+          msg: `⏳ Bridge MASIH PENDING\n${amount} USDC: ${src.label} → ${dst.label}\n${stateLine}` +
+            (burnTx ? `\nBurn tx: ${String(burnTx).slice(0, 16)}...` : '') +
+            (wasForwarded ? `\n\nMint sedang diproses Circle Forwarder. Tunggu 1-5 menit lalu cek saldo Solflare.`
+                          : `\n\nMint belum tereksekusi. Mungkin perlu relayer manual atau retry.`),
+        })
+      }
       setAmount('')
       setTimeout(onRefresh, 3000)
       setTimeout(onRefresh, 10000)
