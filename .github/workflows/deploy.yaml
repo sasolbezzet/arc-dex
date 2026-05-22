@@ -38,7 +38,10 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        # --legacy-peer-deps diperlukan karena project memakai TypeScript 6 (beta)
+        # sementara @solana/kit punya peerOptional typescript@^5. Konflik
+        # peerOptional aman diabaikan — runtime tidak terpengaruh.
+        run: npm ci --legacy-peer-deps
 
       - name: Build project
         run: npm run build
