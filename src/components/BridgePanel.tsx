@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { CHAINS, IRIS, MESSAGE_TRANSMITTER_V2, findChain, type ChainCfg, type ChainKey } from '../chains'
 import { txHistory } from '../txHistory'
 import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, getConnectedSolanaPubkey, getSolBalance, getUsdcBalance, getSolanaKind, detectSolanaKind, type AppKitChain } from '../appKit'
+import { wrapSolflare, wrapPhantom } from '../solflareWrapper'
 import { PublicKey, Transaction, Connection, TransactionInstruction } from '@solana/web3.js'
 import { Buffer } from 'buffer'
 
@@ -523,7 +524,16 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
       } else {
         // Destination Solana — mint on-chain via Solflare/Phantom wallet
         // Build Solana transaction to call MessageTransmitterV2.receiveMessage(message, attestation)
-        const rawProvider = (window as any).solflare ?? (window as any).phantom?.solana
+let rawProvider = (window as any).solflare ?? (window as any).phantom?.solana
+        if (!rawProvider) {
+          throw new Error('Wallet Solana tidak terdeteksi. Install Solflare atau Phantom.')
+        }
+        // Wrap the raw provider to ensure consistent signTransaction handling
+        if ((window as any).solflare) {
+          rawProvider = wrapSolflare((window as any).solflare)
+        } else if ((window as any).phantom?.solana) {
+          rawProvider = wrapPhantom((window as any).phantom.solana)
+        }
         if (!rawProvider) {
           throw new Error('Wallet Solana tidak terdeteksi. Install Solflare atau Phantom.')
         }
