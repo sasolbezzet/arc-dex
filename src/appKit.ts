@@ -36,7 +36,19 @@ function getSolflareProvider(): any | null {
 // Singleton AppKit (testnet bridges tidak butuh API key).
 let kitInstance: AppKit | null = null
 export function getKit(): AppKit {
-  if (!kitInstance) kitInstance = new AppKit()
+  if (!kitInstance) {
+    kitInstance = new AppKit()
+    // Log semua event SDK ke console biar progress bridge terlihat
+    // (approve / burn / fetchAttestation / mint).
+    try {
+      ;(kitInstance as any).on?.('*', (payload: any) => {
+        // eslint-disable-next-line no-console
+        console.log('[AppKit event]', payload?.name ?? payload?.event ?? '?', payload)
+      })
+    } catch (err) {
+      console.warn('[AppKit] tidak bisa subscribe event:', err)
+    }
+  }
   return kitInstance
 }
 
