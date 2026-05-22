@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { CHAINS, IRIS, MESSAGE_TRANSMITTER_V2, findChain, type ChainCfg, type ChainKey } from '../chains'
 import { txHistory } from '../txHistory'
-declare global { interface Window { ethereum?: any } }
+import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, type AppKitChain } from '../appKit'
 
 const ERC20_APPROVE = '0x095ea7b3'
 const DEPOSIT_FOR_BURN_SELECTOR = '0x8e0250ee' // depositForBurn(uint256,uint32,bytes32,address,bytes32,uint256,uint32)
@@ -175,9 +175,10 @@ interface Props { address: string | null; circleWallet: { id: string; address: s
 export function BridgePanel({ address, circleWallet: _circleWallet, balances, eoaBalances, onRefresh }: Props) {
   void _circleWallet
   const [fromChain, setFromChain] = useState<ChainKey>('Arc_Testnet')
-  const [toChain, setToChain] = useState<ChainKey>('Ethereum_Sepolia')
+  const [toChain, setToChain] = useState<ChainKey>('Solana_Devnet')
   const [amount, setAmount] = useState('')
   const [solanaRecipient, setSolanaRecipient] = useState('')
+  const [solanaConnected, setSolanaConnected] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState('')
   const [status, setStatus] = useState<Status | null>(null)
@@ -188,8 +189,109 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
   const est = amount ? (parseFloat(amount) - parseFloat(fee === '-' ? '0' : fee)).toFixed(4) : '-'
 
   const dstIsSolana = toChain === 'Solana_Devnet'
+  const srcIsSolana = fromChain === 'Solana_Devnet'
+  const involvesSolana = dstIsSolana || srcIsSolana
+
+  // Auto-detect Phantom connection on mount
+  useEffect(() => {
+    const sol: any = (window as any).solana
+    if (sol?.isConnected && sol.publicKey) {
+      setSolanaConnected(sol.publicKey.toString())
+    }
+  }, [])
+
+  const handleConnectSolana = async () => {
+    try {
+      const pk = await connectSolanaWallet()
+      setSolanaConnected(pk)
+      setSolanaRecipient(pk)
+      setStatus({ type: 'info', msg: `✓ Phantom terhubung: ${pk.slice(0, 6)}...${pk.slice(-4)}` })
+    } catch (e: any) {
+      setStatus({ type: 'error', msg: e?.message || 'Gagal connect Phantom' })
+    }
+  }
+
+  const handleDisconnectSolana = async () => {
+    await disconnectSolanaWallet()
+    setSolanaConnected(null)
+    if (srcIsSolana || dstIsSolana) setSolanaRecipient('')
+  }
+
+  // ========================================================================
+  // App Kit SDK path — dipakai untuk semua bridge yang melibatkan Solana
+  // (Solana ↔ Arc, Solana ↔ Eth Sepolia, dst). Sesuai docs.arc.io/app-kit/bridge.
+  // ========================================================================
+  const handleBridgeAppKit = async () => {
+    if (!amount) return
+    const src = findChain(fromChain)
+    const dst = findChain(toChain)
+    if (!src || !dst) {
+      setStatus({ type: 'error', msg: 'Konfigurasi chain tidak ditemukan' })
+      return
+    }
+    if (!solanaConnected) {
+      setStatus({ type: 'error', msg: 'Hubungkan wallet Solana (Phantom) dulu untuk bridge yang melibatkan Solana.' })
+      return
+    }
+    if (!srcIsSolana && !address) {
+      setStatus({ type: 'error', msg: 'Hubungkan MetaMask juga untuk bridge dari EVM.' })
+      return
+    }
+    setLoading(true)
+    setStatus({ type: 'info', msg: `⏳ Memulai bridge ${amount} USDC dari ${src.label} ke ${dst.label} via App Kit SDK...` })
+    setStep('App Kit: Approve & Sign...')
+    const txId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    txHistory.add({
+      id: txId,
+      ts: Date.now(),
+      from: src.label,
+      to: dst.label,
+      amount,
+      status: 'pending',
+      srcDomain: src.domain,
+      dstDomain: dst.domain,
+    })
+    try {
+      const result: any = await bridgeWithAppKit({
+        from: fromChain as AppKitChain,
+        to: toChain as AppKitChain,
+        amount,
+      })
+      const burnTx = result?.burnTx || result?.sourceTx || result?.fromTx?.hash
+      const mintTx = result?.mintTx || result?.destinationTx || result?.toTx?.hash
+      txHistory.update(txId, {
+        status: 'success',
+        burnTx,
+        mintTx,
+        burnExplorerUrl: burnTx && src.explorer ? `${src.explorer}/tx/${burnTx}` : undefined,
+        mintExplorerUrl: mintTx && dst.explorer ? `${dst.explorer}/tx/${mintTx}` : undefined,
+      })
+      setStatus({
+        type: 'success',
+        msg: `✓ Bridge sukses via App Kit SDK!\n${amount} USDC: ${src.label} → ${dst.label}` +
+          (burnTx ? `\nSource tx: ${String(burnTx).slice(0, 16)}...` : '') +
+          (mintTx ? `\nDest tx: ${String(mintTx).slice(0, 16)}...` : ''),
+      })
+      setAmount('')
+      setTimeout(onRefresh, 3000)
+      setTimeout(onRefresh, 10000)
+    } catch (e: any) {
+      const errMsg = e?.message || 'Bridge App Kit gagal'
+      setStatus({ type: 'error', msg: errMsg })
+      txHistory.update(txId, { status: 'error', error: errMsg })
+    }
+    setLoading(false)
+    setStep('')
+  }
 
   const handleBridge = async () => {
+    if (involvesSolana) {
+      // Pakai App Kit SDK untuk semua kasus yang melibatkan Solana.
+      // Ini mengikuti rekomendasi resmi docs.arc.io/app-kit/bridge.
+      await handleBridgeAppKit()
+      return
+    }
+    // ----- EVM ↔ EVM: pakai flow CCTP manual lama (sudah tested) -----
     if (!address || !amount || !window.ethereum) return
     const src = findChain(fromChain)
     const dst = findChain(toChain)
@@ -395,10 +497,10 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         <button onClick={() => setAmount(totalB.toFixed(4))} style={{ color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, padding: 0 }}>Max: {totalB.toFixed(4)}</button>
       </div>
       <select className='input' value={fromChain} onChange={e => setFromChain(e.target.value as ChainKey)}>
-        {CHAINS.filter(c => c.isEvm).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+        {CHAINS.map(c => <option key={c.id} value={c.id}>{c.label}{c.isEvm ? '' : ' (Solana)'}</option>)}
       </select>
       <div style={{ textAlign: 'center' }}>
-        <button onClick={() => { const f = fromChain; setFromChain(toChain); setToChain(f) }} disabled={!findChain(toChain)?.isEvm} className='glass' style={{ padding: '6px 14px', borderRadius: 10, cursor: findChain(toChain)?.isEvm ? 'pointer' : 'not-allowed', color: '#818cf8', fontSize: 18, border: '1px solid #1e1e2e', background: 'rgba(18,18,26,0.8)', opacity: findChain(toChain)?.isEvm ? 1 : 0.4 }}>⇅</button>
+        <button onClick={() => { const f = fromChain; setFromChain(toChain); setToChain(f) }} className='glass' style={{ padding: '6px 14px', borderRadius: 10, cursor: 'pointer', color: '#818cf8', fontSize: 18, border: '1px solid #1e1e2e', background: 'rgba(18,18,26,0.8)' }}>⇅</button>
       </div>
       <div>
         <label style={{ color: '#64748b', fontSize: 13, display: 'block', marginBottom: 6 }}>Ke Chain</label>
@@ -406,11 +508,37 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
           {CHAINS.filter(c => c.id !== fromChain).map(c => <option key={c.id} value={c.id}>{c.label}{c.isEvm ? '' : ' (Solana)'}</option>)}
         </select>
       </div>
-      {dstIsSolana && (
+      {involvesSolana && (
+        <div className='glass' style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.05)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ color: '#a78bfa', fontSize: 13, fontWeight: 600 }}>👻 Wallet Solana</span>
+            {solanaConnected ? (
+              <button onClick={handleDisconnectSolana} style={{ background: 'transparent', border: '1px solid #4b5563', color: '#94a3b8', padding: '3px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Disconnect</button>
+            ) : (
+              <button onClick={handleConnectSolana} style={{ background: '#a855f7', border: 'none', color: 'white', padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Connect Phantom</button>
+            )}
+          </div>
+          {solanaConnected ? (
+            <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#a78bfa', wordBreak: 'break-all' }}>
+              {solanaConnected.slice(0, 8)}...{solanaConnected.slice(-6)}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: '#64748b' }}>
+              Pasang <a href='https://phantom.com' target='_blank' rel='noreferrer' style={{ color: '#a78bfa' }}>Phantom</a> untuk bridge ke/dari Solana.
+            </div>
+          )}
+          {dstIsSolana && solanaConnected && (
+            <div style={{ marginTop: 8, fontSize: 11, color: '#10b981' }}>
+              ✓ Tujuan otomatis: alamat Phantom Anda
+            </div>
+          )}
+        </div>
+      )}
+      {dstIsSolana && !solanaConnected && (
         <div>
-          <label style={{ color: '#64748b', fontSize: 13, display: 'block', marginBottom: 6 }}>Alamat Solana (pubkey base58)</label>
+          <label style={{ color: '#64748b', fontSize: 13, display: 'block', marginBottom: 6 }}>Alamat Solana penerima (pubkey base58)</label>
           <input className='input' type='text' placeholder='Contoh: 5xyA...' value={solanaRecipient} onChange={e => setSolanaRecipient(e.target.value)} style={{ fontFamily: 'monospace', fontSize: 12 }} />
-          <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6 }}>⚠ Mint di Solana harus diklaim manual via CLI Anchor/SDK. Attestation akan tersimpan di tab Info.</div>
+          <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6 }}>⚠ Connect Phantom di atas agar tujuan & klaim mint otomatis ditangani oleh App Kit SDK.</div>
         </div>
       )}
       <div>
@@ -439,10 +567,14 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
           ))}
         </div>
       )}
-      <button onClick={handleBridge} disabled={!amount || loading || fromChain === toChain || !address} className='btn btn-primary'>
-        {loading ? step || '⏳ Memproses...' : amount ? `Bridge ${amount} USDC` : 'Bridge USDC'}
+      <button onClick={handleBridge} disabled={!amount || loading || fromChain === toChain || (!srcIsSolana && !address) || (involvesSolana && !solanaConnected)} className='btn btn-primary'>
+        {loading ? step || '⏳ Memproses...' : amount ? `Bridge ${amount} USDC${involvesSolana ? ' (App Kit)' : ''}` : 'Bridge USDC'}
       </button>
-      <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center' }}>Bridge via CCTP v2 Fast Transfer. Iris API: {IRIS.replace('https://', '')}</div>
+      <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center' }}>
+        {involvesSolana
+          ? 'Bridge Solana ↔ Arc via Circle App Kit SDK (kit.bridge). Otomatis burn → attestation → mint.'
+          : `Bridge via CCTP v2 Fast Transfer. Iris API: ${IRIS.replace('https://', '')}`}
+      </div>
     </div>
   )
 }

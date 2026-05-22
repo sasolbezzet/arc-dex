@@ -10,9 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.78.0",
+    "@circle-fin/adapter-solana-kit": "^1.4.10",
     "@circle-fin/adapter-viem-v2": "^1.11.1",
     "@circle-fin/app-kit": "^1.6.1",
+    "@solana/kit": "^6.9.0",
+    "@solana/web3.js": "^1.78.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "viem": "^2.50.4"
