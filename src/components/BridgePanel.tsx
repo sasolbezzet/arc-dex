@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { CHAINS, IRIS, MESSAGE_TRANSMITTER_V2, findChain, type ChainCfg, type ChainKey } from '../chains'
 import { txHistory } from '../txHistory'
-import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, getConnectedSolanaPubkey, type AppKitChain } from '../appKit'
+import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, getConnectedSolanaPubkey, getSolBalance, getUsdcBalance, getSolanaKind, type AppKitChain } from '../appKit'
 
 const ERC20_APPROVE = '0x095ea7b3'
 const DEPOSIT_FOR_BURN_SELECTOR = '0x8e0250ee' // depositForBurn(uint256,uint32,bytes32,address,bytes32,uint256,uint32)
@@ -179,6 +179,8 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
   const [amount, setAmount] = useState('')
   const [solanaRecipient, setSolanaRecipient] = useState('')
   const [solanaConnected, setSolanaConnected] = useState<string | null>(null)
+  const [solBalance, setSolBalance] = useState<number>(0)
+  const [solUsdcBalance, setSolUsdcBalance] = useState<number>(0)
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState('')
   const [status, setStatus] = useState<Status | null>(null)
@@ -192,27 +194,35 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
   const srcIsSolana = fromChain === 'Solana_Devnet'
   const involvesSolana = dstIsSolana || srcIsSolana
 
-  // Auto-detect Solflare connection on mount
+  // Auto-detect Solana wallet on mount + fetch balance
   useEffect(() => {
     const pk = getConnectedSolanaPubkey()
-    if (pk) setSolanaConnected(pk)
+    if (pk) {
+      setSolanaConnected(pk)
+      getSolBalance(pk).then(b => setSolBalance(b))
+      getUsdcBalance(pk).then(b => setSolUsdcBalance(b))
+    }
   }, [])
 
   const handleConnectSolana = async () => {
     try {
-      const pk = await connectSolanaWallet()
+      const kind = getSolanaKind() || 'phantom'
+      const pk = await connectSolanaWallet(kind)
       setSolanaConnected(pk)
-      setSolanaRecipient(pk)
-      setStatus({ type: 'info', msg: `✓ Solflare terhubung: ${pk.slice(0, 6)}...${pk.slice(-4)}` })
+      const [sol, usdc] = await Promise.all([getSolBalance(pk), getUsdcBalance(pk)])
+      setSolBalance(sol)
+      setSolUsdcBalance(usdc)
+      setStatus({ type: 'info', msg: `✓ Wallet Solana terhubung: ${pk.slice(0, 6)}...${pk.slice(-4)}` })
     } catch (e: any) {
-      setStatus({ type: 'error', msg: e?.message || 'Gagal connect Solflare' })
+      setStatus({ type: 'error', msg: e?.message || 'Gagal connect wallet Solana' })
     }
   }
 
   const handleDisconnectSolana = async () => {
     await disconnectSolanaWallet()
     setSolanaConnected(null)
-    if (srcIsSolana || dstIsSolana) setSolanaRecipient('')
+    setSolBalance(0)
+    setSolUsdcBalance(0)
   }
 
   // ========================================================================
@@ -576,9 +586,15 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
             )}
           </div>
           {solanaConnected ? (
-            <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#a78bfa', wordBreak: 'break-all' }}>
-              {solanaConnected.slice(0, 8)}...{solanaConnected.slice(-6)}
-            </div>
+            <>
+              <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#a78bfa', wordBreak: 'break-all', marginBottom: 4 }}>
+                {solanaConnected.slice(0, 8)}...{solanaConnected.slice(-6)}
+              </div>
+              <div style={{ display: 'flex', gap: 12, fontSize: 11, marginTop: 4 }}>
+                <span style={{ color: '#94a3b8' }}>SOL: <b style={{ color: '#f8fafc' }}>{solBalance.toFixed(4)}</b></span>
+                <span style={{ color: '#94a3b8' }}>USDC: <b style={{ color: '#10b981' }}>{solUsdcBalance.toFixed(2)}</b></span>
+              </div>
+            </>
           ) : (
             <div style={{ fontSize: 11, color: '#64748b' }}>
               Pasang <a href='https://solflare.com' target='_blank' rel='noreferrer' style={{ color: '#fc7227' }}>Solflare</a> untuk bridge ke/dari Solana.
