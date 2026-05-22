@@ -12,6 +12,7 @@ import { ArcTestnet, SolanaDevnet } from '@circle-fin/bridge-kit'
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
+import { wrapSolflare } from './solflareWrapper'
 
 declare global {
   interface Window {
@@ -58,14 +59,18 @@ export async function buildEvmAdapter() {
 }
 
 export async function buildSolanaAdapter() {
-  const provider = getSolflareProvider()
-  if (!provider) {
+  const raw = getSolflareProvider()
+  if (!raw) {
     throw new Error('Wallet Solflare tidak terdeteksi. Install Solflare (https://solflare.com) lalu refresh halaman.')
   }
   // Solflare butuh user approval terlebih dahulu.
-  if (typeof provider.connect === 'function' && !provider.isConnected) {
-    await provider.connect()
+  if (typeof raw.connect === 'function' && !raw.isConnected) {
+    await raw.connect()
   }
+  // Bungkus supaya provider punya `.address` (string base58) — adapter
+  // melempar "Wallet provider must have a connected address after connection"
+  // kalau properti ini tidak ada.
+  const provider = wrapSolflare(raw)
   // PENTING: kunci RPC ke Solana Devnet — tanpa ini adapter default ke
   // mainnet RPC dan gagal ketika bridge ke chain Solana_Devnet.
   return await createSolanaKitAdapterFromProvider({
