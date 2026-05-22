@@ -207,7 +207,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
 
   const handleConnectSolana = async () => {
     try {
-      const kind = getSolanaKind() || 'phantom'
+      const kind = getSolanaKind() || 'solflare'
       const pk = await connectSolanaWallet(kind)
       setSolanaConnected(pk)
       const [sol, usdc] = await Promise.all([getSolBalance(pk), getUsdcBalance(pk)])

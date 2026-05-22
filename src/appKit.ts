@@ -53,9 +53,9 @@ function getPhantomProvider(): any | null {
 
 function autoDetectSolanaProvider(): { raw: any; kind: 'solflare' | 'phantom' } | null {
   const sf = getSolflareProvider()
-  if (sf) return { raw: sf, kind: 'solflare' }
+  if (sf) { _solanaKind = 'solflare'; return { raw: sf, kind: 'solflare' } }
   const ph = getPhantomProvider()
-  if (ph) return { raw: ph, kind: 'phantom' }
+  if (ph) { _solanaKind = 'phantom'; return { raw: ph, kind: 'phantom' } }
   return null
 }
 
@@ -127,10 +127,10 @@ export async function buildSolanaAdapter() {
 }
 
 // ── Wallet connect / disconnect ─────────────────────────────────
-export async function connectSolanaWallet(kind: 'solflare' | 'phantom' = 'phantom'): Promise<string> {
-  const raw = kind === 'phantom' ? getPhantomProvider() : getSolflareProvider()
+export async function connectSolanaWallet(kind: 'solflare' | 'phantom' = 'solflare'): Promise<string> {
+  const raw = kind === 'solflare' ? getSolflareProvider() : getPhantomProvider()
   if (!raw) {
-    throw new Error(`${kind === 'phantom' ? 'Phantom' : 'Solflare'} belum ter-install.`)
+    throw new Error(`${kind === 'solflare' ? 'Solflare' : 'Phantom'} belum ter-install.`)
   }
   await raw.connect()
   const pk = raw.publicKey?.toString?.() ?? null
@@ -141,7 +141,7 @@ export async function connectSolanaWallet(kind: 'solflare' | 'phantom' = 'phanto
 
 export async function disconnectSolanaWallet(): Promise<void> {
   try {
-    const raw = _solanaKind === 'phantom' ? getPhantomProvider() : getSolflareProvider()
+    const raw = _solanaKind === 'solflare' ? getSolflareProvider() : getPhantomProvider()
     await raw?.disconnect?.()
   } catch { /* ignore */ }
   _solanaKind = null
@@ -150,7 +150,7 @@ export async function disconnectSolanaWallet(): Promise<void> {
 export function getConnectedSolanaPubkey(): string | null {
   const auto = autoDetectSolanaProvider()
   if (!auto) return null
-  const raw = auto.kind === 'phantom' ? getPhantomProvider() : getSolflareProvider()
+  const raw = auto.kind === 'solflare' ? getSolflareProvider() : getPhantomProvider()
   if (raw?.isConnected && raw.publicKey) {
     try { return raw.publicKey.toString() } catch { return null }
   }
