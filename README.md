@@ -67,6 +67,8 @@ You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-re
 
 Arc DEX sekarang mendukung **Circle CCTP bridge** ke jaringan **Solana Devnet** (domain 1). Integrasi backend menggunakan Arc AppKit Bridge + Circle Iris attestation polling.
 
+*Catatan:* Setelah proses burn selesai, wallet Solflare akan otomatis menampilkan popup untuk mint USDC. Pastikan wallet sudah terhubung sebelum memulai bridge.
+
 ## Config Cepat Local
 - Chain: `Solana_Devnet` sudah ditambahkan ke `CCTP` config di `arc-dex-api/server.mjs`
 - Domain Circle CCTP: 1
