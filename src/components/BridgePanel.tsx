@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { CHAINS, IRIS, MESSAGE_TRANSMITTER_V2, findChain, type ChainCfg, type ChainKey } from '../chains'
 import { txHistory } from '../txHistory'
 import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, getConnectedSolanaPubkey, getSolBalance, getUsdcBalance, getSolanaKind, detectSolanaKind, type AppKitChain } from '../appKit'
+import { PublicKey, Transaction, Connection, TransactionInstruction } from '@solana/web3.js'
+import { Buffer } from 'buffer'
 
 const ERC20_APPROVE = '0x095ea7b3'
 const DEPOSIT_FOR_BURN_SELECTOR = '0x8e0250ee' // depositForBurn(uint256,uint32,bytes32,address,bytes32,uint256,uint32)
@@ -487,6 +489,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
 
         setStep(`MetaMask: Konfirmasi mint di ${dst.label} (3/3)...`)
         setStatus({ type: 'info', msg: `⏳ MetaMask popup 3/3: Mint di ${dst.label}...`, steps: [...localSteps] })
+        // @ts-ignore // ignore missing viem types if not installed
         const { encodeFunctionData } = await import('viem')
         const mintCalldata = encodeFunctionData({
           abi: [
@@ -518,20 +521,39 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         setStatus({ type: 'success', msg: `✓ Bridge berhasil! ${amount} USDC → ${dst.label}`, steps: [...localSteps] })
         txHistory.update(txId, { status: 'success' })
       } else {
-        // Destination Solana — mint relayed off-chain (operator/CCTP relayer). Sediakan attestation untuk klaim.
-        const m = message
-        const a = attestation
-        const claimNote = `Untuk klaim ke Solana, panggil MessageTransmitterV2.receiveMessage(message, attestation) pada akun Solana Anda menggunakan CLI Anchor/SDK.\nmessage: ${m}\nattestation: ${a}`
-        txHistory.update(txId, { status: 'success', note: claimNote })
-        setStatus({
-          type: 'success',
-          msg: `✓ Burn USDC dari ${src.label} ke Solana Devnet berhasil!\n` +
-            `Untuk mint di Solana, gunakan CLI/SDK Circle (lihat docs Arc → Transfer USDC from Solana to Arc, jalankan arah sebaliknya).\n` +
-            `Burn tx: ${burnTx.slice(0, 12)}...\n` +
-            `Attestation siap di riwayat (Info tab).`,
-          steps: [...localSteps],
-        })
-        ;(window as any).__lastCctpAttestation = { message: m, attestation: a, burnTx }
+        // Destination Solana — mint on-chain via Solflare/Phantom wallet
+        // Build Solana transaction to call MessageTransmitterV2.receiveMessage(message, attestation)
+        const rawProvider = (window as any).solflare ?? (window as any).phantom?.solana
+        if (!rawProvider) {
+          throw new Error('Wallet Solana tidak terdeteksi. Install Solflare atau Phantom.')
+        }
+        // Ensure wallet is connected
+        if (!rawProvider.isConnected) {
+          await rawProvider.connect()
+        }
+        const connection = new Connection('https://api.devnet.solana.com', 'confirmed')
+        const programId = new PublicKey(MESSAGE_TRANSMITTER_V2)
+        const messageBytes = Buffer.from(message.slice(2), 'hex')
+        const attestationBytes = Buffer.from(attestation.slice(2), 'hex')
+        const data = Buffer.concat([messageBytes, attestationBytes])
+        const instruction = new TransactionInstruction({ keys: [], programId, data })
+        const transaction = new Transaction().add(instruction)
+        transaction.feePayer = new PublicKey(rawProvider.publicKey)
+        const { blockhash } = await connection.getLatestBlockhash()
+        transaction.recentBlockhash = blockhash
+        // Sign and send transaction via wallet
+        const signed = await rawProvider.signTransaction(transaction)
+        const rawTx = signed.serialize()
+        const txSignature = await connection.sendRawTransaction(rawTx)
+        await connection.confirmTransaction(txSignature, 'processed')
+        localSteps.push({ name: 'mint', state: 'pending', txHash: txSignature, explorerUrl: `${dst.explorer}/tx/${txSignature}` })
+        txHistory.update(txSignature, { mintTx: txSignature, mintExplorerUrl: `${dst.explorer}/tx/${txSignature}` })
+        setStatus({ type: 'info', msg: `⏳ Menunggu konfirmasi mint di Solana...`, steps: [...localSteps] })
+        // Simple wait for finality (few seconds)
+        await new Promise(r => setTimeout(r, 4000))
+        localSteps[localSteps.length - 1].state = 'success'
+        setStatus({ type: 'success', msg: `✓ Mint di Solana berhasil!`, steps: [...localSteps] })
+        ;(window as any).__lastCctpAttestation = { message, attestation, burnTx }
       }
 
       setAmount('')
