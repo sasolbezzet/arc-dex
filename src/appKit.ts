@@ -1,30 +1,40 @@
-// App Kit SDK helpers untuk integrasi bridge Arc ↔ Solana (Devnet).
-// Dokumentasi referensi: https://docs.arc.io/app-kit/bridge
+// App Kit SDK helpers — integrasi bridge Arc ↔ Solana (Devnet).
+// Dokumentasi: https://docs.arc.io/app-kit/bridge
+// Mode "Browser wallet": MetaMask (EVM) + Solflare/Phantom (Solana).
 //
-// Mode "Browser wallet":
-//   - EVM   : createViemAdapterFromProvider(window.ethereum)            // MetaMask
-//   - Solana: createSolanaKitAdapterFromProvider(window.solflare)       // Solflare
-//
-// kit.bridge() menangani burn → attestation → mint di kedua sisi.
+// CCTP v2 flow: approve → burn → fetchAttestation → mint
+//   - Burn   : popup MetaMask / Solflare (user tanda-tangan)
+//   - Attestation: polling Iris API Circle
+//   - Mint   : "permissionless relay" — tidak perlu popup wallet
+//              (Circle Orbit Forwarder relay attestation ke on-chain)
 
 import { AppKit, TransferSpeed } from '@circle-fin/app-kit'
 import { ArcTestnet, SolanaDevnet } from '@circle-fin/bridge-kit'
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
-import { wrapSolflare } from './solflareWrapper'
+import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 
 declare global {
   interface Window {
     ethereum?: any
     solflare?: any
+    phantom?: { solana?: any }
+    solana?: any   // Generic fallback (bisa Phantom atau wallet lain)
   }
 }
 
 const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com'
+// USDC Devnet mint di Solana
+const USDC_DEVNET_MINT = '4zMMC9srtZRi3MU1EtsGVoCwaJhWCxuZrZmH2LPdUSJL'
 
-// Pilih provider Solflare langsung (hindari window.solana yang bisa diklaim
-// banyak ekstensi sekaligus dan menyebabkan ambiguitas signer).
+// ── Wallet kind tracking ──────────────────────────────────────────
+let _solanaKind: 'solflare' | 'phantom' | null = null
+export function getSolanaKind(): 'solflare' | 'phantom' | null {
+  return _solanaKind
+}
+
+// ── Provider getters ────────────────────────────────────────────
 function getSolflareProvider(): any | null {
   const w = window as any
   if (w.solflare && (w.solflare.isSolflare || typeof w.solflare.connect === 'function')) {
@@ -33,20 +43,41 @@ function getSolflareProvider(): any | null {
   return null
 }
 
-// Singleton AppKit (testnet bridges tidak butuh API key).
+function getPhantomProvider(): any | null {
+  const w = window as any
+  // window.phantom.solana atau window.solana dengan isPhantom flag
+  const p = w.phantom?.solana ?? w.solana
+  if (p && (p.isPhantom || p._isPhantom)) return p
+  return null
+}
+
+function autoDetectSolanaProvider(): { raw: any; kind: 'solflare' | 'phantom' } | null {
+  const sf = getSolflareProvider()
+  if (sf) return { raw: sf, kind: 'solflare' }
+  const ph = getPhantomProvider()
+  if (ph) return { raw: ph, kind: 'phantom' }
+  return null
+}
+
+// Panggil segera di awal halaman untuk set _solanaKind
+export function detectSolanaKind(): 'solflare' | 'phantom' | null {
+  const result = autoDetectSolanaProvider()
+  if (result) _solanaKind = result.kind
+  return _solanaKind
+}
+
+// ── AppKit singleton ─────────────────────────────────────────────
 let kitInstance: AppKit | null = null
-export function getKit(): AppKit {
+function getKit(): AppKit {
   if (!kitInstance) {
     kitInstance = new AppKit()
-    // Log semua event SDK ke console biar progress bridge terlihat
-    // (approve / burn / fetchAttestation / mint).
     try {
       ;(kitInstance as any).on?.('*', (payload: any) => {
         // eslint-disable-next-line no-console
-        console.log('[AppKit event]', payload?.name ?? payload?.event ?? '?', payload)
+        console.log('[AppKit event]', payload?.name ?? '?', payload)
       })
     } catch (err) {
-      console.warn('[AppKit] tidak bisa subscribe event:', err)
+      console.warn('[AppKit] event subscribe gagal:', err)
     }
   }
   return kitInstance
@@ -59,39 +90,35 @@ export type AppKitChain =
   | 'Arbitrum_Sepolia'
   | 'Solana_Devnet'
 
+// ── EVM adapter ─────────────────────────────────────────────────
 export async function buildEvmAdapter() {
-  if (!window.ethereum) throw new Error('Tidak ada wallet EVM (MetaMask) terdeteksi.')
+  if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
   return await createViemAdapterFromProvider({
     provider: window.ethereum,
-    capabilities: {
-      addressContext: 'user-controlled',
-      supportedChains: [ArcTestnet],
-    },
+    capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet] },
   } as any)
 }
 
+// ── Solana adapter ──────────────────────────────────────────────
 export async function buildSolanaAdapter() {
-  const raw = getSolflareProvider()
-  if (!raw) {
-    throw new Error('Wallet Solflare tidak terdeteksi. Install Solflare (https://solflare.com) lalu refresh halaman.')
+  const auto = autoDetectSolanaProvider()
+  if (!auto) {
+    throw new Error('Wallet Solana tidak terdeteksi. Install Solflare atau Phantom.')
   }
-  // Solflare butuh user approval terlebih dahulu.
-  if (typeof raw.connect === 'function' && !raw.isConnected) {
+
+  const raw = auto.kind === 'phantom' ? getPhantomProvider()! : getSolflareProvider()!
+  if (!raw) throw new Error(`Wallet ${auto.kind} tidak ditemukan.`)
+
+  if (!raw.isConnected) {
     await raw.connect()
   }
-  // Bungkus supaya provider punya `.address` (string base58) — adapter
-  // melempar "Wallet provider must have a connected address after connection"
-  // kalau properti ini tidak ada.
-  const provider = wrapSolflare(raw)
-  // PENTING: kunci RPC ke Solana Devnet — tanpa ini adapter default ke
-  // mainnet RPC dan gagal ketika bridge ke chain Solana_Devnet.
+
+  // Bungkus provider — expose .address (string base58) yang adapter butuhkan.
+  const provider = auto.kind === 'phantom' ? wrapPhantom(raw) : wrapSolflare(raw)
+
   return await createSolanaKitAdapterFromProvider({
     provider,
-    getRpc: ({ chain }: { chain: { name: string } }) => {
-      // Devnet selalu pakai endpoint devnet resmi.
-      if (/devnet/i.test(chain.name)) return createSolanaRpc(SOLANA_DEVNET_RPC)
-      return createSolanaRpc(SOLANA_DEVNET_RPC)
-    },
+    getRpc: () => createSolanaRpc(SOLANA_DEVNET_RPC),
     capabilities: {
       addressContext: 'user-controlled',
       supportedChains: [SolanaDevnet],
@@ -99,98 +126,107 @@ export async function buildSolanaAdapter() {
   } as any)
 }
 
-/**
- * Connect ke Solflare; kembalikan public key (base58).
- */
-export async function connectSolanaWallet(): Promise<string> {
-  const provider = getSolflareProvider()
-  if (!provider) {
-    throw new Error('Solflare belum ter-install. Pasang dari https://solflare.com lalu refresh.')
+// ── Wallet connect / disconnect ─────────────────────────────────
+export async function connectSolanaWallet(kind: 'solflare' | 'phantom' = 'phantom'): Promise<string> {
+  const raw = kind === 'phantom' ? getPhantomProvider() : getSolflareProvider()
+  if (!raw) {
+    throw new Error(`${kind === 'phantom' ? 'Phantom' : 'Solflare'} belum ter-install.`)
   }
-  if (typeof provider.connect !== 'function') {
-    throw new Error('Solflare tidak mendukung metode connect()')
-  }
-  const resp = await provider.connect()
-  const pk =
-    resp?.publicKey?.toString?.() ||
-    provider.publicKey?.toString?.() ||
-    (typeof resp === 'string' ? resp : null)
-  if (!pk) throw new Error('Gagal mendapat public key dari Solflare.')
+  await raw.connect()
+  const pk = raw.publicKey?.toString?.() ?? null
+  if (!pk) throw new Error(`Gagal dapat public key dari ${kind}.`)
+  _solanaKind = kind
   return pk
 }
 
 export async function disconnectSolanaWallet(): Promise<void> {
-  const provider = getSolflareProvider()
   try {
-    await provider?.disconnect?.()
-  } catch {
-    /* ignore */
-  }
+    const raw = _solanaKind === 'phantom' ? getPhantomProvider() : getSolflareProvider()
+    await raw?.disconnect?.()
+  } catch { /* ignore */ }
+  _solanaKind = null
 }
 
 export function getConnectedSolanaPubkey(): string | null {
-  const provider = getSolflareProvider()
-  if (provider?.isConnected && provider.publicKey) {
-    try {
-      return provider.publicKey.toString()
-    } catch {
-      return null
-    }
+  const auto = autoDetectSolanaProvider()
+  if (!auto) return null
+  const raw = auto.kind === 'phantom' ? getPhantomProvider() : getSolflareProvider()
+  if (raw?.isConnected && raw.publicKey) {
+    try { return raw.publicKey.toString() } catch { return null }
   }
   return null
 }
 
+// ── Balance checking ─────────────────────────────────────────────
+const _solanaRpc = createSolanaRpc(SOLANA_DEVNET_RPC)
+
+/** Cek saldo SOL (dalam SOL, bukan lamports) */
+export async function getSolBalance(pubkey: string): Promise<number> {
+  try {
+    const resp = await (_solanaRpc.getBalance as any)(pubkey).send()
+    return Number(resp.value) / 1e9
+  } catch {
+    return 0
+  }
+}
+
+/** Cek saldo USDC Devnet di associated token account (ATA) */
+export async function getUsdcBalance(pubkey: string): Promise<number> {
+  try {
+    const resp = await (_solanaRpc.getTokenAccountsByOwner as any)(pubkey, {
+      programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    }).send()
+    const accounts: any[] = [...(resp.value ?? [])]
+    for (const acc of accounts) {
+      const info = acc.account.data.parsed?.info
+      if (info?.mint?.toLowerCase() === USDC_DEVNET_MINT.toLowerCase()) {
+        return parseFloat(info.tokenAmount.uiAmountString ?? '0')
+      }
+    }
+    return 0
+  } catch {
+    return 0
+  }
+}
+
+// ── Bridge ──────────────────────────────────────────────────────
 export interface BridgeArgs {
   from: AppKitChain
   to: AppKitChain
-  amount: string // contoh: "1.00"
-  /** Default 'FAST' (~8-20s pada CCTPv2 Arc/Solana Devnet). */
+  amount: string
   speed?: 'FAST' | 'SLOW'
-  /** Override penerima — default ambil dari adapter destinasi. */
   recipient?: string
 }
 
-/**
- * Bridge USDC dua arah Arc ↔ Solana lewat AppKit.bridge().
- * SDK menangani: approve → burn → attestation → mint.
- */
 export async function bridgeWithAppKit(args: BridgeArgs): Promise<unknown> {
   const kit = getKit()
   const fromIsSolana = args.from === 'Solana_Devnet'
-  const toIsSolana = args.to === 'Solana_Devnet'
+  const toIsSolana   = args.to   === 'Solana_Devnet'
 
-  // Cek konsistensi route: harus ada salah satu sisi non-Solana untuk skenario kita.
   if (fromIsSolana && toIsSolana) {
     throw new Error('Bridge Solana ke Solana tidak didukung.')
   }
 
-  const evmAdapter = (!fromIsSolana || !toIsSolana) ? await buildEvmAdapter() : null
-  const solanaAdapter = (fromIsSolana || toIsSolana) ? await buildSolanaAdapter() : null
+  const evmAdapter   = await buildEvmAdapter()
+  const solanaAdapter = await buildSolanaAdapter()
 
-  if ((fromIsSolana || toIsSolana) && !solanaAdapter) {
-    throw new Error('Adapter Solana gagal dibuat.')
-  }
-  if ((!fromIsSolana || !toIsSolana) && !evmAdapter) {
-    throw new Error('Adapter EVM gagal dibuat.')
-  }
-
-  const speed: TransferSpeed = (args.speed === 'SLOW' ? TransferSpeed.SLOW : TransferSpeed.FAST)
+  const speed: TransferSpeed = args.speed === 'SLOW' ? TransferSpeed.SLOW : TransferSpeed.FAST
 
   const fromCtx: any = {
-    adapter: fromIsSolana ? solanaAdapter! : evmAdapter!,
-    chain: args.from,
+    adapter: fromIsSolana ? solanaAdapter : evmAdapter,
+    chain:   args.from,
   }
   const toCtx: any = {
-    adapter: toIsSolana ? solanaAdapter! : evmAdapter!,
-    chain: args.to,
+    adapter: toIsSolana ? solanaAdapter : evmAdapter,
+    chain:   args.to,
   }
   if (args.recipient) toCtx.recipientAddress = args.recipient
 
   return await kit.bridge({
     from: fromCtx,
-    to: toCtx,
+    to:   toCtx,
     amount: args.amount,
-    token: 'USDC',
+    token:  'USDC',
     config: { transferSpeed: speed },
   } as any)
 }
