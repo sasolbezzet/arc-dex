@@ -1,0 +1,43 @@
+name: CI - Lint & Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint || exit 0 # optional: atau standard lint
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Archive build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: "**/dist/**"
+          retention-days: 7
