@@ -3,7 +3,7 @@ import { CHAINS, IRIS, MESSAGE_TRANSMITTER_V2, findChain, type ChainCfg, type Ch
 import { txHistory } from '../txHistory'
 import { bridgeWithAppKit, connectSolanaWallet, disconnectSolanaWallet, getConnectedSolanaPubkey, getSolBalance, getUsdcBalance, getSolanaKind, detectSolanaKind, type AppKitChain } from '../appKit'
 import { wrapSolflare, wrapPhantom } from '../solflareWrapper'
-import { PublicKey, Transaction, Connection, TransactionInstruction } from '@solana/web3.js'
+import { PublicKey, Transaction, Connection, TransactionInstruction, VersionedTransaction } from '@solana/web3.js'
 import { Buffer } from 'buffer'
 
 const ERC20_APPROVE = '0x095ea7b3'
@@ -349,7 +349,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
     } catch (e: any) {
       const errMsg = e?.message || 'Bridge App Kit gagal'
       setStatus({ type: 'error', msg: errMsg })
-      txHistory.update(txId, { status: 'error', error: errMsg })
+    txHistory.update(txId, { status: 'error', error: errMsg })
     }
     setLoading(false)
     setStep('')
@@ -547,12 +547,28 @@ let rawProvider = (window as any).solflare ?? (window as any).phantom?.solana
         const attestationBytes = Buffer.from(attestation.slice(2), 'hex')
         const data = Buffer.concat([messageBytes, attestationBytes])
         const instruction = new TransactionInstruction({ keys: [], programId, data })
-        const transaction = new Transaction().add(instruction)
-        transaction.feePayer = new PublicKey(rawProvider.publicKey)
-        const { blockhash } = await connection.getLatestBlockhash()
-        transaction.recentBlockhash = blockhash
+        // Build transaction compatible with provider type
+        let txToSign: any
+        if (rawProvider.isSolflare) {
+          // Solflare expects VersionedTransaction
+          const recent = await connection.getLatestBlockhash()
+          const { MessageV0 } = await import('@solana/web3.js')
+          const messageV0 = MessageV0.compile({
+            payerKey: new PublicKey(rawProvider.publicKey),
+            recentBlockhash: recent.blockhash,
+            instructions: [instruction],
+          })
+          txToSign = new VersionedTransaction(messageV0)
+        } else {
+          // Phantom (or generic) works with legacy Transaction
+          const transaction = new Transaction().add(instruction)
+          transaction.feePayer = new PublicKey(rawProvider.publicKey)
+          const { blockhash } = await connection.getLatestBlockhash()
+          transaction.recentBlockhash = blockhash
+          txToSign = transaction
+        }
         // Sign and send transaction via wallet
-        const signed = await rawProvider.signTransaction(transaction)
+        const signed = await rawProvider.signTransaction(txToSign)
         const rawTx = signed.serialize()
         const txSignature = await connection.sendRawTransaction(rawTx)
         await connection.confirmTransaction(txSignature, 'processed')
@@ -572,7 +588,7 @@ let rawProvider = (window as any).solflare ?? (window as any).phantom?.solana
     } catch (e: any) {
       const errMsg = e?.message || 'Bridge gagal'
       setStatus({ type: 'error', msg: errMsg, steps: [...localSteps] })
-      txHistory.update(txId, { status: 'error', error: errMsg })
+    txHistory.update(txId, { status: 'error', error: errMsg })
     }
     setLoading(false)
     setStep('')
