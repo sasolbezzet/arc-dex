@@ -279,7 +279,7 @@ export function BridgePanel({ address, circleWallet: _circleWallet, balances, eo
         from: fromChain as AppKitChain,
         to: toChain as AppKitChain,
         amount,
-        speed: 'FAST',
+        speed: 'SLOW',
         recipient,
       })
       const burnTx = result?.burnTx || result?.sourceTx || result?.fromTx?.hash
