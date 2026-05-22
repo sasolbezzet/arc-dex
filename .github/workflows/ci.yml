@@ -17,11 +17,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '20'
           cache: 'pnpm'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint || exit 0 # optional: atau standard lint
+      - run: pnpm lint || exit 0
 
   build:
     name: Build
@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '20'
           cache: 'pnpm'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
