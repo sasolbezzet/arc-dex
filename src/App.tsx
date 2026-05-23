@@ -5,7 +5,7 @@ import { BridgePanel } from './components/BridgePanel'
 import { SendPanel } from './components/SendPanel'
 import { InfoPanel } from './components/InfoPanel'
 import { OnboardingPanel } from './components/OnboardingPanel'
-const API = 'https://43.163.98.128.nip.io'
+const API = ''
 const TABS = [{ id:'swap', label:'Swap', icon:'⇄' },{ id:'bridge', label:'Bridge', icon:'⛓' },{ id:'send', label:'Send', icon:'→' },{ id:'info', label:'Info', icon:'ℹ' }]
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0' }
 export default function App() {

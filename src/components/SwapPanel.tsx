@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-const API = 'https://43.163.98.128.nip.io'
+const API = ''
 const TOKENS = ['USDC','EURC']
 type Status = { type:'success'|'error'; msg:string; link?:string }
 interface Props { address:string|null; circleWallet:{id:string;address:string}|null; balances:Record<string,string>; onRefresh:()=>void }
