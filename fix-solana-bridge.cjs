@@ -1,3 +1,6 @@
+const fs = require('fs');
+
+fs.writeFileSync('src/components/BridgePanel.tsx', `
 import { useState, useEffect } from 'react'
 import { BridgeChain } from '@circle-fin/app-kit'
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any } }
@@ -111,7 +114,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const d = await r.json()
       if (!r.ok) throw new Error(d.error)
       localSteps.push({ name:'circle-transfer', state:'success', txHash:d.txHash, explorerUrl:d.explorerUrl })
-      setStatus({ type:'info', msg:'✓ USDC di MetaMask!\n⏳ Siapkan approve...', steps:[...localSteps] })
+      setStatus({ type:'info', msg:'✓ USDC di MetaMask!\\n⏳ Siapkan approve...', steps:[...localSteps] })
       await new Promise(r=>setTimeout(r,3000))
     }
 
@@ -142,11 +145,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     setStatus({ type:'info', msg:'⏳ Menunggu approve...', steps:[...localSteps] })
     await waitEvmTx(approveTx)
     localSteps[localSteps.length-1].state='success'
-    localSteps[localSteps.length-1].explorerUrl=fromChain==='Arc_Testnet'?`https://testnet.arcscan.app/tx/${approveTx}`:`https://sepolia.etherscan.io/tx/${approveTx}`
+    localSteps[localSteps.length-1].explorerUrl=fromChain==='Arc_Testnet'?\`https://testnet.arcscan.app/tx/\${approveTx}\`:\`https://sepolia.etherscan.io/tx/\${approveTx}\`
 
     // Burn
     setStep('MetaMask: Confirm burn (2/2)...')
-    setStatus({ type:'info', msg:'✓ Approve!\n⏳ MetaMask popup 2/2: Burn...', steps:[...localSteps] })
+    setStatus({ type:'info', msg:'✓ Approve!\\n⏳ MetaMask popup 2/2: Burn...', steps:[...localSteps] })
 
     let burnData: string
     if (isToSolana && solanaWallet) {
@@ -165,11 +168,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     setStatus({ type:'info', msg:'⏳ Menunggu burn...', steps:[...localSteps] })
     await waitEvmTx(burnTx)
     localSteps[localSteps.length-1].state='success'
-    localSteps[localSteps.length-1].explorerUrl=fromChain==='Arc_Testnet'?`https://testnet.arcscan.app/tx/${burnTx}`:`https://sepolia.etherscan.io/tx/${burnTx}`
+    localSteps[localSteps.length-1].explorerUrl=fromChain==='Arc_Testnet'?\`https://testnet.arcscan.app/tx/\${burnTx}\`:\`https://sepolia.etherscan.io/tx/\${burnTx}\`
 
     // Attestation + Mint
     localSteps.push({ name:'attestation', state:'pending' })
-    setStatus({ type:'info', msg:'✓ Burn sukses!\n⏳ Menunggu attestation Circle (~20 detik)...', steps:[...localSteps] })
+    setStatus({ type:'info', msg:'✓ Burn sukses!\\n⏳ Menunggu attestation Circle (~20 detik)...', steps:[...localSteps] })
     setStep('Menunggu attestation...')
 
     if (isToSolana) {
@@ -185,14 +188,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         setStatus({ type:'info', msg:'⏳ Solflare akan popup untuk sign mint di Solana...', steps:[...localSteps] })
         try {
           const solTxHash = await signSolanaReceiveMessage(mintData.attestation, mintData.message, mintData.toAddress)
-          localSteps.push({ name:'mint', state:'success', txHash:solTxHash, explorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet` })
-          setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → Solana Devnet`, steps:[...localSteps] })
+          localSteps.push({ name:'mint', state:'success', txHash:solTxHash, explorerUrl:\`https://explorer.solana.com/tx/\${solTxHash}?cluster=devnet\` })
+          setStatus({ type:'success', msg:\`✓ Bridge berhasil! \${amount} USDC → Solana Devnet\`, steps:[...localSteps] })
         } catch(e:any) {
           // Mint manual fallback
           localSteps.push({ name:'mint', state:'error' })
           setStatus({
             type:'warning',
-            msg:`✗ Mint GAGAL di Solana Devnet\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (USDC sudah di-burn):\n${burnTx.slice(0,40)}...\n\nUSDA Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
+            msg:\`✗ Mint GAGAL di Solana Devnet\\nstate=error | mint=error\\nAlasan: \${e.message?.slice(0,150)}\\nBurn tx (USDC sudah di-burn):\\n\${burnTx.slice(0,40)}...\\n\\nUSDA Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.\`,
             steps:[...localSteps]
           })
           return
@@ -205,7 +208,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       if (!mintResp.ok || !mintData.success) throw new Error(mintData.error||'Mint gagal')
       localSteps[localSteps.length-1].state='success'
       localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
-      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
+      setStatus({ type:'success', msg:\`✓ Bridge berhasil! \${amount} USDC → \${toChain}\`, steps:[...localSteps] })
     }
 
     setAmount('')
@@ -224,8 +227,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     try {
       // Burn USDC di Solana via Solflare
       const burnTxHash = await burnSolanaUsdc(amtNum, address)
-      localSteps.push({ name:'burn', state:'success', txHash:burnTxHash, explorerUrl:`https://explorer.solana.com/tx/${burnTxHash}?cluster=devnet` })
-      setStatus({ type:'info', msg:`✓ Burn sukses di Solana!\n⏳ Menunggu attestation (~20 detik)...`, steps:[...localSteps] })
+      localSteps.push({ name:'burn', state:'success', txHash:burnTxHash, explorerUrl:\`https://explorer.solana.com/tx/\${burnTxHash}?cluster=devnet\` })
+      setStatus({ type:'info', msg:\`✓ Burn sukses di Solana!\\n⏳ Menunggu attestation (~20 detik)...\`, steps:[...localSteps] })
 
       // Backend mint di Arc
       localSteps.push({ name:'attestation', state:'pending' })
@@ -235,7 +238,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       if (!mintResp.ok || !mintData.success) throw new Error(mintData.error||'Mint di Arc gagal')
       localSteps[localSteps.length-1].state='success'
       localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
-      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC Solana → Arc Testnet`, steps:[...localSteps] })
+      setStatus({ type:'success', msg:\`✓ Bridge berhasil! \${amount} USDC Solana → Arc Testnet\`, steps:[...localSteps] })
       setAmount('')
       setTimeout(onRefresh,3000)
     } catch(e:any) {
@@ -525,7 +528,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       )}
 
       <button onClick={handleBridge} disabled={!amount||loading||fromChain===toChain} className='btn btn-primary'>
-        {loading ? step||'⏳ Memproses...' : amount ? `Bridge ${amount} USDC` : 'Bridge USDC'}
+        {loading ? step||'⏳ Memproses...' : amount ? \`Bridge \${amount} USDC\` : 'Bridge USDC'}
       </button>
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>
         {isToSolana ? 'Bridge Arc → Solana via Circle CCTP v2. Solflare sign mint.' :
@@ -535,3 +538,6 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     </div>
   )
 }
+`.trim())
+
+console.log('BridgePanel updated with Solana support')
