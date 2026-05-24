@@ -190,7 +190,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         setStep('Solflare: Sign receiveMessage di Solana...')
         setStatus({ type:'info', msg:'⏳ Solflare akan popup untuk sign mint di Solana...', steps:[...localSteps] })
         try {
-          const solTxHash = await signSolanaReceiveMessage(mintData.attestation, mintData.message, mintData.toAddress)
+          const solTxHash = await signSolanaReceiveMessage(mintData.attestation, mintData.message, solanaWallet!.address)
           localSteps.push({ name:'mint', state:'success', txHash:solTxHash, explorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet` })
           setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → Solana Devnet`, steps:[...localSteps] })
         } catch(e:any) {
@@ -249,10 +249,36 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     }
   }
 
+  // ── Browser-compatible helpers ──
+  const hexToU8 = (hex: string): Uint8Array => {
+    const h = hex.startsWith('0x') ? hex.slice(2) : hex
+    const arr = new Uint8Array(h.length / 2)
+    for (let i = 0; i < arr.length; i++) arr[i] = parseInt(h.slice(i*2, i*2+2), 16)
+    return arr
+  }
+  const concatU8 = (...arrays: Uint8Array[]): Uint8Array => {
+    const total = arrays.reduce((s, a) => s + a.length, 0)
+    const out = new Uint8Array(total)
+    let offset = 0
+    arrays.forEach(a => { out.set(a, offset); offset += a.length })
+    return out
+  }
+  const u32LE = (n: number): Uint8Array => {
+    const buf = new Uint8Array(4)
+    new DataView(buf.buffer).setUint32(0, n, true)
+    return buf
+  }
+  const u64LE = (n: bigint): Uint8Array => {
+    const buf = new Uint8Array(8)
+    new DataView(buf.buffer).setBigUint64(0, n, true)
+    return buf
+  }
+  const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
+
   // ── Solana burn helper ──
   const burnSolanaUsdc = async (amtNum: number, mintRecipientEvm: string): Promise<string> => {
     const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = await import('@solana/web3.js')
-    const { getAssociatedTokenAddress } = await import('@solana/spl-token')
+    const { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
     const provider = solanaWallet!.provider
     const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
@@ -260,83 +286,52 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
     const senderAta = await getAssociatedTokenAddress(mint, owner)
 
-    // Encode EVM recipient sebagai bytes32
-    const evmAddr = mintRecipientEvm.startsWith('0x') ? mintRecipientEvm.slice(2) : mintRecipientEvm
-    const mintRecipientBytes = Buffer.alloc(32)
-    Buffer.from(evmAddr.toLowerCase().padStart(64,'0').slice(0,64), 'hex').copy(mintRecipientBytes)
+    // EVM address sebagai bytes32 mintRecipient
+    const evmHex = (mintRecipientEvm.startsWith('0x') ? mintRecipientEvm.slice(2) : mintRecipientEvm).toLowerCase().padStart(64, '0')
+    const mintRecipientBytes = hexToU8(evmHex)
 
-    const amountLamports = BigInt(Math.round(amtNum * 1e6)) // USDC 6 decimals
+    const amountLamports = BigInt(Math.round(amtNum * 1e6))
 
-    // Build depositForBurn instruction untuk Solana CCTP
-    // Instruction data: discriminator(8) + amount(8 le) + destinationDomain(4 le) + mintRecipient(32) + destinationCaller(32)
-    const discriminator = Buffer.from([210, 114, 249, 160, 192, 146, 195, 101]) // depositForBurn
-    const amountBuf = Buffer.alloc(8)
-    amountBuf.writeBigUInt64LE(amountLamports)
-    const destDomainBuf = Buffer.alloc(4)
-    destDomainBuf.writeUInt32LE(26) // Arc domain
-    const destCallerBuf = Buffer.alloc(32) // zero = any
+    // depositForBurn discriminator
+    const discriminator = new Uint8Array([210, 114, 249, 160, 192, 146, 195, 101])
+    const destCallerBytes = new Uint8Array(32)
+    const data = concatU8(discriminator, u64LE(amountLamports), u32LE(26), mintRecipientBytes, destCallerBytes)
 
-    const data = Buffer.concat([discriminator, amountBuf, destDomainBuf, mintRecipientBytes, destCallerBuf])
+    const tmProgram = new PublicKey(SOLANA_CCTP.tokenMessengerProgram)
+    const mtProgram = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
 
-    const tokenMessengerProgram = new PublicKey(SOLANA_CCTP.tokenMessengerProgram)
-
-    // PDAs untuk Solana CCTP
-    const [tokenMessengerMinterPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('token_messenger_minter')],
-      tokenMessengerProgram
-    )
-    const [remoteTokenMessengerPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('remote_token_messenger'), Buffer.alloc(4, 0).fill(26, 0, 4)],
-      tokenMessengerProgram
-    )
-    const [tokenMinterPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('token_minter')],
-      tokenMessengerProgram
-    )
-    const [localTokenPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('local_token'), mint.toBuffer()],
-      tokenMessengerProgram
-    )
-    const [burnTokenAccountPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('burn_token_account'), mint.toBuffer()],
-      tokenMessengerProgram
-    )
-    const messageTransmitterProgram = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
-    const [messageTransmitterPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('message_transmitter')],
-      messageTransmitterProgram
-    )
-    const [messageSentEventDataPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('__event_authority')],
-      messageTransmitterProgram
-    )
-
-    const { TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
+    const [tmMinterPDA] = PublicKey.findProgramAddressSync([enc('token_messenger_minter')], tmProgram)
+    const domainBuf = new Uint8Array(4); new DataView(domainBuf.buffer).setUint32(0, 26, true)
+    const [remoteTokenMsgPDA] = PublicKey.findProgramAddressSync([enc('remote_token_messenger'), domainBuf], tmProgram)
+    const [tokenMinterPDA] = PublicKey.findProgramAddressSync([enc('token_minter')], tmProgram)
+    const [localTokenPDA] = PublicKey.findProgramAddressSync([enc('local_token'), mint.toBytes()], tmProgram)
+    const [burnTokenAccPDA] = PublicKey.findProgramAddressSync([enc('burn_token_account'), mint.toBytes()], tmProgram)
+    const [mtPDA] = PublicKey.findProgramAddressSync([enc('message_transmitter')], mtProgram)
+    const [eventAuthPDA] = PublicKey.findProgramAddressSync([enc('__event_authority')], mtProgram)
 
     const ix = new TransactionInstruction({
-      programId: tokenMessengerProgram,
+      programId: tmProgram,
       keys: [
         { pubkey: owner, isSigner: true, isWritable: true },
         { pubkey: senderAta, isSigner: false, isWritable: true },
-        { pubkey: tokenMessengerMinterPDA, isSigner: false, isWritable: false },
-        { pubkey: remoteTokenMessengerPDA, isSigner: false, isWritable: false },
+        { pubkey: tmMinterPDA, isSigner: false, isWritable: false },
+        { pubkey: remoteTokenMsgPDA, isSigner: false, isWritable: false },
         { pubkey: tokenMinterPDA, isSigner: false, isWritable: true },
         { pubkey: localTokenPDA, isSigner: false, isWritable: true },
-        { pubkey: burnTokenAccountPDA, isSigner: false, isWritable: true },
+        { pubkey: burnTokenAccPDA, isSigner: false, isWritable: true },
         { pubkey: mint, isSigner: false, isWritable: true },
-        { pubkey: messageTransmitterPDA, isSigner: false, isWritable: true },
-        { pubkey: messageSentEventDataPDA, isSigner: false, isWritable: true },
-        { pubkey: messageTransmitterProgram, isSigner: false, isWritable: false },
+        { pubkey: mtPDA, isSigner: false, isWritable: true },
+        { pubkey: eventAuthPDA, isSigner: false, isWritable: true },
+        { pubkey: mtProgram, isSigner: false, isWritable: false },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data,
+      data: Buffer.from(data),
     })
 
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
     const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: owner })
     tx.add(ix)
-
     const signed = await provider.signTransaction(tx)
     const sig = await conn.sendRawTransaction(signed.serialize())
     await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
@@ -344,7 +339,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   }
 
   // ── Solana receiveMessage helper ──
-  const signSolanaReceiveMessage = async (attestation: string, message: string, toAddress: string): Promise<string> => {
+  const signSolanaReceiveMessage = async (attestationHex: string, messageHex: string, toAddress: string): Promise<string> => {
     const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = await import('@solana/web3.js')
     const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
@@ -354,53 +349,50 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
     const recipientAta = await getAssociatedTokenAddress(mint, owner)
 
-    const messageTransmitterProgram = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
-    const tokenMessengerProgram = new PublicKey(SOLANA_CCTP.tokenMessengerProgram)
-
-    const msgBytes = Buffer.from(message.startsWith('0x') ? message.slice(2) : message, 'hex')
-    const attBytes = Buffer.from(attestation.startsWith('0x') ? attestation.slice(2) : attestation, 'hex')
+    const msgBytes = hexToU8(messageHex)
+    const attBytes = hexToU8(attestationHex)
 
     // receiveMessage discriminator
-    const discriminator = Buffer.from([216, 249, 210, 149, 228, 210, 244, 218])
-    const msgLenBuf = Buffer.alloc(4); msgLenBuf.writeUInt32LE(msgBytes.length)
-    const attLenBuf = Buffer.alloc(4); attLenBuf.writeUInt32LE(attBytes.length)
-    const data = Buffer.concat([discriminator, msgLenBuf, msgBytes, attLenBuf, attBytes])
+    const discriminator = new Uint8Array([216, 249, 210, 149, 228, 210, 244, 218])
+    const data = concatU8(discriminator, u32LE(msgBytes.length), msgBytes, u32LE(attBytes.length), attBytes)
 
-    const [messageTransmitterPDA] = PublicKey.findProgramAddressSync([Buffer.from('message_transmitter')], messageTransmitterProgram)
-    const [usedNoncesPDA] = PublicKey.findProgramAddressSync([Buffer.from('used_nonces'), msgBytes.slice(0,32)], messageTransmitterProgram)
-    const [tokenMessengerMinterPDA] = PublicKey.findProgramAddressSync([Buffer.from('token_messenger_minter')], tokenMessengerProgram)
-    const [localTokenPDA] = PublicKey.findProgramAddressSync([Buffer.from('local_token'), mint.toBuffer()], tokenMessengerProgram)
-    const [tokenMinterPDA] = PublicKey.findProgramAddressSync([Buffer.from('token_minter')], tokenMessengerProgram)
-    const [custodyTokenAccountPDA] = PublicKey.findProgramAddressSync([Buffer.from('custody'), mint.toBuffer()], tokenMessengerProgram)
-    const [eventAuthorityPDA] = PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], messageTransmitterProgram)
+    const mtProgram = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
+    const tmProgram = new PublicKey(SOLANA_CCTP.tokenMessengerProgram)
+
+    const [mtPDA] = PublicKey.findProgramAddressSync([enc('message_transmitter')], mtProgram)
+    const [usedNoncesPDA] = PublicKey.findProgramAddressSync([enc('used_nonces'), msgBytes.slice(0, 32)], mtProgram)
+    const [tmMinterPDA] = PublicKey.findProgramAddressSync([enc('token_messenger_minter')], tmProgram)
+    const [localTokenPDA] = PublicKey.findProgramAddressSync([enc('local_token'), mint.toBytes()], tmProgram)
+    const [tokenMinterPDA] = PublicKey.findProgramAddressSync([enc('token_minter')], tmProgram)
+    const [custodyAccPDA] = PublicKey.findProgramAddressSync([enc('custody'), mint.toBytes()], tmProgram)
+    const [eventAuthPDA] = PublicKey.findProgramAddressSync([enc('__event_authority')], mtProgram)
 
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
     const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: owner })
 
-    // Create ATA if needed
     const ataInfo = await conn.getAccountInfo(recipientAta)
     if (!ataInfo) {
       tx.add(createAssociatedTokenAccountInstruction(owner, recipientAta, owner, mint))
     }
 
     tx.add(new TransactionInstruction({
-      programId: messageTransmitterProgram,
+      programId: mtProgram,
       keys: [
         { pubkey: owner, isSigner: true, isWritable: true },
-        { pubkey: messageTransmitterPDA, isSigner: false, isWritable: true },
+        { pubkey: mtPDA, isSigner: false, isWritable: true },
         { pubkey: usedNoncesPDA, isSigner: false, isWritable: true },
-        { pubkey: tokenMessengerMinterPDA, isSigner: false, isWritable: false },
+        { pubkey: tmMinterPDA, isSigner: false, isWritable: false },
         { pubkey: localTokenPDA, isSigner: false, isWritable: true },
         { pubkey: tokenMinterPDA, isSigner: false, isWritable: true },
         { pubkey: recipientAta, isSigner: false, isWritable: true },
-        { pubkey: custodyTokenAccountPDA, isSigner: false, isWritable: true },
+        { pubkey: custodyAccPDA, isSigner: false, isWritable: true },
         { pubkey: mint, isSigner: false, isWritable: true },
-        { pubkey: eventAuthorityPDA, isSigner: false, isWritable: false },
-        { pubkey: tokenMessengerProgram, isSigner: false, isWritable: false },
+        { pubkey: eventAuthPDA, isSigner: false, isWritable: false },
+        { pubkey: tmProgram, isSigner: false, isWritable: false },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data,
+      data: Buffer.from(data),
     }))
 
     const signed = await provider.signTransaction(tx)
