@@ -23,7 +23,6 @@ function toBase58(pk: any): string | null {
 }
 
 function decodeB64(s: string): Uint8Array {
-  if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(s, 'base64'))
   const bin = atob(s)
   const out = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
