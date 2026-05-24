@@ -160,7 +160,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const { PublicKey } = await import('@solana/web3.js')
       const solPubkey = new PublicKey(solanaWallet.address)
       const solBytes = solPubkey.toBytes()
-      const mintRecipient = Buffer.from(solBytes).toString('hex').padStart(64,'0')
+      const mintRecipient = Array.from(solBytes).map(b=>b.toString(16).padStart(2,'0')).join('').padStart(64,'0')
       burnData = '0x8e0250ee'+enc256(amtMicro)+enc256(BigInt(dstDomain))+mintRecipient+encAddr(srcInfo.usdc)+enc256(0n)+enc256(0n)+enc256(2000n)
     } else {
       burnData = '0x8e0250ee'+enc256(amtMicro)+enc256(BigInt(dstDomain))+encAddr(address)+encAddr(srcInfo.usdc)+enc256(0n)+enc256(0n)+enc256(2000n)
@@ -326,7 +326,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data: Buffer.from(data),
+      data: data as Buffer,
     })
 
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
@@ -392,7 +392,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data: Buffer.from(data),
+      data: data as Buffer,
     }))
 
     const signed = await provider.signTransaction(tx)
