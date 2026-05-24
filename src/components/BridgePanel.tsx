@@ -256,9 +256,36 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const selector = '0x57ecfd28'
       const calldata = selector + '0000000000000000000000000000000000000000000000000000000000000040' + attOffsetHex + encodeBytes(msgHex) + encodeBytes(attHex)
 
+      // Query gas price untuk mint di destination (EIP-1559 aware)
+      let maxFeePerGas = '0x77359400' // fallback ~20 gwei
+      let maxPriorityFeePerGas = '0x3b9aca00' // fallback ~1 gwei
+      try {
+        // Try to get EIP-1559 fee data
+        const feeData = await window.ethereum.request({
+          method: 'eth_feeHistory',
+          params: ['0x1', 'latest', []],
+        })
+        const baseFee = BigInt(feeData.result.baseFeePerGas[0])
+        // Get suggested priority fee
+        const priorityFee = await window.ethereum.request({
+          method: 'eth_maxPriorityFeePerGas',
+        })
+        maxPriorityFeePerGas = '0x' + BigInt(priorityFee).toString(16)
+        // maxFeePerGas = baseFee + priorityFee
+        maxFeePerGas = '0x' + (baseFee + BigInt(priorityFee)).toString(16)
+      } catch (e) {
+        // Fallback to legacy gasPrice if EIP-1559 not supported
+        try {
+          const gp = await window.ethereum.request({ method: 'eth_gasPrice' })
+          maxFeePerGas = '0x' + (BigInt(gp) * 120n / 100n).toString(16)
+          maxPriorityFeePerGas = maxFeePerGas // for legacy chains
+        } catch (e2) {
+          // Keep fallbacks
+        }
+      }
       const mintTx = await window.ethereum.request({
         method: 'eth_sendTransaction',
-        params: [{ from: address, to: DST_TRANSMITTER[toChain], data: calldata, gas: '0x493e0' }]
+        params: [{ from: address, to: DST_TRANSMITTER[toChain], data: calldata, gas: '0x493e0', maxFeePerGas: maxFeePerGas, maxPriorityFeePerGas: maxPriorityFeePerGas }]
       })
       localSteps.push({ name:'mint', state:'pending', txHash:mintTx })
       setStatus({ type:'info', msg:'⏳ Menunggu mint dikonfirmasi...', steps:[...localSteps] })
@@ -342,6 +369,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
     const provider = solanaWallet!.provider
+    if (!provider.isConnected) await provider.connect()
     const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
     const owner = new PublicKey(solanaWallet!.address)
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
@@ -387,7 +415,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data: data as Buffer,
+      data: data as any,
     })
 
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
@@ -404,7 +432,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = await import('@solana/web3.js')
     const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
+    // Re-connect Solflare untuk pastikan popup muncul
     const provider = solanaWallet!.provider
+    if (!provider.isConnected) await provider.connect()
     const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
     const owner = new PublicKey(toAddress)
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
@@ -453,7 +483,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data: data as Buffer,
+      data: data as any,
     }))
 
     const signed = await provider.signTransaction(tx)
