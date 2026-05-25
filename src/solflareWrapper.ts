@@ -125,14 +125,29 @@ export function wrapPhantom(raw: any): any {
       try { await raw.disconnect?.() } catch { /* ignore */ }
     },
 
-    // Decode base64 → VersionedTransaction untuk pastikan format signature valid
+    // Phantom: terima langsung tanpa decode (beda dari Solflare)
+    // Phantom internal handling lebih reliable dengan input asli
     async signTransaction(input: any): Promise<Uint8Array> {
-      const tx = typeof input === 'string'
-        ? VersionedTransaction.deserialize(decodeB64(input))
-        : input instanceof Uint8Array
-          ? VersionedTransaction.deserialize(input)
-          : input
-      const signed = await raw.signTransaction(tx)
+      const signed = await raw.signTransaction(input)
+      // Coba serialize sebagai VersionedTransaction, fallback ke Transaction
+      try {
+        if (signed instanceof VersionedTransaction) return signed.serialize()
+        if (signed instanceof Transaction) return signed.serialize({ requireAllSignatures: false } as any)
+        if (signed && typeof signed.serialize === 'function') return signed.serialize()
+      } catch {
+        // Phantom kadang return format mixed — coba serialize manual
+        if (signed?.signatures && signed?.message) {
+          // Rekonstruksi sebagai VersionedTransaction
+          try {
+            const vt = new VersionedTransaction(signed.message)
+            // Copy signatures
+            for (const sig of signed.signatures) {
+              if (sig?.signature) vt.addSignature(sig.publicKey, sig.signature)
+            }
+            return vt.serialize()
+          } catch {}
+        }
+      }
       return serializeSigned(signed)
     },
 
