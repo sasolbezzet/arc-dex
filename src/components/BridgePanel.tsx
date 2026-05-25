@@ -24,7 +24,7 @@ const CCTP_SRC: Record<string,{tokenMessenger:string;usdc:string;domain:number}>
 const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, Solana_Devnet:1 }
 // Solana CCTP burn config
 const SOLANA_CCTP = {
-  usdcMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  usdcMint: 'G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5',
   tokenMessengerProgram: 'CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3',
   messageTransmitterProgram: 'CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3',
   domain: 1,
@@ -265,14 +265,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           method: 'eth_feeHistory',
           params: ['0x1', 'latest', []],
         })
-        const baseFee = BigInt(feeData.result.baseFeePerGas[0])
+        const baseFee = BigInt(feeData.baseFeePerGas[0])
         // Get suggested priority fee
         const priorityFee = await window.ethereum.request({
           method: 'eth_maxPriorityFeePerGas',
         })
         maxPriorityFeePerGas = '0x' + BigInt(priorityFee).toString(16)
         // maxFeePerGas = baseFee + priorityFee
-        maxFeePerGas = '0x' + (baseFee + BigInt(priorityFee)).toString(16)
+        maxFeePerGas = '0x' + ((baseFee + BigInt(priorityFee)) * 120n / 100n).toString(16)
       } catch (e) {
         // Fallback to legacy gasPrice if EIP-1559 not supported
         try {

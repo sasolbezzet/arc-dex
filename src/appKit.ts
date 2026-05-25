@@ -26,7 +26,7 @@ declare global {
 
 const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com'
 // USDC Devnet mint di Solana
-const USDC_DEVNET_MINT = '4zMMC9srtZRi3MU1EtsGVoCwaJhWCxuZrZmH2LPdUSJL'
+const USDC_DEVNET_MINT = 'G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5'
 
 // ── Wallet kind tracking ──────────────────────────────────────────
 let _solanaKind: 'solflare' | 'phantom' | null = null

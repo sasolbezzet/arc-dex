@@ -31,7 +31,7 @@ curl -X POST http://localhost:3001/api/mint-cctp-solana \
 
 ## Catatan Lingkungan
 - Circle Iris API (Sandbox): https://iris-api-sandbox.circle.com/v2/messages/:domain?transactionHash=:tx
-- USDC Address Solana Devnet: `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+- USDC Address Solana Devnet: `G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5`
 - Circle Token Messenger/MessageTransmitter Solana Devnet:
   - tokenMessenger: `CirXL1Ljxok6y32zhM3C5C22AevqEM95aERkf36de22`
   - messageTransmitter: `CirAct9xT5NfB5f6pZD5s9sE3o4bxCF58UHk3gHJAVR`

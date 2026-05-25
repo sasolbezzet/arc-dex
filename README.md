@@ -72,7 +72,7 @@ Arc DEX sekarang mendukung **Circle CCTP bridge** ke jaringan **Solana Devnet** 
 ## Config Cepat Local
 - Chain: `Solana_Devnet` sudah ditambahkan ke `CCTP` config di `arc-dex-api/server.mjs`
 - Domain Circle CCTP: 1
-- USDC devnet address: `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+- USDC devnet address: `G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5`
 - Circle services:
   - tokenMessenger: `CirXL1Ljxok6y32zhM3C5C22AevqEM95aERkf36de22`
   - messageTransmitter: `CirAct9xT5NfB5f6pZD5s9sE3o4bxCF58UHk3gHJAVR`
