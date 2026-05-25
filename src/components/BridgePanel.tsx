@@ -258,27 +258,27 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const calldata = selector + '0000000000000000000000000000000000000000000000000000000000000040' + attOffsetHex + encodeBytes(msgHex) + encodeBytes(attHex)
 
       // Query gas price untuk mint di destination (EIP-1559 aware)
-      let maxFeePerGas = '0x77359400' // fallback ~20 gwei
+      let maxFeePerGas = '0x77359400' // fallback ~2 gwei
       let maxPriorityFeePerGas = '0x3b9aca00' // fallback ~1 gwei
       try {
-        // Try to get EIP-1559 fee data
-        const feeData = await window.ethereum.request({
-          method: 'eth_feeHistory',
-          params: ['0x1', 'latest', []],
+        // Get pending block baseFee (lebih akurat dari feeHistory)
+        const pendingBlock = await window.ethereum.request({
+          method: 'eth_getBlockByNumber',
+          params: ['pending', false],
         })
-        const baseFee = BigInt(feeData.baseFeePerGas[0])
+        const baseFee = BigInt(pendingBlock.baseFeePerGas)
         // Get suggested priority fee
         const priorityFee = await window.ethereum.request({
           method: 'eth_maxPriorityFeePerGas',
         })
         maxPriorityFeePerGas = '0x' + BigInt(priorityFee).toString(16)
-        // maxFeePerGas = baseFee + priorityFee
-        maxFeePerGas = '0x' + ((baseFee + BigInt(priorityFee)) * 150n / 100n).toString(16)
+        // maxFeePerGas = (baseFee + priorityFee) * 1.25 (25% buffer)
+        maxFeePerGas = '0x' + ((baseFee + BigInt(priorityFee)) * 125n / 100n).toString(16)
       } catch (e) {
-        // Fallback to legacy gasPrice if EIP-1559 not supported
+        // Fallback to legacy gasPrice if pending block not supported
         try {
           const gp = await window.ethereum.request({ method: 'eth_gasPrice' })
-          maxFeePerGas = '0x' + (BigInt(gp) * 120n / 100n).toString(16)
+          maxFeePerGas = '0x' + (BigInt(gp) * 200n / 100n).toString(16)
           maxPriorityFeePerGas = maxFeePerGas // for legacy chains
         } catch (e2) {
           // Keep fallbacks

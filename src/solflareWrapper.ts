@@ -100,8 +100,8 @@ export function wrapSolflare(raw: any): any {
 /**
  * Wrap raw Phantom provider.
  * Phantom: signTransaction(Transaction|VersionedTransaction|string) → Transaction
- * Phantom tidak perlu decode base64 — bisa terima langsung.
- * Yang penting: serialize hasil return dengan benar.
+ * Fix error #5663012: decode base64 sendiri, kirim VersionedTransaction ke Phantom.
+ * Phantom return Transaction object — serialize dengan serializeSigned().
  */
 export function wrapPhantom(raw: any): any {
   if (!raw) throw new Error('Phantom provider tidak ditemukan')
@@ -125,15 +125,26 @@ export function wrapPhantom(raw: any): any {
       try { await raw.disconnect?.() } catch { /* ignore */ }
     },
 
-    // Phantom menerima input apa pun (string/Transaction/VersionedTransaction)
-    // dan mengembalikan Transaction object. Serialize hasilnya.
+    // Decode base64 → VersionedTransaction untuk pastikan format signature valid
     async signTransaction(input: any): Promise<Uint8Array> {
-      const signed = await raw.signTransaction(input)
+      const tx = typeof input === 'string'
+        ? VersionedTransaction.deserialize(decodeB64(input))
+        : input instanceof Uint8Array
+          ? VersionedTransaction.deserialize(input)
+          : input
+      const signed = await raw.signTransaction(tx)
       return serializeSigned(signed)
     },
 
     async signAllTransactions(inputs: any[]): Promise<Uint8Array[]> {
-      const signed = await raw.signAllTransactions(inputs)
+      const txs = inputs.map((i) =>
+        typeof i === 'string'
+          ? VersionedTransaction.deserialize(decodeB64(i))
+          : i instanceof Uint8Array
+            ? VersionedTransaction.deserialize(i)
+            : i,
+      )
+      const signed = await raw.signAllTransactions(txs)
       return signed.map(serializeSigned)
     },
 
