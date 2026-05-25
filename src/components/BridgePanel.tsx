@@ -1,7 +1,8 @@
 /* eslint-disable */
 import { useState, useEffect } from 'react'
+import { bridgeWithAppKit } from '../appKit'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
-declare global { interface Window { ethereum?: any; solana?: any; solflare?: any } }
+declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
 const API = 'https://43.163.98.128.nip.io'
 
@@ -272,7 +273,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         })
         maxPriorityFeePerGas = '0x' + BigInt(priorityFee).toString(16)
         // maxFeePerGas = baseFee + priorityFee
-        maxFeePerGas = '0x' + ((baseFee + BigInt(priorityFee)) * 120n / 100n).toString(16)
+        maxFeePerGas = '0x' + ((baseFee + BigInt(priorityFee)) * 150n / 100n).toString(16)
       } catch (e) {
         // Fallback to legacy gasPrice if EIP-1559 not supported
         try {
@@ -505,12 +506,68 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     throw new Error('Transaction timeout')
   }
 
+  // ── Arc/EVM → Solana via AppKit (SDK Circle handle semua CCTP) ──
+  const bridgeToSolanaWithAppKit = async () => {
+    if (!address || !amount) return
+    const localSteps: BridgeStep[] = []
+
+    // Step 0: Circle → EOA jika perlu
+    if (fromChain === 'Arc_Testnet' && circleB >= parseFloat(amount) && eoaB < parseFloat(amount)) {
+      setStep('Transfer dari Circle Wallet ke MetaMask...')
+      setStatus({ type:'info', msg:'⏳ Mentransfer USDC dari Circle Wallet ke MetaMask...' })
+      const r = await fetch(API+'/api/prepare-bridge', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({metamaskAddress:address,amount}) })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error)
+      localSteps.push({ name:'circle-transfer', state:'success', txHash:d.txHash, explorerUrl:d.explorerUrl })
+      setStatus({ type:'info', msg:'✓ USDC di MetaMask!\n⏳ AppKit bridge Arc → Solana...', steps:[...localSteps] })
+      await new Promise(r=>setTimeout(r,3000))
+    }
+
+    setStep('AppKit: Bridge → Solana Devnet...')
+    setStatus({ type:'info', msg:'⏳ AppKit memproses (approve → burn → attestation → mint)...', steps:[...localSteps] })
+
+    try {
+      const result: any = await bridgeWithAppKit({
+        from: fromChain as any,
+        to: 'Solana_Devnet',
+        amount,
+        speed: 'SLOW',
+      })
+
+      const steps: any[] = Array.isArray(result?.steps) ? result.steps : []
+      const overallState = result?.state || 'unknown'
+
+      for (const s of steps) {
+        const sName = s?.name || 'step'
+        const sState: BridgeStep['state'] = s?.state === 'success' ? 'success' : s?.state === 'error' ? 'error' : 'pending'
+        const sHash = s?.txHash
+        const sExplorer = sHash ? `https://explorer.solana.com/tx/${sHash}?cluster=devnet` : undefined
+        localSteps.push({ name: sName.toLowerCase(), state: sState, txHash: sHash, explorerUrl: sExplorer })
+      }
+
+      setStatus({ type: overallState === 'success' ? 'success' : overallState === 'error' ? 'error' : 'warning',
+        msg: overallState === 'success'
+          ? `✓ Bridge berhasil! ${amount} USDC → Solana Devnet`
+          : overallState === 'error'
+            ? `✗ Bridge gagal: ${steps.find((s:any)=>s?.state==='error')?.errorMessage || 'unknown'}`
+            : `⏳ Bridge pending — Forwarder sedang relay mint.\nCek saldo Solana dalam 1-5 menit.`,
+        steps: [...localSteps] })
+
+      setAmount('')
+      setTimeout(onRefresh, 3000)
+    } catch(e: any) {
+      setStatus({ type:'error', msg:e?.message||'Bridge gagal', steps:[...localSteps] })
+    }
+  }
+
   const handleBridge = async () => {
     if (!address) return
     if (isFromSolana && !solanaWallet) { await connectSolana(); return }
+    if (isToSolana && !solanaWallet) { await connectSolana(); return }
     setLoading(true); setStatus(null)
     try {
       if (isFromSolana) await bridgeFromSolana()
+      else if (isToSolana) await bridgeToSolanaWithAppKit()
       else await bridgeEvm()
     } catch(e:any) {
       setStatus({ type:'error', msg:e?.message||'Bridge gagal' })
@@ -520,7 +577,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   const STEP_LABELS: Record<string,string> = {
     'circle-transfer':'0. Circle→MetaMask','approve':'1. Approve USDC',
-    'burn':'2. Burn','attestation':'3. Attestation','mint':'4. Mint'
+    'burn':'2. Burn','attestation':'3. Attestation','mint':'4. Mint',
+    'fetchattestation':'3. Attestation',
   }
 
   return (
