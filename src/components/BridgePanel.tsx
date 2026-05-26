@@ -207,9 +207,25 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       }
     } else {
       // Ambil attestation dari backend
-      const attResp = await fetch(API+'/api/get-attestation', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({txHash:burnTx,fromChain}) })
-      const attData = await attResp.json()
-      if (!attResp.ok || !attData.success) throw new Error(attData.error||'Attestation gagal')
+      // Retry attestation sampai 3x kalau timeout
+      let attData: any = null
+      for (let retry = 0; retry < 3; retry++) {
+        setStep(`Menunggu attestation... (percobaan ${retry+1}/3, ~2 menit)`)
+        const attResp = await fetch(API+'/api/get-attestation', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({txHash:burnTx,fromChain})
+        })
+        const data = await attResp.json()
+        if (attResp.ok && data.success) { attData = data; break }
+        if (retry < 2) {
+          setStatus({ type:'info', msg:`⏳ Attestation belum siap, retry dalam 15 detik...`, steps:[...localSteps] })
+          await new Promise(r=>setTimeout(r,15000))
+        } else {
+          throw new Error(data.error || 'Attestation timeout setelah 3x percobaan')
+        }
+      }
+      if (!attData) throw new Error('Attestation gagal')
       localSteps[localSteps.length-1].state='success'
 
       // Switch ke destination chain
@@ -421,66 +437,95 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   // ── Solana receiveMessage helper ──
   const signSolanaReceiveMessage = async (attestationHex: string, messageHex: string, toAddress: string): Promise<string> => {
-    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = await import('@solana/web3.js')
-    const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
+    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, SYSVAR_RENT_PUBKEY } = await import('@solana/web3.js')
+    const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
-    // Re-connect Solflare untuk pastikan popup muncul
     const provider = solanaWallet!.provider
-    if (!provider.isConnected) await provider.connect()
+    try { if (!provider.isConnected) await provider.connect() } catch {}
+
     const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
-    const owner = new PublicKey(toAddress)
+    const payerKey = new PublicKey(toAddress)
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
-    const recipientAta = await getAssociatedTokenAddress(mint, owner)
+    const recipientAta = await getAssociatedTokenAddress(mint, payerKey)
 
     const msgBytes = hexToU8(messageHex)
     const attBytes = hexToU8(attestationHex)
 
-    // receiveMessage discriminator
+    // Solana CCTP v2 program IDs (devnet)
+    const MESSAGE_TRANSMITTER_PROGRAM = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
+    const TOKEN_MESSENGER_PROGRAM = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
+
+    // Derive PDAs sesuai Solana CCTP v2 spec
+    const [messageTransmitterAccount] = PublicKey.findProgramAddressSync(
+      [enc('message_transmitter')], MESSAGE_TRANSMITTER_PROGRAM
+    )
+    // Used nonces PDA - derived dari first caller bytes dari message
+    const firstCallerBytes = msgBytes.slice(0, 32)
+    const [usedNonces] = PublicKey.findProgramAddressSync(
+      [enc('used_nonces'), firstCallerBytes], MESSAGE_TRANSMITTER_PROGRAM
+    )
+    const [tokenMessengerMinter] = PublicKey.findProgramAddressSync(
+      [enc('token_messenger_minter')], TOKEN_MESSENGER_PROGRAM
+    )
+    const [localToken] = PublicKey.findProgramAddressSync(
+      [enc('local_token'), mint.toBytes()], TOKEN_MESSENGER_PROGRAM
+    )
+    const [tokenMinter] = PublicKey.findProgramAddressSync(
+      [enc('token_minter')], TOKEN_MESSENGER_PROGRAM
+    )
+    const [custodyTokenAccount] = PublicKey.findProgramAddressSync(
+      [enc('custody'), mint.toBytes()], TOKEN_MESSENGER_PROGRAM
+    )
+    const [authorityPda] = PublicKey.findProgramAddressSync(
+      [enc('__event_authority')], MESSAGE_TRANSMITTER_PROGRAM
+    )
+
+    // receiveMessage discriminator untuk Anchor
     const discriminator = new Uint8Array([216, 249, 210, 149, 228, 210, 244, 218])
-    const data = concatU8(discriminator, u32LE(msgBytes.length), msgBytes, u32LE(attBytes.length), attBytes)
+    const data = concatU8(
+      discriminator,
+      u32LE(msgBytes.length), msgBytes,
+      u32LE(attBytes.length), attBytes
+    )
 
-    const mtProgram = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
-    const tmProgram = new PublicKey(SOLANA_CCTP.tokenMessengerProgram)
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed')
+    const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: payerKey })
 
-    const [mtPDA] = PublicKey.findProgramAddressSync([enc('message_transmitter')], mtProgram)
-    const [usedNoncesPDA] = PublicKey.findProgramAddressSync([enc('used_nonces'), msgBytes.slice(0, 32)], mtProgram)
-    const [tmMinterPDA] = PublicKey.findProgramAddressSync([enc('token_messenger_minter')], tmProgram)
-    const [localTokenPDA] = PublicKey.findProgramAddressSync([enc('local_token'), mint.toBytes()], tmProgram)
-    const [tokenMinterPDA] = PublicKey.findProgramAddressSync([enc('token_minter')], tmProgram)
-    const [custodyAccPDA] = PublicKey.findProgramAddressSync([enc('custody'), mint.toBytes()], tmProgram)
-    const [eventAuthPDA] = PublicKey.findProgramAddressSync([enc('__event_authority')], mtProgram)
-
-    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
-    const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: owner })
-
+    // Create ATA if needed
     const ataInfo = await conn.getAccountInfo(recipientAta)
     if (!ataInfo) {
-      tx.add(createAssociatedTokenAccountInstruction(owner, recipientAta, owner, mint))
+      tx.add(createAssociatedTokenAccountInstruction(
+        payerKey, recipientAta, payerKey, mint,
+        TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+      ))
     }
 
+    // receiveMessage instruction
     tx.add(new TransactionInstruction({
-      programId: mtProgram,
+      programId: MESSAGE_TRANSMITTER_PROGRAM,
       keys: [
-        { pubkey: owner, isSigner: true, isWritable: true },
-        { pubkey: mtPDA, isSigner: false, isWritable: true },
-        { pubkey: usedNoncesPDA, isSigner: false, isWritable: true },
-        { pubkey: tmMinterPDA, isSigner: false, isWritable: false },
-        { pubkey: localTokenPDA, isSigner: false, isWritable: true },
-        { pubkey: tokenMinterPDA, isSigner: false, isWritable: true },
+        { pubkey: payerKey, isSigner: true, isWritable: true },
+        { pubkey: messageTransmitterAccount, isSigner: false, isWritable: true },
+        { pubkey: usedNonces, isSigner: false, isWritable: true },
+        { pubkey: tokenMessengerMinter, isSigner: false, isWritable: false },
+        { pubkey: localToken, isSigner: false, isWritable: true },
+        { pubkey: tokenMinter, isSigner: false, isWritable: true },
         { pubkey: recipientAta, isSigner: false, isWritable: true },
-        { pubkey: custodyAccPDA, isSigner: false, isWritable: true },
+        { pubkey: custodyTokenAccount, isSigner: false, isWritable: true },
         { pubkey: mint, isSigner: false, isWritable: true },
-        { pubkey: eventAuthPDA, isSigner: false, isWritable: false },
-        { pubkey: tmProgram, isSigner: false, isWritable: false },
+        { pubkey: authorityPda, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_MESSENGER_PROGRAM, isSigner: false, isWritable: false },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
       ],
-      data: data as any,
+      data: data as unknown as Buffer,
     }))
 
     const signed = await provider.signTransaction(tx)
-    const sig = await conn.sendRawTransaction(signed.serialize())
-    await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+    const sig = await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false })
+    const conf = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+    if (conf.value.err) throw new Error('Transaction failed: ' + JSON.stringify(conf.value.err))
     return sig
   }
 
