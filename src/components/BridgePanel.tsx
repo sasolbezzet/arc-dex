@@ -452,6 +452,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const attBytes = hexToU8(attestationHex)
 
     // Solana CCTP v2 program IDs (devnet)
+    // Solana CCTP v2 devnet program IDs (Circle official)
     const MESSAGE_TRANSMITTER_PROGRAM = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
     const TOKEN_MESSENGER_PROGRAM = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
 
@@ -459,10 +460,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const [messageTransmitterAccount] = PublicKey.findProgramAddressSync(
       [enc('message_transmitter')], MESSAGE_TRANSMITTER_PROGRAM
     )
-    // Used nonces PDA - derived dari first caller bytes dari message
-    const firstCallerBytes = msgBytes.slice(0, 32)
+    // Used nonces PDA - derived dari source domain + nonce
+    // nonce ada di bytes 8-12 (source domain) dan 12-20 (nonce)
+    const sourceDomain = new DataView(msgBytes.buffer, msgBytes.byteOffset + 4, 4).getUint32(0, false)
+    const nonce = msgBytes.slice(8, 16) // 8 bytes nonce
+    const sourceDomainBuf = new Uint8Array(4)
+    new DataView(sourceDomainBuf.buffer).setUint32(0, sourceDomain, false)
     const [usedNonces] = PublicKey.findProgramAddressSync(
-      [enc('used_nonces'), firstCallerBytes], MESSAGE_TRANSMITTER_PROGRAM
+      [enc('used_nonces'), sourceDomainBuf, nonce], MESSAGE_TRANSMITTER_PROGRAM
     )
     const [tokenMessengerMinter] = PublicKey.findProgramAddressSync(
       [enc('token_messenger_minter')], TOKEN_MESSENGER_PROGRAM
@@ -523,7 +528,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     }))
 
     const signed = await provider.signTransaction(tx)
-    const sig = await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false })
+    const sig = await conn.sendRawTransaction(signed.serialize(), { skipPreflight: true, preflightCommitment: 'confirmed' })
     const conf = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
     if (conf.value.err) throw new Error('Transaction failed: ' + JSON.stringify(conf.value.err))
     return sig
