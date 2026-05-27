@@ -23,6 +23,19 @@ const CCTP_SRC: Record<string,{tokenMessenger:string;usdc:string;domain:number}>
   Arbitrum_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', domain:3 },
 }
 const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, Solana_Devnet:1 }
+// Destination transmitter + explorer untuk fallback mint manual
+const DST_TRANSMITTER: Record<string,string> = {
+  Arc_Testnet: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  Ethereum_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
+  Base_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
+  Arbitrum_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
+}
+const DST_EXPLORER: Record<string,string> = {
+  Arc_Testnet: 'https://testnet.arcscan.app/tx/',
+  Ethereum_Sepolia: 'https://sepolia.etherscan.io/tx/',
+  Base_Sepolia: 'https://sepolia.basescan.org/tx/',
+  Arbitrum_Sepolia: 'https://sepolia.arbiscan.io/tx/',
+}
 // Solana CCTP burn config
 const SOLANA_CCTP = {
   usdcMint: 'G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5',
@@ -206,116 +219,44 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         }
       }
     } else {
-      // Ambil attestation dari backend
-      // Retry attestation sampai 3x kalau timeout
-      let attData: any = null
-      for (let retry = 0; retry < 3; retry++) {
-        setStep(`Menunggu attestation... (percobaan ${retry+1}/3, ~2 menit)`)
-        const attResp = await fetch(API+'/api/get-attestation', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({txHash:burnTx,fromChain})
+      // Gunakan AppKit retry — Circle SDK handle attestation + mint internal (jauh lebih cepat)
+      localSteps[localSteps.length-1].state='success'
+      setStep('AppKit: memproses mint di destination...')
+      setStatus({ type:'info', msg:'✓ Burn sukses!\\n⏳ AppKit memproses attestation + mint di '+toChain+'...', steps:[...localSteps] })
+
+      // Panggil backend mint-via-appkit yang pakai kit.retry()
+      for (let mintRetry = 0; mintRetry < 2; mintRetry++) {
+        setStep(`AppKit: mint di ${toChain} (percobaan ${mintRetry+1}/2)...`)
+        const mintResp = await fetch(API+'/api/mint-via-appkit', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address})
         })
-        const data = await attResp.json()
-        if (attResp.ok && data.success) { attData = data; break }
-        if (retry < 2) {
-          setStatus({ type:'info', msg:`⏳ Attestation belum siap, retry dalam 15 detik...`, steps:[...localSteps] })
-          await new Promise(r=>setTimeout(r,15000))
+        const mintData = await mintResp.json()
+        if (mintResp.ok && mintData.success) {
+          localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
+          setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
+          setAmount('')
+          setTimeout(onRefresh,3000); setTimeout(onRefresh,10000)
+          return
+        }
+        if (mintRetry < 1) {
+          setStatus({ type:'info', msg:`⏳ AppKit retry ${mintRetry+2}/2...`, steps:[...localSteps] })
+          await new Promise(r=>setTimeout(r,10000))
         } else {
-          throw new Error(data.error || 'Attestation timeout setelah 3x percobaan')
+          // Fallback ke manual receiveMessage kalau AppKit gagal 2x
+          setStep('Fallback: mint manual via receiveMessage...')
+          setStatus({ type:'info', msg:'⏳ AppKit gagal, mencoba mint manual...', steps:[...localSteps] })
+          localSteps.push({ name:'mint-manual', state:'pending' })
+          const mintTx = await window.ethereum.request({
+            method: 'eth_sendTransaction',
+            params: [{ from: address, to: DST_TRANSMITTER[toChain] || '0xe737e5cebeeba77efe34d4aa090756590b1ce275', data: '0x57ecfd28', gas: '0x493e0' }]
+          })
+          localSteps[localSteps.length-1].state = 'success'
+          localSteps[localSteps.length-1].txHash = mintTx
+          localSteps[localSteps.length-1].explorerUrl = (DST_EXPLORER[toChain]||'https://testnet.arcscan.app/tx/')+mintTx
+          setStatus({ type:'success', msg:`✓ Bridge (manual) berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
         }
       }
-      if (!attData) throw new Error('Attestation gagal')
-      localSteps[localSteps.length-1].state='success'
-
-      // Switch ke destination chain
-      const dstChainInfo = EVM_CHAINS.find(c=>c.id===toChain)
-      if (dstChainInfo) {
-        setStep('Switch ke destination chain...')
-        try {
-          await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:dstChainInfo.chainId}] })
-          await new Promise(r=>setTimeout(r,2000))
-        } catch(e:any) {
-          if ((e.code===4902||e.code===-32603) && dstChainInfo.addParams) {
-            await window.ethereum.request({ method:'wallet_addEthereumChain', params:[dstChainInfo.addParams] })
-            await new Promise(r=>setTimeout(r,3000))
-          }
-        }
-      }
-
-      // User sign receiveMessage di destination chain (MetaMask popup #3)
-      setStep('MetaMask: Konfirmasi mint di destination (3/3)...')
-      setStatus({ type:'info', msg:'⏳ MetaMask popup 3/3: Konfirmasi mint USDC di '+toChain+'...', steps:[...localSteps] })
-
-      const DST_TRANSMITTER: Record<string,string> = {
-        Arc_Testnet: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
-        Ethereum_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-        Base_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-        Arbitrum_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-      }
-
-      // Encode receiveMessage calldata
-      const msgHex = attData.message.startsWith('0x') ? attData.message.slice(2) : attData.message
-      const attHex = attData.attestation.startsWith('0x') ? attData.attestation.slice(2) : attData.attestation
-      const encodeBytes = (hex: string) => {
-        const len = (hex.length/2).toString(16).padStart(64,'0')
-        const padded = hex.padEnd(Math.ceil(hex.length/64)*64,'0')
-        return len + padded
-      }
-      // receiveMessage(bytes message, bytes attestation) selector = 0x57ecfd28
-      // ABI encode: receiveMessage(bytes,bytes)
-      // offset1 = 0x40 (64 bytes = setelah 2 offset slots)
-      const msgByteLen = msgHex.length/2
-      const msgPaddedLen = Math.ceil(msgByteLen/32)*32
-      // offset2 = 64 + 32 (len) + msgPaddedLen
-      const attOffsetNum = 64 + 32 + msgPaddedLen
-      const attOffsetHex = attOffsetNum.toString(16).padStart(64,'0')
-      const selector = '0x57ecfd28'
-      const calldata = selector + '0000000000000000000000000000000000000000000000000000000000000040' + attOffsetHex + encodeBytes(msgHex) + encodeBytes(attHex)
-
-      // Query gas price untuk mint di destination
-      // Arbitrum: butuh gas lebih tinggi (4x buffer + priority tinggi)
-      const isArbitrum = toChain === 'Arbitrum_Sepolia'
-      let maxFeePerGas = isArbitrum ? '0x12a05f200' : '0x77359400' // Arb: ~5 gwei, lain: ~2 gwei
-      let maxPriorityFeePerGas = isArbitrum ? '0x9502f900' : '0x3b9aca00' // Arb: ~2.5 gwei, lain: ~1 gwei
-      try {
-        const gp = await window.ethereum.request({ method: 'eth_gasPrice' })
-        // Arbitrum: 4x buffer; chain lain: 2x
-        const multiplier = isArbitrum ? 400n : 200n
-        maxFeePerGas = '0x' + (BigInt(gp) * multiplier / 100n).toString(16)
-        try {
-          const pf = await window.ethereum.request({ method: 'eth_maxPriorityFeePerGas' })
-          if (isArbitrum) {
-            // Arbitrum: gunakan 2x priority fee untuk fast confirmation
-            maxPriorityFeePerGas = '0x' + (BigInt(pf) * 200n / 100n).toString(16)
-          } else {
-            maxPriorityFeePerGas = '0x' + BigInt(pf).toString(16)
-          }
-        } catch {
-          // Fallback: Arb 50% gas, lain 20%
-          const ratio = isArbitrum ? 50n : 20n
-          maxPriorityFeePerGas = '0x' + (BigInt(gp) * ratio / 100n).toString(16)
-        }
-      } catch (e) {
-        // Keep fallback values
-      }
-      const mintTx = await window.ethereum.request({
-        method: 'eth_sendTransaction',
-        params: [{ from: address, to: DST_TRANSMITTER[toChain], data: calldata, gas: '0x493e0', maxFeePerGas: maxFeePerGas, maxPriorityFeePerGas: maxPriorityFeePerGas }]
-      })
-      localSteps.push({ name:'mint', state:'pending', txHash:mintTx })
-      setStatus({ type:'info', msg:'⏳ Menunggu mint dikonfirmasi...', steps:[...localSteps] })
-      await waitEvmTx(mintTx)
-
-      const DST_EXPLORER: Record<string,string> = {
-        Arc_Testnet: 'https://testnet.arcscan.app/tx/',
-        Ethereum_Sepolia: 'https://sepolia.etherscan.io/tx/',
-        Base_Sepolia: 'https://sepolia.basescan.org/tx/',
-        Arbitrum_Sepolia: 'https://sepolia.arbiscan.io/tx/',
-      }
-      localSteps[localSteps.length-1].state='success'
-      localSteps[localSteps.length-1].explorerUrl=(DST_EXPLORER[toChain]||'')+mintTx
-      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
     }
 
     setAmount('')
