@@ -274,19 +274,27 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const calldata = selector + '0000000000000000000000000000000000000000000000000000000000000040' + attOffsetHex + encodeBytes(msgHex) + encodeBytes(attHex)
 
       // Query gas price untuk mint di destination
-      // L2 chains (Arbitrum, Base) — eth_gasPrice sudah include baseFee L2
-      let maxFeePerGas = '0x77359400' // fallback ~2 gwei
-      let maxPriorityFeePerGas = '0x3b9aca00' // fallback ~1 gwei
+      // Arbitrum: butuh gas lebih tinggi (4x buffer + priority tinggi)
+      const isArbitrum = toChain === 'Arbitrum_Sepolia'
+      let maxFeePerGas = isArbitrum ? '0x12a05f200' : '0x77359400' // Arb: ~5 gwei, lain: ~2 gwei
+      let maxPriorityFeePerGas = isArbitrum ? '0x9502f900' : '0x3b9aca00' // Arb: ~2.5 gwei, lain: ~1 gwei
       try {
         const gp = await window.ethereum.request({ method: 'eth_gasPrice' })
-        // 2x buffer untuk keamanan (terutama di L2 yang base fee fluktuatif)
-        maxFeePerGas = '0x' + (BigInt(gp) * 200n / 100n).toString(16)
-        // Coba ambil priority fee, fallback ke gasPrice
+        // Arbitrum: 4x buffer; chain lain: 2x
+        const multiplier = isArbitrum ? 400n : 200n
+        maxFeePerGas = '0x' + (BigInt(gp) * multiplier / 100n).toString(16)
         try {
           const pf = await window.ethereum.request({ method: 'eth_maxPriorityFeePerGas' })
-          maxPriorityFeePerGas = '0x' + BigInt(pf).toString(16)
+          if (isArbitrum) {
+            // Arbitrum: gunakan 2x priority fee untuk fast confirmation
+            maxPriorityFeePerGas = '0x' + (BigInt(pf) * 200n / 100n).toString(16)
+          } else {
+            maxPriorityFeePerGas = '0x' + BigInt(pf).toString(16)
+          }
         } catch {
-          maxPriorityFeePerGas = '0x' + (BigInt(gp) * 20n / 100n).toString(16)
+          // Fallback: Arb 50% gas, lain 20%
+          const ratio = isArbitrum ? 50n : 20n
+          maxPriorityFeePerGas = '0x' + (BigInt(gp) * ratio / 100n).toString(16)
         }
       } catch (e) {
         // Keep fallback values
@@ -608,9 +616,22 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     setLoading(true); setStatus(null)
     try {
       if (isFromSolana) await bridgeFromSolana()
-      else if (isToSolana) await bridgeToSolanaWithAppKit()
+      // Gunakan manual CCTP path untuk Solana destination (lebih reliable)
+      // bridgeEvm sudah handle isToSolana via mint-cctp-solana backend + frontend sign
+      else if (isToSolana) await bridgeEvm()
       else await bridgeEvm()
     } catch(e:any) {
+      // Jika manual path gagal, coba AppKit sebagai fallback untuk Solana
+      if (isToSolana && !isFromSolana) {
+        try {
+          setStatus({ type:'info', msg:'⏳ Manual path gagal, mencoba AppKit bridge...' })
+          await bridgeToSolanaWithAppKit()
+          return
+        } catch(e2:any) {
+          setStatus({ type:'error', msg:`Bridge gagal (manual + AppKit): ${e2.message?.slice(0,200)}` })
+          return
+        }
+      }
       setStatus({ type:'error', msg:e?.message||'Bridge gagal' })
     }
     setLoading(false); setStep('')
