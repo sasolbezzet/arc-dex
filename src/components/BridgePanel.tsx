@@ -386,7 +386,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   // ── Solana receiveMessage helper ──
   const signSolanaReceiveMessage = async (attestationHex: string, messageHex: string, toAddress: string): Promise<string> => {
-    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, SYSVAR_RENT_PUBKEY } = await import('@solana/web3.js')
+    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, SYSVAR_RENT_PUBKEY, VersionedTransaction } = await import('@solana/web3.js')
     const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
     const provider = solanaWallet!.provider
@@ -454,8 +454,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         payerKey, recipientAta, payerKey, mint,
         TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
       ))
-      const ataSigned = await provider.signTransaction(ataTx)
-      const ataSig = await conn.sendRawTransaction(ataSigned.serialize(), { skipPreflight: true, preflightCommitment: 'confirmed' })
+      // Konversi ke VersionedTransaction untuk kompatibilitas Solflare
+      const ataVersioned = VersionedTransaction.deserialize(ataTx.serialize({ requireAllSignatures: false }))
+      const ataSigned = await provider.signTransaction(ataVersioned)
+      const ataSig = await conn.sendRawTransaction(
+        ataSigned instanceof Uint8Array ? ataSigned : ataSigned.serialize(),
+        { skipPreflight: true, preflightCommitment: 'confirmed' }
+      )
       await conn.confirmTransaction({ signature: ataSig, blockhash: curBlockhash, lastValidBlockHeight: curLastValid }, 'confirmed')
       console.log('[mint] ATA created:', ataSig)
       // Refresh blockhash untuk transaksi berikutnya
@@ -487,8 +492,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       data: data as unknown as Buffer,
     }))
 
-    const signed = await provider.signTransaction(tx)
-    const sig = await conn.sendRawTransaction(signed.serialize(), { skipPreflight: true, preflightCommitment: 'confirmed' })
+    // Konversi ke VersionedTransaction untuk kompatibilitas Solflare/Phantom
+    const versionedTx = VersionedTransaction.deserialize(tx.serialize({ requireAllSignatures: false }))
+    const signed = await provider.signTransaction(versionedTx)
+    const sig = await conn.sendRawTransaction(
+      signed instanceof Uint8Array ? signed : signed.serialize(),
+      { skipPreflight: true, preflightCommitment: 'confirmed' }
+    )
     const conf = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
     if (conf.value.err) throw new Error('Transaction failed: ' + JSON.stringify(conf.value.err))
     return sig
