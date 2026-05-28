@@ -40,7 +40,7 @@ const DST_EXPLORER: Record<string,string> = {
 const SOLANA_CCTP = {
   usdcMint: 'G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5',
   tokenMessengerProgram: 'CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3',
-  messageTransmitterProgram: 'CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3',
+  messageTransmitterProgram: 'CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd',
   domain: 1,
 }
 
@@ -344,7 +344,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const data = concatU8(discriminator, u64LE(amountLamports), u32LE(26), mintRecipientBytes, destCallerBytes)
 
     const tmProgram = new PublicKey(SOLANA_CCTP.tokenMessengerProgram)
-    const mtProgram = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
+    const mtProgram = new PublicKey('CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd')
 
     const [tmMinterPDA] = PublicKey.findProgramAddressSync([enc('token_messenger_minter')], tmProgram)
     const domainBuf = new Uint8Array(4); new DataView(domainBuf.buffer).setUint32(0, 26, true)
@@ -400,9 +400,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const msgBytes = hexToU8(messageHex)
     const attBytes = hexToU8(attestationHex)
 
-    // Solana CCTP v2 program IDs (devnet)
-    // Solana CCTP v2 devnet program IDs (Circle official)
-    const MESSAGE_TRANSMITTER_PROGRAM = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
+    // Solana CCTP v2 devnet program IDs (Circle official - from solana-cctp-contracts/Anchor.toml)
+    const MESSAGE_TRANSMITTER_PROGRAM = new PublicKey('CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd')
     const TOKEN_MESSENGER_PROGRAM = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
 
     // Derive PDAs sesuai Solana CCTP v2 spec
@@ -410,9 +409,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       [enc('message_transmitter')], MESSAGE_TRANSMITTER_PROGRAM
     )
     // Used nonces PDA - derived dari source domain + nonce
-    // nonce ada di bytes 8-12 (source domain) dan 12-20 (nonce)
+    // CCTP message: [0-3]version [4-7]sourceDomain [8-11]destDomain [12-19]nonce
     const sourceDomain = new DataView(msgBytes.buffer, msgBytes.byteOffset + 4, 4).getUint32(0, false)
-    const nonce = msgBytes.slice(8, 16) // 8 bytes nonce
+    const nonce = msgBytes.slice(12, 20) // 8 bytes nonce (offset 12)
     const sourceDomainBuf = new Uint8Array(4)
     new DataView(sourceDomainBuf.buffer).setUint32(0, sourceDomain, false)
     const [usedNonces] = PublicKey.findProgramAddressSync(
