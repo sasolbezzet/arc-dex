@@ -442,18 +442,30 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     )
 
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed')
-    const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: payerKey })
+    let curBlockhash = blockhash
+    let curLastValid = lastValidBlockHeight
 
-    // Create ATA if needed
+    // Step 1: Buat ATA di transaksi TERPISAH (hindari signature error #5663012)
     const ataInfo = await conn.getAccountInfo(recipientAta)
     if (!ataInfo) {
-      tx.add(createAssociatedTokenAccountInstruction(
+      console.log('[mint] Buat ATA dulu...')
+      const ataTx = new Transaction({ blockhash: curBlockhash, lastValidBlockHeight: curLastValid, feePayer: payerKey })
+      ataTx.add(createAssociatedTokenAccountInstruction(
         payerKey, recipientAta, payerKey, mint,
         TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
       ))
+      const ataSigned = await provider.signTransaction(ataTx)
+      const ataSig = await conn.sendRawTransaction(ataSigned.serialize(), { skipPreflight: true, preflightCommitment: 'confirmed' })
+      await conn.confirmTransaction({ signature: ataSig, blockhash: curBlockhash, lastValidBlockHeight: curLastValid }, 'confirmed')
+      console.log('[mint] ATA created:', ataSig)
+      // Refresh blockhash untuk transaksi berikutnya
+      const nextBlock = await conn.getLatestBlockhash('confirmed')
+      curBlockhash = nextBlock.blockhash
+      curLastValid = nextBlock.lastValidBlockHeight
     }
 
-    // receiveMessage instruction
+    // Step 2: receiveMessage
+    const tx = new Transaction({ blockhash: curBlockhash, lastValidBlockHeight: curLastValid, feePayer: payerKey })
     tx.add(new TransactionInstruction({
       programId: MESSAGE_TRANSMITTER_PROGRAM,
       keys: [
