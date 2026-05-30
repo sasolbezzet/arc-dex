@@ -23,19 +23,7 @@ const CCTP_SRC: Record<string,{tokenMessenger:string;usdc:string;domain:number}>
   Arbitrum_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', domain:3 },
 }
 const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, Solana_Devnet:1 }
-// Destination transmitter + explorer untuk fallback mint manual
-const DST_TRANSMITTER: Record<string,string> = {
-  Arc_Testnet: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
-  Ethereum_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-  Base_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-  Arbitrum_Sepolia: '0xe737e5cebeeba77efe34d4aa090756590b1ce275',
-}
-const DST_EXPLORER: Record<string,string> = {
-  Arc_Testnet: 'https://testnet.arcscan.app/tx/',
-  Ethereum_Sepolia: 'https://sepolia.etherscan.io/tx/',
-  Base_Sepolia: 'https://sepolia.basescan.org/tx/',
-  Arbitrum_Sepolia: 'https://sepolia.arbiscan.io/tx/',
-}
+
 // Solana CCTP burn config
 const SOLANA_CCTP = {
   usdcMint: 'G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5',
@@ -194,7 +182,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     if (isToSolana) {
       // Mint di Solana → frontend Solflare yang sign
-      const mintResp = await fetch(API+'/api/mint-cctp-solana', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({burnTxHash:burnTx,toAddress:solanaWallet!.address}) })
+      const mintResp = await fetch(API+'/api/mint-cctp-solana', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({burnTxHash:burnTx,toAddress:solanaWallet!.address,fromChain}) })
       const mintData = await mintResp.json()
       if (!mintResp.ok) throw new Error(mintData.error)
 
@@ -224,12 +212,12 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       setStep('AppKit: memproses mint di destination...')
       setStatus({ type:'info', msg:'✓ Burn sukses!\\n⏳ AppKit memproses attestation + mint di '+toChain+'...', steps:[...localSteps] })
 
-      // Panggil backend mint-via-appkit yang pakai kit.retry()
-      for (let mintRetry = 0; mintRetry < 2; mintRetry++) {
-        setStep(`AppKit: mint di ${toChain} (percobaan ${mintRetry+1}/2)...`)
+      // Panggil backend mint-via-appkit yang pakai kit.retry() — 3 attempts
+      for (let mintRetry = 0; mintRetry < 3; mintRetry++) {
+        setStep(`AppKit: mint di ${toChain} (percobaan ${mintRetry+1}/3)...`)
         const mintResp = await fetch(API+'/api/mint-via-appkit', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address})
+          body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address,amount})
         })
         const mintData = await mintResp.json()
         if (mintResp.ok && mintData.success) {
@@ -239,22 +227,26 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           setTimeout(onRefresh,3000); setTimeout(onRefresh,10000)
           return
         }
-        if (mintRetry < 1) {
-          setStatus({ type:'info', msg:`⏳ AppKit retry ${mintRetry+2}/2...`, steps:[...localSteps] })
+        if (mintRetry < 2) {
+          setStatus({ type:'info', msg:`⏳ AppKit retry ${mintRetry+2}/3...`, steps:[...localSteps] })
           await new Promise(r=>setTimeout(r,10000))
         } else {
-          // Fallback ke manual receiveMessage kalau AppKit gagal 2x
-          setStep('Fallback: mint manual via receiveMessage...')
-          setStatus({ type:'info', msg:'⏳ AppKit gagal, mencoba mint manual...', steps:[...localSteps] })
+          // Fallback ke mint-direct (attestation + receiveMessage via backend)
+          setStep('Fallback: mint via backend /api/mint-direct...')
+          setStatus({ type:'info', msg:'⏳ AppKit gagal, fallback ke mint-direct backend...', steps:[...localSteps] })
           localSteps.push({ name:'mint-manual', state:'pending' })
-          const mintTx = await window.ethereum.request({
-            method: 'eth_sendTransaction',
-            params: [{ from: address, to: DST_TRANSMITTER[toChain] || '0xe737e5cebeeba77efe34d4aa090756590b1ce275', data: '0x57ecfd28', gas: '0x493e0' }]
+          const fallbackResp = await fetch(API+'/api/mint-direct', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address})
           })
+          const fallbackData = await fallbackResp.json()
+          if (!fallbackResp.ok || !fallbackData.success) {
+            throw new Error(fallbackData.error || 'Fallback mint gagal')
+          }
           localSteps[localSteps.length-1].state = 'success'
-          localSteps[localSteps.length-1].txHash = mintTx
-          localSteps[localSteps.length-1].explorerUrl = (DST_EXPLORER[toChain]||'https://testnet.arcscan.app/tx/')+mintTx
-          setStatus({ type:'success', msg:`✓ Bridge (manual) berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
+          localSteps[localSteps.length-1].txHash = fallbackData.txHash
+          localSteps[localSteps.length-1].explorerUrl = fallbackData.explorerUrl
+          setStatus({ type:'success', msg:`✓ Bridge (fallback) berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
         }
       }
     }
@@ -338,8 +330,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     const amountLamports = BigInt(Math.round(amtNum * 1e6))
 
-    // depositForBurn discriminator
-    const discriminator = new Uint8Array([210, 114, 249, 160, 192, 146, 195, 101])
+    // deposit_for_burn Anchor discriminator: sha256("global:deposit_for_burn")[0..8]
+    const discriminator = new Uint8Array([215, 60, 61, 46, 114, 55, 128, 176])
     const destCallerBytes = new Uint8Array(32)
     const data = concatU8(discriminator, u64LE(amountLamports), u32LE(26), mintRecipientBytes, destCallerBytes)
 
@@ -347,7 +339,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const mtProgram = new PublicKey('CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd')
 
     const [tmMinterPDA] = PublicKey.findProgramAddressSync([enc('token_messenger_minter')], tmProgram)
-    const domainBuf = new Uint8Array(4); new DataView(domainBuf.buffer).setUint32(0, 26, true)
+    const domainBuf = new Uint8Array(4); new DataView(domainBuf.buffer).setUint32(0, 26, false) // BE — matches Anchor dest_domain.to_be_bytes()
     const [remoteTokenMsgPDA] = PublicKey.findProgramAddressSync([enc('remote_token_messenger'), domainBuf], tmProgram)
     const [tokenMinterPDA] = PublicKey.findProgramAddressSync([enc('token_minter')], tmProgram)
     const [localTokenPDA] = PublicKey.findProgramAddressSync([enc('local_token'), mint.toBytes()], tmProgram)
@@ -386,7 +378,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   // ── Solana receiveMessage helper ──
   const signSolanaReceiveMessage = async (attestationHex: string, messageHex: string, toAddress: string): Promise<string> => {
-    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, SYSVAR_RENT_PUBKEY, VersionedTransaction } = await import('@solana/web3.js')
+    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } = await import('@solana/web3.js')
     const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
     const provider = solanaWallet!.provider
@@ -400,25 +392,49 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const msgBytes = hexToU8(messageHex)
     const attBytes = hexToU8(attestationHex)
 
-    // Solana CCTP v2 devnet program IDs (Circle official - from solana-cctp-contracts/Anchor.toml)
+    // Solana CCTP v2 devnet program IDs (Circle official)
     const MESSAGE_TRANSMITTER_PROGRAM = new PublicKey('CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd')
     const TOKEN_MESSENGER_PROGRAM = new PublicKey('CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3')
 
-    // Derive PDAs sesuai Solana CCTP v2 spec
+    // ── Parse CCTP message header ──
+    // [0-3] version, [4-7] sourceDomain, [8-11] destDomain, [12-19] nonce
+    const sourceDomain = new DataView(msgBytes.buffer, msgBytes.byteOffset + 4, 4).getUint32(0, false)  // BE
+    const nonce = new DataView(msgBytes.buffer, msgBytes.byteOffset + 12, 8).getBigUint64(0, false)    // BE
+
+    const sourceDomainBuf = new Uint8Array(4)
+    new DataView(sourceDomainBuf.buffer).setUint32(0, sourceDomain, false) // BE for remote_token_messenger PDA
+
+    // nonce dalam little-endian untuk used_nonce PDA seed
+    const nonceLE = new Uint8Array(8)
+    new DataView(nonceLE.buffer).setBigUint64(0, nonce, true) // LE
+
+    // ── MessageTransmitter PDAs ──
     const [messageTransmitterAccount] = PublicKey.findProgramAddressSync(
       [enc('message_transmitter')], MESSAGE_TRANSMITTER_PROGRAM
     )
-    // Used nonces PDA - derived dari source domain + nonce
-    // CCTP message: [0-3]version [4-7]sourceDomain [8-11]destDomain [12-19]nonce
-    const sourceDomain = new DataView(msgBytes.buffer, msgBytes.byteOffset + 4, 4).getUint32(0, false)
-    const nonce = msgBytes.slice(12, 20) // 8 bytes nonce (offset 12)
-    const sourceDomainBuf = new Uint8Array(4)
-    new DataView(sourceDomainBuf.buffer).setUint32(0, sourceDomain, false)
-    const [usedNonces] = PublicKey.findProgramAddressSync(
-      [enc('used_nonces'), sourceDomainBuf, nonce], MESSAGE_TRANSMITTER_PROGRAM
+    // used_nonce: seeds = [b"used_nonce", nonce.to_le_bytes()]
+    const [usedNonce] = PublicKey.findProgramAddressSync(
+      [enc('used_nonce'), nonceLE], MESSAGE_TRANSMITTER_PROGRAM
     )
+    // authority_pda: seeds = [b"message_transmitter_authority", receiver.key()]
+    const [authorityPda] = PublicKey.findProgramAddressSync(
+      [enc('message_transmitter_authority'), TOKEN_MESSENGER_PROGRAM.toBytes()], MESSAGE_TRANSMITTER_PROGRAM
+    )
+    // event_authority: seeds = [b"__event_authority"] — needed for CPI to TokenMessenger
+    const [eventAuthority] = PublicKey.findProgramAddressSync(
+      [enc('__event_authority')], MESSAGE_TRANSMITTER_PROGRAM
+    )
+
+    console.log(`[mint] sourceDomain=${sourceDomain} nonce=${nonce}`)
+    console.log(`[mint] usedNonce PDA: ${usedNonce.toBase58()}`)
+    console.log(`[mint] authorityPda PDA: ${authorityPda.toBase58()}`)
+
+    // ── TokenMessenger PDAs (sebagai remaining accounts untuk CPI) ──
     const [tokenMessengerMinter] = PublicKey.findProgramAddressSync(
       [enc('token_messenger_minter')], TOKEN_MESSENGER_PROGRAM
+    )
+    const [remoteTokenMessenger] = PublicKey.findProgramAddressSync(
+      [enc('remote_token_messenger'), sourceDomainBuf], TOKEN_MESSENGER_PROGRAM
     )
     const [localToken] = PublicKey.findProgramAddressSync(
       [enc('local_token'), mint.toBytes()], TOKEN_MESSENGER_PROGRAM
@@ -429,21 +445,20 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const [custodyTokenAccount] = PublicKey.findProgramAddressSync(
       [enc('custody'), mint.toBytes()], TOKEN_MESSENGER_PROGRAM
     )
-    const [authorityPda] = PublicKey.findProgramAddressSync(
-      [enc('__event_authority')], MESSAGE_TRANSMITTER_PROGRAM
-    )
 
-    // receiveMessage discriminator untuk Anchor
-    const discriminator = new Uint8Array([216, 249, 210, 149, 228, 210, 244, 218])
+    // ── Anchor discriminator: sha256("global:receive_message")[0..8] ──
+    const discriminator = new Uint8Array([38, 144, 127, 225, 31, 225, 238, 25])
     const data = concatU8(
       discriminator,
       u32LE(msgBytes.length), msgBytes,
       u32LE(attBytes.length), attBytes
     )
 
-    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed')
-    let curBlockhash = blockhash
-    let curLastValid = lastValidBlockHeight
+    let curBlockhash: string
+    let curLastValid: number
+    const latestBlock = await conn.getLatestBlockhash('confirmed')
+    curBlockhash = latestBlock.blockhash
+    curLastValid = latestBlock.lastValidBlockHeight
 
     // Step 1: Buat ATA di transaksi TERPISAH (hindari signature error #5663012)
     const ataInfo = await conn.getAccountInfo(recipientAta)
@@ -454,7 +469,6 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         payerKey, recipientAta, payerKey, mint,
         TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
       ))
-      // Konversi ke VersionedTransaction untuk kompatibilitas Solflare
       const ataVersioned = VersionedTransaction.deserialize(ataTx.serialize({ requireAllSignatures: false }))
       const ataSigned = await provider.signTransaction(ataVersioned)
       const ataSig = await conn.sendRawTransaction(
@@ -463,45 +477,69 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       )
       await conn.confirmTransaction({ signature: ataSig, blockhash: curBlockhash, lastValidBlockHeight: curLastValid }, 'confirmed')
       console.log('[mint] ATA created:', ataSig)
-      // Refresh blockhash untuk transaksi berikutnya
+      // Refresh blockhash setelah ATA created
       const nextBlock = await conn.getLatestBlockhash('confirmed')
       curBlockhash = nextBlock.blockhash
       curLastValid = nextBlock.lastValidBlockHeight
     }
 
-    // Step 2: receiveMessage
-    const tx = new Transaction({ blockhash: curBlockhash, lastValidBlockHeight: curLastValid, feePayer: payerKey })
-    tx.add(new TransactionInstruction({
-      programId: MESSAGE_TRANSMITTER_PROGRAM,
-      keys: [
-        { pubkey: payerKey, isSigner: true, isWritable: true },
-        { pubkey: messageTransmitterAccount, isSigner: false, isWritable: true },
-        { pubkey: usedNonces, isSigner: false, isWritable: true },
-        { pubkey: tokenMessengerMinter, isSigner: false, isWritable: false },
-        { pubkey: localToken, isSigner: false, isWritable: true },
-        { pubkey: tokenMinter, isSigner: false, isWritable: true },
-        { pubkey: recipientAta, isSigner: false, isWritable: true },
-        { pubkey: custodyTokenAccount, isSigner: false, isWritable: true },
-        { pubkey: mint, isSigner: false, isWritable: true },
-        { pubkey: authorityPda, isSigner: false, isWritable: false },
-        { pubkey: TOKEN_MESSENGER_PROGRAM, isSigner: false, isWritable: false },
-        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-      ],
-      data: data as unknown as Buffer,
-    }))
+    // Step 2: receiveMessage — Anchor instruction dengan account list:
+    //   Fixed: payer (signer), caller, authority_pda, message_transmitter, used_nonce, receiver, system_program
+    //   Remaining accounts: token_messenger_minter, remote_token_messenger, token_minter, local_token,
+    //                       mint, recipient_ata, custody_token_account, token_program,
+    //                       event_authority, message_transmitter_program
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) {
+          const freshBlock = await conn.getLatestBlockhash('confirmed')
+          curBlockhash = freshBlock.blockhash
+          curLastValid = freshBlock.lastValidBlockHeight
+        }
 
-    // Konversi ke VersionedTransaction untuk kompatibilitas Solflare/Phantom
-    const versionedTx = VersionedTransaction.deserialize(tx.serialize({ requireAllSignatures: false }))
-    const signed = await provider.signTransaction(versionedTx)
-    const sig = await conn.sendRawTransaction(
-      signed instanceof Uint8Array ? signed : signed.serialize(),
-      { skipPreflight: true, preflightCommitment: 'confirmed' }
-    )
-    const conf = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
-    if (conf.value.err) throw new Error('Transaction failed: ' + JSON.stringify(conf.value.err))
-    return sig
+        const tx = new Transaction({ blockhash: curBlockhash, lastValidBlockHeight: curLastValid, feePayer: payerKey })
+        tx.add(new TransactionInstruction({
+          programId: MESSAGE_TRANSMITTER_PROGRAM,
+          keys: [
+            // ── Fixed accounts (ReceiveMessage Anchor struct) ──
+            { pubkey: payerKey, isSigner: true, isWritable: true },      // payer
+            { pubkey: payerKey, isSigner: false, isWritable: false },     // caller (not signer in Anchor)
+            { pubkey: authorityPda, isSigner: false, isWritable: true }, // authority_pda
+            { pubkey: messageTransmitterAccount, isSigner: false, isWritable: true }, // message_transmitter
+            { pubkey: usedNonce, isSigner: false, isWritable: true },    // used_nonce
+            { pubkey: TOKEN_MESSENGER_PROGRAM, isSigner: false, isWritable: false }, // receiver
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+            // ── Remaining accounts (forwarded to handle_receive_message CPI) ──
+            { pubkey: tokenMessengerMinter, isSigner: false, isWritable: true },
+            { pubkey: remoteTokenMessenger, isSigner: false, isWritable: false },
+            { pubkey: tokenMinter, isSigner: false, isWritable: true },
+            { pubkey: localToken, isSigner: false, isWritable: true },
+            { pubkey: mint, isSigner: false, isWritable: false },
+            { pubkey: recipientAta, isSigner: false, isWritable: true },
+            { pubkey: custodyTokenAccount, isSigner: false, isWritable: true },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            { pubkey: eventAuthority, isSigner: false, isWritable: false },
+            { pubkey: MESSAGE_TRANSMITTER_PROGRAM, isSigner: false, isWritable: false },
+          ],
+          data: data as unknown as Buffer,
+        }))
+
+        const versionedTx = VersionedTransaction.deserialize(tx.serialize({ requireAllSignatures: false }))
+        const signed = await provider.signTransaction(versionedTx)
+        const sig = await conn.sendRawTransaction(
+          signed instanceof Uint8Array ? signed : signed.serialize(),
+          { skipPreflight: false, preflightCommitment: 'confirmed' }
+        )
+        console.log(`[mint] receiveMessage tx sent (attempt ${attempt+1}): ${sig}`)
+        const conf = await conn.confirmTransaction({ signature: sig, blockhash: curBlockhash, lastValidBlockHeight: curLastValid }, 'confirmed')
+        if (conf.value.err) throw new Error('Transaction failed: ' + JSON.stringify(conf.value.err))
+        return sig
+      } catch (e: any) {
+        console.error(`[mint] attempt ${attempt+1}/3 failed:`, e.message)
+        if (attempt === 2) throw e
+        await new Promise(r => setTimeout(r, 2000))
+      }
+    }
+    throw new Error('receiveMessage failed after 3 attempts')
   }
 
   const waitEvmTx = async (txHash: string) => {
