@@ -217,7 +217,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
       const mintResp = await fetch(API+'/api/mint-direct', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({burnTxHash, fromChain, toChain, toAddress: address, amount})
+        body:JSON.stringify({burnTxHash: burnTx, fromChain, toChain, toAddress: address, amount})
       })
       const mintData = await mintResp.json()
       if (!mintResp.ok || !mintData.success) {
@@ -355,7 +355,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   // ── Solana receiveMessage helper ──
   const signSolanaReceiveMessage = async (attestationHex: string, messageHex: string, toAddress: string): Promise<string> => {
-    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction, TransactionMessage } = await import('@solana/web3.js')
+    const { Connection, PublicKey, TransactionInstruction, SystemProgram, VersionedTransaction, TransactionMessage } = await import('@solana/web3.js')
     const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
     const provider = solanaWallet!.provider
