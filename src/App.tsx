@@ -7,7 +7,7 @@ import { InfoPanel } from './components/InfoPanel'
 import { OnboardingPanel } from './components/OnboardingPanel'
 const API = ''
 const TABS = [{ id:'swap', label:'Swap', icon:'⇄' },{ id:'bridge', label:'Bridge', icon:'⛓' },{ id:'send', label:'Send', icon:'→' },{ id:'info', label:'Info', icon:'ℹ' }]
-const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0' }
+const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 export default function App() {
   const [tab, setTab] = useState('swap')
   const [address, setAddress] = useState<string|null>(null)
@@ -28,11 +28,15 @@ export default function App() {
       const client = createPublicClient({ chain:arc, transport:http() })
       const USDC = '0x3600000000000000000000000000000000000000' as `0x${string}`
       const EURC = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as `0x${string}`
-      const [u,e] = await Promise.all([
+      const CIRBTC = '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF' as `0x${string}`
+      const cirDecimalsRaw = await client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'decimals' }).catch(()=>6n)
+      const cirDecimals = Number(cirDecimalsRaw) || 6
+      const [u,e,c] = await Promise.all([
         client.readContract({ address:USDC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
         client.readContract({ address:EURC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }).catch(()=>0n),
+        client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }).catch(()=>0n),
       ])
-      setEoaBalances({ USDC:formatUnits(u as bigint,6), EURC:formatUnits(e as bigint,6), USYC:'0' })
+      setEoaBalances({ USDC:formatUnits(u as bigint,6), EURC:formatUnits(e as bigint,6), USYC:'0', cirBTC:formatUnits(c as bigint,cirDecimals) })
     } catch {}
   }
   const refresh = () => { if(circleWallet?.address) fetchCircleBal(circleWallet.address); if(address) fetchEoaBal(address) }
@@ -74,6 +78,8 @@ export default function App() {
             {parseFloat(balances.USDC||'0')>0&&<div className='glass' style={{padding:'4px 10px',borderRadius:8,fontSize:11}}><span style={{color:'#64748b'}}>C-USDC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(balances.USDC).toFixed(4)}</span></div>}
             {parseFloat(eoaBalances.USDC||'0')>0&&<div className='glass' style={{padding:'4px 10px',borderRadius:8,fontSize:11}}><span style={{color:'#64748b'}}>E-USDC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(eoaBalances.USDC).toFixed(4)}</span></div>}
             {parseFloat(balances.EURC||'0')>0&&<div className='glass' style={{padding:'4px 10px',borderRadius:8,fontSize:11}}><span style={{color:'#64748b'}}>EURC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(balances.EURC).toFixed(4)}</span></div>}
+            {parseFloat(balances.cirBTC||'0')>0&&<div className='glass' style={{padding:'4px 10px',borderRadius:8,fontSize:11}}><span style={{color:'#64748b'}}>cirBTC: </span><span style={{color:'#f7931a',fontWeight:600}}>{parseFloat(balances.cirBTC).toFixed(6)}</span></div>}
+            {parseFloat(eoaBalances.cirBTC||'0')>0&&<div className='glass' style={{padding:'4px 10px',borderRadius:8,fontSize:11}}><span style={{color:'#64748b'}}>E-cirBTC: </span><span style={{color:'#f7931a',fontWeight:600}}>{parseFloat(eoaBalances.cirBTC).toFixed(6)}</span></div>}
           </div>
         )}
       </header>

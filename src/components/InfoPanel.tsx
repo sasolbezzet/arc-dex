@@ -61,6 +61,7 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
     { sym:'USDC', name:'USD Coin', color:'#2775ca', circleBal:balances.USDC||'0', eoaBal:eoaBalances.USDC||'0', dec:4 },
     { sym:'EURC', name:'Euro Coin', color:'#1a3cff', circleBal:balances.EURC||'0', eoaBal:eoaBalances.EURC||'0', dec:4 },
     { sym:'USYC', name:'US Yield Coin', color:'#10b981', circleBal:balances.USYC||'0', eoaBal:eoaBalances.USYC||'0', dec:6 },
+    { sym:'cirBTC', name:'Circle Wrapped BTC', color:'#f7931a', circleBal:balances.cirBTC||'0', eoaBal:eoaBalances.cirBTC||'0', dec:8 },
   ]
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>

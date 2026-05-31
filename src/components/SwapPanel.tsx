@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 const API = ''
-const TOKENS = ['USDC','EURC']
+const TOKENS = ['USDC','EURC','cirBTC']
 type Status = { type:'success'|'error'; msg:string; link?:string }
 interface Props { address:string|null; circleWallet:{id:string;address:string}|null; balances:Record<string,string>; onRefresh:()=>void }
 export function SwapPanel({ address, circleWallet, balances, onRefresh }: Props) {

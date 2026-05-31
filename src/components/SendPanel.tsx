@@ -1,6 +1,6 @@
 import { useState } from 'react'
 const API = ''
-const TOKENS = ['USDC','EURC','USYC']
+const TOKENS = ['USDC','EURC','USYC','cirBTC']
 type Status = { type:'success'|'error'; msg:string; link?:string }
 interface Props { address:string|null; circleWallet:{id:string;address:string}|null; balances:Record<string,string>; eoaBalances:Record<string,string>; onRefresh:()=>void }
 export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefresh }: Props) {
