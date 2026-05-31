@@ -177,8 +177,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     // Attestation + Mint
     localSteps.push({ name:'attestation', state:'pending' })
-    setStatus({ type:'info', msg:'✓ Burn sukses!\n⏳ Menunggu attestation Circle (~20 detik)...', steps:[...localSteps] })
-    setStep('Menunggu attestation...')
+    const attEst = fromChain === 'Arbitrum_Sepolia' ? '~3-8 menit' : fromChain === 'Base_Sepolia' || fromChain === 'Ethereum_Sepolia' ? '~15-20 menit' : '~30 detik'
+    setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Menunggu attestasi (${attEst})...`, steps:[...localSteps] })
+    setStep('Menunggu attestasi...')
 
     if (isToSolana) {
       // Mint di Solana → frontend Solflare yang sign
@@ -207,48 +208,24 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         }
       }
     } else {
-      // Gunakan AppKit retry — Circle SDK handle attestation + mint internal (jauh lebih cepat)
+      // Direct mint via backend: attestation polling + receiveMessage
+      // (lebih reliable dari AppKit retry karena partialResult buatan tidak punya data CCTP internal)
       localSteps[localSteps.length-1].state='success'
-      setStep('AppKit: memproses mint di destination...')
-      setStatus({ type:'info', msg:'✓ Burn sukses!\\n⏳ AppKit memproses attestation + mint di '+toChain+'...', steps:[...localSteps] })
+      const attEst2 = fromChain === 'Arbitrum_Sepolia' ? '~3-8 menit' : fromChain === 'Base_Sepolia' || fromChain === 'Ethereum_Sepolia' ? '~15-20 menit' : '~30 detik'
+      setStep('Menunggu attestasi + mint di '+toChain+'...')
+      setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Backend polling attestasi di ${toChain} (${attEst2})...`, steps:[...localSteps] })
 
-      // Panggil backend mint-via-appkit yang pakai kit.retry() — 3 attempts
-      for (let mintRetry = 0; mintRetry < 3; mintRetry++) {
-        setStep(`AppKit: mint di ${toChain} (percobaan ${mintRetry+1}/3)...`)
-        const mintResp = await fetch(API+'/api/mint-via-appkit', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address,amount})
-        })
-        const mintData = await mintResp.json()
-        if (mintResp.ok && mintData.success) {
-          localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
-          setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
-          setAmount('')
-          setTimeout(onRefresh,3000); setTimeout(onRefresh,10000)
-          return
-        }
-        if (mintRetry < 2) {
-          setStatus({ type:'info', msg:`⏳ AppKit retry ${mintRetry+2}/3...`, steps:[...localSteps] })
-          await new Promise(r=>setTimeout(r,10000))
-        } else {
-          // Fallback ke mint-direct (attestation + receiveMessage via backend)
-          setStep('Fallback: mint via backend /api/mint-direct...')
-          setStatus({ type:'info', msg:'⏳ AppKit gagal, fallback ke mint-direct backend...', steps:[...localSteps] })
-          localSteps.push({ name:'mint-manual', state:'pending' })
-          const fallbackResp = await fetch(API+'/api/mint-direct', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({burnTxHash:burnTx,fromChain,toChain,toAddress:address})
-          })
-          const fallbackData = await fallbackResp.json()
-          if (!fallbackResp.ok || !fallbackData.success) {
-            throw new Error(fallbackData.error || 'Fallback mint gagal')
-          }
-          localSteps[localSteps.length-1].state = 'success'
-          localSteps[localSteps.length-1].txHash = fallbackData.txHash
-          localSteps[localSteps.length-1].explorerUrl = fallbackData.explorerUrl
-          setStatus({ type:'success', msg:`✓ Bridge (fallback) berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
-        }
+      const mintResp = await fetch(API+'/api/mint-direct', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({burnTxHash, fromChain, toChain, toAddress: address, amount})
+      })
+      const mintData = await mintResp.json()
+      if (!mintResp.ok || !mintData.success) {
+        localSteps.push({ name:'mint', state:'error' })
+        throw new Error(mintData.error || 'Mint gagal setelah attestation')
       }
+      localSteps.push({ name:'mint', state:'success', txHash: mintData.txHash, explorerUrl: mintData.explorerUrl })
+      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} USDC → ${toChain}`, steps:[...localSteps] })
     }
 
     setAmount('')
@@ -378,7 +355,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   // ── Solana receiveMessage helper ──
   const signSolanaReceiveMessage = async (attestationHex: string, messageHex: string, toAddress: string): Promise<string> => {
-    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } = await import('@solana/web3.js')
+    const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction, TransactionMessage } = await import('@solana/web3.js')
     const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
     const provider = solanaWallet!.provider
@@ -460,17 +437,17 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     curBlockhash = latestBlock.blockhash
     curLastValid = latestBlock.lastValidBlockHeight
 
-    // Step 1: Buat ATA di transaksi TERPISAH (hindari signature error #5663012)
+    // Step 1: Buat ATA di transaksi TERPISAH (pakai VersionedTransaction, hindari signature error #5663012)
     const ataInfo = await conn.getAccountInfo(recipientAta)
     if (!ataInfo) {
       console.log('[mint] Buat ATA dulu...')
-      const ataTx = new Transaction({ blockhash: curBlockhash, lastValidBlockHeight: curLastValid, feePayer: payerKey })
-      ataTx.add(createAssociatedTokenAccountInstruction(
+      const ataIx = createAssociatedTokenAccountInstruction(
         payerKey, recipientAta, payerKey, mint,
         TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
-      ))
-      const ataVersioned = VersionedTransaction.deserialize(ataTx.serialize({ requireAllSignatures: false }))
-      const ataSigned = await provider.signTransaction(ataVersioned)
+      )
+      const ataMsg = new TransactionMessage({ payerKey, recentBlockhash: curBlockhash, instructions: [ataIx] }).compileToV0Message()
+      const ataVersionedTx = new VersionedTransaction(ataMsg)
+      const ataSigned = await provider.signTransaction(ataVersionedTx)
       const ataSig = await conn.sendRawTransaction(
         ataSigned instanceof Uint8Array ? ataSigned : ataSigned.serialize(),
         { skipPreflight: true, preflightCommitment: 'confirmed' }
@@ -496,8 +473,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           curLastValid = freshBlock.lastValidBlockHeight
         }
 
-        const tx = new Transaction({ blockhash: curBlockhash, lastValidBlockHeight: curLastValid, feePayer: payerKey })
-        tx.add(new TransactionInstruction({
+        const recvIx = new TransactionInstruction({
           programId: MESSAGE_TRANSMITTER_PROGRAM,
           keys: [
             // ── Fixed accounts (ReceiveMessage Anchor struct) ──
@@ -521,9 +497,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
             { pubkey: MESSAGE_TRANSMITTER_PROGRAM, isSigner: false, isWritable: false },
           ],
           data: data as unknown as Buffer,
-        }))
+        })
 
-        const versionedTx = VersionedTransaction.deserialize(tx.serialize({ requireAllSignatures: false }))
+        const recvMsg = new TransactionMessage({ payerKey, recentBlockhash: curBlockhash, instructions: [recvIx] }).compileToV0Message()
+        const versionedTx = new VersionedTransaction(recvMsg)
         const signed = await provider.signTransaction(versionedTx)
         const sig = await conn.sendRawTransaction(
           signed instanceof Uint8Array ? signed : signed.serialize(),
@@ -708,7 +685,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>CCTP v2 {isToSolana||isFromSolana?'Fast Transfer':''}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Estimasi fee maks</span><span>{fee} USDC</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Estimasi diterima</span><span style={{color:'#10b981'}}>{est} USDC</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>~{isToSolana||isFromSolana?'8-20':'20-30'} detik</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'&&toChain==='Arc_Testnet'?'~30 detik':toChain==='Arbitrum_Sepolia'||fromChain==='Arbitrum_Sepolia'?'~3-8 menit':'~15-20 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span style={{color:'#10b981'}}>3x (approve + burn + mint)</span></div>}
         {!isFromSolana && isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span>2x + Solflare 1x</span></div>}
         {isFromSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Solflare popup</span><span>1x (burn)</span></div>}
