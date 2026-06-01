@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { txHistory, type TxRecord } from '../txHistory'
 const EXPLORER = 'https://testnet.arcscan.app'
+const SOLANA_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 interface Props { address:string|null; circleWallet:{id:string;address:string}|null; balances:Record<string,string>; eoaBalances:Record<string,string>; onRefresh:()=>void }
 
 function fmtTime(ts: number) {
@@ -51,12 +52,41 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
 export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefresh }: Props) {
   const [copied, setCopied] = useState<string|null>(null)
   const [history, setHistory] = useState<TxRecord[]>(() => txHistory.list())
+  const [solanaAddress, setSolanaAddress] = useState<string|null>(null)
+  const [solanaUsdc, setSolanaUsdc] = useState('0')
   useEffect(() => {
     const unsub = txHistory.subscribe(() => setHistory(txHistory.list()))
-    setHistory(txHistory.list())
     return unsub
   }, [])
-  const copy = (text:string, key:string) => { navigator.clipboard.writeText(text); setCopied(key); setTimeout(()=>setCopied(null),2000) }
+  const refreshSolana = async () => {
+    const provider = (window as any).solflare || (window as any).solana
+    if (!provider) return
+    try {
+      if (!provider.publicKey) await provider.connect?.({ onlyIfTrusted: true })
+      const addr = provider.publicKey?.toString()
+      if (!addr) return
+      setSolanaAddress(addr)
+      const { Connection, PublicKey } = await import('@solana/web3.js')
+      const { getAssociatedTokenAddress } = await import('@solana/spl-token')
+      const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
+      const ata = await getAssociatedTokenAddress(new PublicKey(SOLANA_USDC_MINT), new PublicKey(addr))
+      try {
+        const bal = await conn.getTokenAccountBalance(ata)
+        setSolanaUsdc(bal.value.uiAmountString || '0')
+      } catch { setSolanaUsdc('0') }
+    } catch {}
+  }
+  const connectSolana = async () => {
+    const provider = (window as any).solflare || (window as any).solana
+    if (!provider) return alert('Install Solflare atau Phantom wallet')
+    await provider.connect()
+    await refreshSolana()
+  }
+  useEffect(() => { refreshSolana() }, [])
+  const copy = async (text:string, key:string) => {
+    try { await navigator.clipboard.writeText(text) } catch { console.warn('Clipboard failed') }
+    setCopied(key); setTimeout(()=>setCopied(null),2000)
+  }
   const tokens = [
     { sym:'USDC', name:'USD Coin', color:'#2775ca', circleBal:balances.USDC||'0', eoaBal:eoaBalances.USDC||'0', dec:4 },
     { sym:'EURC', name:'Euro Coin', color:'#1a3cff', circleBal:balances.EURC||'0', eoaBal:eoaBalances.EURC||'0', dec:4 },
@@ -91,6 +121,21 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
         </div>
       )}
       <div className='glass' style={{borderRadius:12,padding:14}}>
+        <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🟣 Solana Devnet</div>
+        {solanaAddress ? (
+          <>
+            <div style={{color:'#a78bfa',fontFamily:'monospace',fontSize:11,wordBreak:'break-all',background:'rgba(167,139,250,0.1)',padding:'8px',borderRadius:8,marginBottom:8}}>{solanaAddress}</div>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:8}}>
+              <span style={{color:'#64748b'}}>USDC</span>
+              <span style={{fontFamily:'monospace',color:'#e2e8f0'}}>{parseFloat(solanaUsdc || '0').toFixed(6)}</span>
+            </div>
+            <button onClick={refreshSolana} style={{width:'100%',background:'rgba(167,139,250,0.12)',color:'#a78bfa',border:'1px solid rgba(167,139,250,0.3)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12}}>↻ Refresh Solana</button>
+          </>
+        ) : (
+          <button onClick={connectSolana} style={{width:'100%',background:'rgba(167,139,250,0.15)',color:'#a78bfa',border:'1px solid rgba(167,139,250,0.4)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600}}>Connect Solflare / Phantom</button>
+        )}
+      </div>
+      <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>💰 Semua Balance</div>
         {tokens.map(t=>(
           <div key={t.sym} style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
@@ -105,7 +150,7 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
             </div>
           </div>
         ))}
-        <button onClick={onRefresh} style={{width:'100%',background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12}}>↻ Refresh Balance</button>
+        <button onClick={()=>{ onRefresh(); refreshSolana() }} style={{width:'100%',background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12}}>↻ Refresh Balance</button>
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>

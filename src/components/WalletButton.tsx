@@ -1,13 +1,22 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 declare global { interface Window { ethereum?: any } }
 interface Props { address: string|null; onConnect:(a:string)=>void; onDisconnect:()=>void }
 export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const onConnectRef = useRef(onConnect)
+  const onDisconnectRef = useRef(onDisconnect)
   useEffect(() => {
-    if (window.ethereum) {
-      window.ethereum.request({ method: 'eth_accounts' }).then((a: string[]) => { if (a[0]) onConnect(a[0]) })
-      window.ethereum.on('accountsChanged', (a: string[]) => { if (a[0]) onConnect(a[0]); else onDisconnect() })
+    onConnectRef.current = onConnect
+    onDisconnectRef.current = onDisconnect
+  })
+  useEffect(() => {
+    if (!window.ethereum) return
+    window.ethereum.request({ method: 'eth_accounts' }).then((a: string[]) => { if (a[0]) onConnectRef.current(a[0]) })
+    const handler = (a: string[]) => { if (a[0]) onConnectRef.current(a[0]); else onDisconnectRef.current() }
+    window.ethereum.on('accountsChanged', handler)
+    return () => {
+      window.ethereum?.removeListener?.('accountsChanged', handler)
     }
   }, [])
   const connect = async () => {

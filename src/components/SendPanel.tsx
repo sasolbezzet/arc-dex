@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { safePost } from '../api'
+import { CompactTokenPicker } from './CompactPickers'
 const API = ''
 const TOKENS = ['USDC','EURC','USYC','cirBTC']
 type Status = { type:'success'|'error'; msg:string; link?:string }
@@ -17,9 +19,7 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
     if (!toAddress.startsWith('0x') || toAddress.length!==42) { setStatus({type:'error',msg:'Alamat tidak valid'}); return }
     setLoading(true); setStatus(null)
     try {
-      const r = await fetch(API+'/api/send', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({metamaskAddress:address,toAddress,amount,token,source}) })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error)
+      const d = await safePost(API, '/api/send', {metamaskAddress:address,toAddress,amount,token,source})
       setStatus({ type:'success', msg:`✓ ${amount} ${token} terkirim ke ${toAddress.slice(0,8)}...`, link:d.result?.explorerUrl })
       setAmount(''); setToAddress('')
       setTimeout(onRefresh,3000)
@@ -50,7 +50,7 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
         </div>
         <div style={{display:'flex',gap:8}}>
           <input className='input' type='number' placeholder='0.00' value={amount} onChange={e=>setAmount(e.target.value)} />
-          <select className='input' value={token} onChange={e=>setToken(e.target.value)} style={{width:110}}>{TOKENS.map(t=><option key={t}>{t}</option>)}</select>
+          <CompactTokenPicker value={token} options={TOKENS} onChange={setToken} />
         </div>
       </div>
       <div>

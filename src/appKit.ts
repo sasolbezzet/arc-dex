@@ -8,7 +8,7 @@
 //   - Mint   : "permissionless relay" — tidak perlu popup wallet
 //              (Circle Orbit Forwarder relay attestation ke on-chain)
 
-import { AppKit, TransferSpeed } from '@circle-fin/app-kit'
+import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
 import { ArcTestnet, SolanaDevnet } from '@circle-fin/bridge-kit'
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
@@ -73,7 +73,6 @@ function getKit(): AppKit {
     kitInstance = new AppKit()
     try {
       ;(kitInstance as any).on?.('*', (payload: any) => {
-        // eslint-disable-next-line no-console
         console.log('[AppKit event]', payload?.name ?? '?', payload)
       })
     } catch (err) {
@@ -97,6 +96,26 @@ export async function buildEvmAdapter() {
     provider: window.ethereum,
     capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet] },
   } as any)
+}
+
+async function switchToArcTestnet() {
+  if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
+  const chainId = '0x4cef52'
+  try {
+    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] })
+  } catch (e: any) {
+    if (e?.code !== 4902 && e?.code !== -32603) throw e
+    await window.ethereum.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId,
+        chainName: 'Arc Testnet',
+        nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
+        rpcUrls: ['https://rpc.testnet.arc.network/'],
+        blockExplorerUrls: ['https://testnet.arcscan.app'],
+      }],
+    })
+  }
 }
 
 // ── Solana adapter ──────────────────────────────────────────────
@@ -228,5 +247,19 @@ export async function bridgeWithAppKit(args: BridgeArgs): Promise<unknown> {
     amount: args.amount,
     token:  'USDC',
     config: { transferSpeed: speed },
+  } as any)
+}
+
+export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: string; amountIn: string; kitKey: string }): Promise<any> {
+  await switchToArcTestnet()
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
+  return await kit.swap({
+    from: { adapter, chain: SwapChain.Arc_Testnet },
+    tokenIn: args.tokenIn,
+    tokenOut: args.tokenOut,
+    amountIn: args.amountIn,
+    config: { kitKey: args.kitKey, allowanceStrategy: 'approve' },
   } as any)
 }

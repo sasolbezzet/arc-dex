@@ -63,7 +63,7 @@ export function wrapSolflare(raw: any): any {
     },
 
     async disconnect() {
-      try { await raw.disconnect?.() } catch { /* ignore */ }
+      try { await raw.disconnect?.() } catch(e) { console.warn('disconnect error:', e instanceof Error ? e.message : String(e)) }
     },
 
     async signTransaction(input: any): Promise<Uint8Array> {
@@ -122,7 +122,7 @@ export function wrapPhantom(raw: any): any {
     },
 
     async disconnect() {
-      try { await raw.disconnect?.() } catch { /* ignore */ }
+      try { await raw.disconnect?.() } catch(e) { console.warn('disconnect error:', e instanceof Error ? e.message : String(e)) }
     },
 
     // Phantom: terima langsung tanpa decode (beda dari Solflare)
@@ -145,7 +145,7 @@ export function wrapPhantom(raw: any): any {
               if (sig?.signature) vt.addSignature(sig.publicKey, sig.signature)
             }
             return vt.serialize()
-          } catch {}
+          } catch(e) { console.warn('manual serialize fallback error:', e instanceof Error ? e.message : String(e)) }
         }
       }
       return serializeSigned(signed)

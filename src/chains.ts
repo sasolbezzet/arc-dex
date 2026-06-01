@@ -105,7 +105,7 @@ export const CHAINS: ChainCfg[] = [
     id: 'Solana_Devnet',
     label: 'Solana Devnet',
     chainId: null,
-    domain: 1,
+    domain: 5,
     tokenMessenger: null,
     usdc: null,
     explorer: 'https://explorer.solana.com',
