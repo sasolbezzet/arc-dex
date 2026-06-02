@@ -15,18 +15,22 @@ import {
   type AgenticJob,
 } from '../services/agentic'
 import {
+  getAgentLink,
   getAgentProfile,
   getStoredJobs,
+  saveAgentLink,
   saveAgentProfile,
   saveStoredJob,
+  type StoredAgentLink,
   type StoredAgentProfile,
   type StoredAgenticJob,
 } from '../services/agenticStore'
 
 type Status = { type: 'success' | 'error' | 'info'; msg: string; link?: string }
-type View = 'agent' | 'create' | 'manage'
-const VIEW_LABEL_KEYS: Record<View, 'agentic.view.agent' | 'agentic.view.create' | 'agentic.view.manage'> = {
+type View = 'agent' | 'link' | 'create' | 'manage'
+const VIEW_LABEL_KEYS: Record<View, 'agentic.view.agent' | 'agentic.view.link' | 'agentic.view.create' | 'agentic.view.manage'> = {
   agent: 'agentic.view.agent',
+  link: 'agentic.view.link',
   create: 'agentic.view.create',
   manage: 'agentic.view.manage',
 }
@@ -61,12 +65,25 @@ function FieldLabel({ children }: { children: ReactNode }) {
   return <label style={{color:'#64748b',fontSize:12,display:'block',marginBottom:6}}>{children}</label>
 }
 
+type SimResult = {
+  requestId: string
+  agentId: string
+  status: string
+  summary: string
+  suggestedProvider: string
+  suggestedEvaluator: string
+  suggestedBudget: string
+  deliverableHash: string
+  nextSteps: string[]
+}
+
 export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   const { t } = useI18n()
   const [view, setView] = useState<View>('agent')
   const [loading, setLoading] = useState('')
   const [status, setStatus] = useState<Status | null>(null)
   const [profile, setProfile] = useState<StoredAgentProfile | null>(null)
+  const [agentLink, setAgentLink] = useState<StoredAgentLink | null>(null)
   const [jobs, setJobs] = useState<StoredAgenticJob[]>([])
   const [metadataUri, setMetadataUri] = useState('ipfs://bafkreibdi6623n3xpf7ymk62ckb4bo75o3qemwkpfvp5i25j66itxvsoei')
   const [agentLookupId, setAgentLookupId] = useState('')
@@ -80,14 +97,30 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   const [deliverable, setDeliverable] = useState('deliverable-approved-by-provider')
   const [reason, setReason] = useState('deliverable-approved')
   const [jobInfo, setJobInfo] = useState<AgenticJob | null>(null)
+  const [linkAgentId, setLinkAgentId] = useState('')
+  const [aiName, setAiName] = useState('ARCOX Retail Payment Agent')
+  const [aiEndpoint, setAiEndpoint] = useState('https://agent.example.com/arcox')
+  const [aiCapabilities, setAiCapabilities] = useState('quote_payments, create_job_plan, verify_deliverable')
+  const [agentMetadataJson, setAgentMetadataJson] = useState('')
+  const [simulationPrompt, setSimulationPrompt] = useState('Create a retail payment escrow job for 1 USDC on Arc Testnet and verify the deliverable.')
+  const [simulationResult, setSimulationResult] = useState<SimResult | null>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setProfile(getAgentProfile(address))
+      const savedLink = getAgentLink(address)
+      setAgentLink(savedLink)
       setJobs(getStoredJobs(address))
       if (address) {
         setProvider(prev => prev || address)
         setEvaluator(prev => prev || address)
+      }
+      if (savedLink) {
+        setLinkAgentId(savedLink.agentId)
+        setAiName(savedLink.aiName)
+        setAiEndpoint(savedLink.endpoint)
+        setAiCapabilities(savedLink.capabilities.join(', '))
+        setAgentMetadataJson(savedLink.metadataJson)
       }
     }, 0)
     return () => window.clearTimeout(timer)
@@ -127,6 +160,89 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
     const data = await readAgent(agentLookupId)
     setAgentLookup({ owner: String(data.owner), metadataUri: String(data.metadataUri) })
     setStatus({ type: 'success', msg: t('agentic.agentLoaded') })
+  })
+
+  const handleLinkAiAgent = () => run(t('agentic.linking'), async () => {
+    const owner = requireAddress()
+    if (!linkAgentId.trim()) throw new Error(t('agentic.jobIdRequired'))
+    if (!aiName.trim() || !aiEndpoint.trim()) throw new Error(t('agentic.aiRequired'))
+    const data = await readAgent(linkAgentId.trim())
+    const onchainOwner = getAddress(String(data.owner))
+    if (onchainOwner !== owner) throw new Error(t('agentic.ownerMismatch'))
+    const capabilities = aiCapabilities.split(',').map(item => item.trim()).filter(Boolean)
+    const metadata = {
+      name: aiName.trim(),
+      description: `AI agent linked to ARCOX DEX Agent ID ${linkAgentId.trim()}`,
+      agent_type: 'retail_payment_agent',
+      capabilities,
+      agent_endpoint: aiEndpoint.trim(),
+      owner,
+      arc_agent_id: linkAgentId.trim(),
+      arc_identity_registry_token_uri: String(data.metadataUri),
+      version: '1.0.0',
+    }
+    const metadataJson = JSON.stringify(metadata, null, 2)
+    const metadataHash = hashTextBytes32(metadataJson)
+    const timestamp = new Date().toISOString()
+    const message = [
+      'ARCOX DEX AI AGENT LINK',
+      `Agent ID: ${linkAgentId.trim()}`,
+      `Owner: ${owner}`,
+      `AI Endpoint: ${aiEndpoint.trim()}`,
+      `Onchain tokenURI: ${String(data.metadataUri)}`,
+      `Metadata Hash: ${metadataHash}`,
+      `Timestamp: ${timestamp}`,
+      'Purpose: prove this wallet controls the onchain ERC-8004 agent identity and authorizes this AI endpoint for simulation.',
+    ].join('\n')
+    const ethereum = (window as Window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<string> } }).ethereum
+    if (!ethereum) throw new Error('MetaMask tidak terdeteksi.')
+    const ownerSignature = await ethereum.request({ method: 'personal_sign', params: [message, owner] })
+    const next = {
+      agentId: linkAgentId.trim(),
+      owner,
+      metadataUri: String(data.metadataUri),
+      aiName: aiName.trim(),
+      endpoint: aiEndpoint.trim(),
+      capabilities,
+      handshakeMessage: message,
+      ownerSignature,
+      metadataJson,
+      linkedAt: Date.now(),
+    }
+    saveAgentLink(next)
+    setAgentLink(next)
+    setAgentMetadataJson(metadataJson)
+    setStatus({ type: 'success', msg: t('agentic.linked', { id: next.agentId }) })
+  })
+
+  const handleRunSimulation = () => run(t('agentic.simulating'), async () => {
+    if (!agentLink) throw new Error(t('agentic.linkRequired'))
+    if (!simulationPrompt.trim()) throw new Error(t('agentic.descriptionRequired'))
+    const requestId = `sim-${Date.now()}`
+    const deliverableHash = hashTextBytes32(`${agentLink.agentId}:${simulationPrompt}:${agentLink.ownerSignature.slice(0, 18)}`)
+    const result: SimResult = {
+      requestId,
+      agentId: agentLink.agentId,
+      status: 'accepted',
+      summary: `${agentLink.aiName} accepted the simulated task and mapped it to an ERC-8183 escrow workflow.`,
+      suggestedProvider: agentLink.owner,
+      suggestedEvaluator: address || agentLink.owner,
+      suggestedBudget: '1',
+      deliverableHash,
+      nextSteps: [
+        'Create ERC-8183 job with provider = linked agent owner.',
+        'Set budget and fund escrow with USDC.',
+        'Provider submits deliverable hash.',
+        'Evaluator completes job to settle escrow.',
+      ],
+    }
+    setSimulationResult(result)
+    setProvider(result.suggestedProvider)
+    setEvaluator(result.suggestedEvaluator)
+    setBudget(result.suggestedBudget)
+    setDeliverable(result.deliverableHash)
+    setDescription(simulationPrompt.trim())
+    setStatus({ type: 'success', msg: t('agentic.simulated') })
   })
 
   const handleCreateJob = () => run(t('agentic.creatingJob'), async () => {
@@ -217,8 +333,8 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
         </div>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
-        {(['agent', 'create', 'manage'] as View[]).map(item => (
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4, minmax(0, 1fr))',gap:8}}>
+        {(['agent', 'link', 'create', 'manage'] as View[]).map(item => (
           <button key={item} onClick={()=>setView(item)} style={{padding:'9px 6px',borderRadius:8,cursor:'pointer',border:view===item?'1px solid rgba(99,102,241,0.65)':'1px solid #1e1e2e',background:view===item?'rgba(99,102,241,0.14)':'rgba(18,18,26,0.8)',color:view===item?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>
             {t(VIEW_LABEL_KEYS[item])}
           </button>
@@ -253,6 +369,67 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
               <div style={{fontSize:12,marginTop:10,display:'grid',gap:4}}>
                 <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Owner</span><span style={{fontFamily:'monospace'}}>{shortAddress(agentLookup.owner)}</span></div>
                 <div style={{color:'#64748b',overflowWrap:'anywhere'}}>{agentLookup.metadataUri}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {view === 'link' && (
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div className='glass' style={{padding:12,borderRadius:10}}>
+            <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13,marginBottom:4}}>{t('agentic.aiLinkTitle')}</div>
+            <div style={{color:'#64748b',fontSize:11,marginBottom:10}}>{t('agentic.aiLinkHelp')}</div>
+            {agentLink && (
+              <div style={{fontSize:12,marginBottom:10,display:'grid',gap:4}}>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Agent ID</span><span style={{color:'#818cf8'}}>{agentLink.agentId}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>AI</span><span>{agentLink.aiName}</span></div>
+                <div style={{color:'#64748b',overflowWrap:'anywhere'}}>{agentLink.endpoint}</div>
+              </div>
+            )}
+            <div style={{display:'grid',gap:10}}>
+              <div>
+                <FieldLabel>Agent ID</FieldLabel>
+                <input className='input' value={linkAgentId} onChange={e=>setLinkAgentId(e.target.value)} placeholder='Agent ID' />
+              </div>
+              <div>
+                <FieldLabel>{t('agentic.aiName')}</FieldLabel>
+                <input className='input' value={aiName} onChange={e=>setAiName(e.target.value)} />
+              </div>
+              <div>
+                <FieldLabel>{t('agentic.aiEndpoint')}</FieldLabel>
+                <input className='input' value={aiEndpoint} onChange={e=>setAiEndpoint(e.target.value)} placeholder='https://...' style={{fontSize:12,fontFamily:'monospace'}} />
+              </div>
+              <div>
+                <FieldLabel>{t('agentic.aiCapabilities')}</FieldLabel>
+                <input className='input' value={aiCapabilities} onChange={e=>setAiCapabilities(e.target.value)} />
+              </div>
+              <button className='btn btn-primary' disabled={busy || !address || !linkAgentId || !aiName || !aiEndpoint} onClick={handleLinkAiAgent}>
+                {loading === t('agentic.linking') ? `... ${loading}` : t('agentic.linkAi')}
+              </button>
+            </div>
+          </div>
+
+          {agentMetadataJson && (
+            <div className='glass' style={{padding:12,borderRadius:10}}>
+              <FieldLabel>{t('agentic.metadataPreview')}</FieldLabel>
+              <pre style={{whiteSpace:'pre-wrap',wordBreak:'break-word',fontSize:10,color:'#94a3b8',maxHeight:180,overflow:'auto'}}>{agentMetadataJson}</pre>
+            </div>
+          )}
+
+          <div className='glass' style={{padding:12,borderRadius:10}}>
+            <FieldLabel>{t('agentic.simulationPrompt')}</FieldLabel>
+            <textarea className='input' rows={3} value={simulationPrompt} onChange={e=>setSimulationPrompt(e.target.value)} />
+            <button className='btn btn-primary' disabled={busy || !agentLink || !simulationPrompt} onClick={handleRunSimulation} style={{marginTop:10}}>
+              {loading === t('agentic.simulating') ? `... ${loading}` : t('agentic.runSimulation')}
+            </button>
+            {simulationResult && (
+              <div style={{marginTop:10,fontSize:12,display:'grid',gap:5}}>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Request</span><span>{simulationResult.requestId}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Status</span><span style={{color:'#10b981'}}>{simulationResult.status}</span></div>
+                <div style={{color:'#94a3b8'}}>{simulationResult.summary}</div>
+                <div style={{overflowWrap:'anywhere',color:'#64748b'}}>deliverable: {simulationResult.deliverableHash}</div>
+                <button className='btn btn-primary' onClick={()=>setView('create')} style={{marginTop:6}}>{t('agentic.useSimulation')}</button>
               </div>
             )}
           </div>
