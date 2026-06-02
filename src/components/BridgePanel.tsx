@@ -414,14 +414,76 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       })
       setStatus({ type:'info', msg:`✓ Burn sukses di Solana!\n⏳ Menunggu attestation (~20 detik)...`, steps:[...localSteps] })
 
-      // Backend mint di Arc
+      // Mint di Arc harus ditandatangani wallet user. Server-signed mint sengaja disabled.
       localSteps.push({ name:'attestation', state:'pending' })
-      setStatus({ type:'info', msg:'⏳ Backend polling attestation dari Solana...', steps:[...localSteps] })
-      const mintData = await safePost(API, '/api/mint-cctp-from-solana', {burnTxHash,toAddress:address})
-      if (!mintData.success) throw new Error(mintData.error||'Mint di Arc gagal')
+      setStatus({ type:'info', msg:'⏳ Polling attestation dari Solana...', steps:[...localSteps] })
+      const maxPolls = 120
+      let attData: any = null
+      for (let i = 0; i < maxPolls; i++) {
+        attData = await safePost(API, '/api/get-attestation', {
+          txHash: burnTxHash,
+          fromChain: 'Solana_Devnet',
+          toChain: 'Arc_Testnet',
+          once: true,
+        })
+        if (attData.success) break
+        const statusText = attData.status ? ` (${attData.status})` : ''
+        setStatus({ type:'info', msg:`✓ Burn sukses di Solana!\n⏳ Polling attestasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
+        await new Promise(r => setTimeout(r, 3000))
+      }
+      if (!attData?.success) {
+        localSteps[localSteps.length-1].state = 'error'
+        txHistory.update(historyId, { status:'error', error:attData?.error || 'Attestation timeout dari Solana' })
+        throw new Error(attData?.error || 'Attestation timeout dari Solana')
+      }
       localSteps[localSteps.length-1].state='success'
-      localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
-      txHistory.update(historyId, { status:'success', mintTx:mintData.txHash, mintExplorerUrl:mintData.explorerUrl, note:'Bridge completed on Arc Testnet.' })
+
+      const arcInfo = EVM_CHAINS.find(c=>c.id==='Arc_Testnet')
+      if (arcInfo && window.ethereum) {
+        try {
+          await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:arcInfo.chainId}] })
+          await new Promise(r=>setTimeout(r,1500))
+        } catch(e:any) {
+          if ((e.code===4902||e.code===-32603) && arcInfo.addParams) {
+            await window.ethereum.request({ method:'wallet_addEthereumChain', params:[arcInfo.addParams] })
+            await new Promise(r=>setTimeout(r,3000))
+          }
+        }
+      }
+
+      const recvMsg = attData.message
+      const recvAtt = attData.attestation
+      if (!recvMsg || !recvAtt || !attData.messageTransmitter) {
+        throw new Error('Data mint Arc tidak lengkap dari API attestation.')
+      }
+      const msgHex = recvMsg.startsWith('0x') ? recvMsg.slice(2) : recvMsg
+      const attHex = recvAtt.startsWith('0x') ? recvAtt.slice(2) : recvAtt
+      const pad32 = (hex: string) => hex.length % 64 === 0 ? hex : hex.padEnd(Math.ceil(hex.length / 64) * 64, '0')
+      const msgLenHex = (msgHex.length / 2).toString(16).padStart(64, '0')
+      const attLenHex = (attHex.length / 2).toString(16).padStart(64, '0')
+      const msgPadded = pad32(msgHex)
+      const attPadded = pad32(attHex)
+      const attOffsetBytes = 64 + 32 + msgPadded.length / 2
+      const callData = '0x57ecfd28' +
+        '0000000000000000000000000000000000000000000000000000000000000040' +
+        attOffsetBytes.toString(16).padStart(64, '0') +
+        msgLenHex + msgPadded +
+        attLenHex + attPadded
+
+      localSteps.push({ name:'mint', state:'pending' })
+      setStep('MetaMask: Mint USDC di Arc Testnet...')
+      setStatus({ type:'info', msg:'✓ Attestasi siap!\n⏳ MetaMask popup: Mint USDC di Arc Testnet...', steps:[...localSteps] })
+      const mintTx = await window.ethereum.request({
+        method:'eth_sendTransaction',
+        params:[{ from:address, to:attData.messageTransmitter, data:callData }]
+      })
+      localSteps[localSteps.length-1].txHash = mintTx
+      setStatus({ type:'info', msg:'⏳ Menunggu mint di Arc Testnet...', steps:[...localSteps] })
+      await waitEvmTx(mintTx)
+      localSteps[localSteps.length-1].state='success'
+      const mintExplorerUrl = explorerFor('Arc_Testnet', mintTx)
+      localSteps[localSteps.length-1].explorerUrl = mintExplorerUrl
+      txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl, note:'Bridge completed on Arc Testnet via MetaMask.' })
       setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} Solana → Arc Testnet`, steps:[...localSteps] })
       setAmount('')
       fetchSolanaUsdcBalance(sw.address, sw.provider)
