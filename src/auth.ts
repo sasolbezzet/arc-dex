@@ -1,4 +1,5 @@
 import { safePost } from './api'
+import { getAddress } from 'viem'
 
 const STORAGE_KEY = 'arc-dex-auth'
 
@@ -35,18 +36,19 @@ export function clearAuthSession() {
 }
 
 export async function ensureAuthSession(address: string) {
-  const normalized = address.toLowerCase()
+  const checksumAddress = getAddress(address)
+  const normalized = checksumAddress.toLowerCase()
   const existing = readSession()
   if (existing?.token && existing.address.toLowerCase() === normalized) return existing.token
   if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi')
   const issuedAt = new Date().toISOString()
-  const message = buildAuthMessage(address, issuedAt)
+  const message = buildAuthMessage(checksumAddress, issuedAt)
   const signature = await window.ethereum.request({
     method: 'personal_sign',
-    params: [message, address],
+    params: [message, checksumAddress],
   })
-  const result = await safePost('', '/api/auth/session', { address, issuedAt, signature })
-  const session = { address: result.address || address, token: result.token }
+  const result = await safePost('', '/api/auth/session', { address: checksumAddress, issuedAt, signature })
+  const session = { address: result.address || checksumAddress, token: result.token }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
   return session.token
 }
