@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { CompactTokenPicker } from './CompactPickers'
 import { SWAP_TOKENS } from '../domain/tokens'
-import { quoteCircleSwap, swapFromCircleWallet, swapFromEoa } from '../services/swapService'
+import { quoteCircleSwap, quoteEoaSwap, swapFromCircleWallet, swapFromEoa } from '../services/swapService'
 import { useI18n } from '../i18n'
 
 type Status = { type:'success'|'error'|'warning'; msg:string; link?:string }
@@ -16,10 +16,12 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<Status|null>(null)
   const debounce = useRef<any>(null)
-  const fetchQuote = async (tin:string, tout:string, amt:string) => {
+  const fetchQuote = async (src:'circle'|'eoa', tin:string, tout:string, amt:string) => {
     if (!amt || parseFloat(amt) <= 0 || tin === tout) { setQuote(null); return }
     try {
-      const d = await quoteCircleSwap({metamaskAddress:address,tokenIn:tin,tokenOut:tout,amountIn:amt})
+      const d = src === 'eoa'
+        ? await quoteEoaSwap({tokenIn:tin,tokenOut:tout,amountIn:amt})
+        : await quoteCircleSwap({metamaskAddress:address,tokenIn:tin,tokenOut:tout,amountIn:amt})
       if (d.available === false) {
         setQuote(null)
         setStatus({ type:'warning', msg:d.error || t('swap.routeUnavailable') })
@@ -33,13 +35,14 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   }
   useEffect(() => {
     clearTimeout(debounce.current)
-    debounce.current = setTimeout(() => fetchQuote(tokenIn, tokenOut, amountIn), 600)
-  }, [tokenIn, tokenOut, amountIn])
+    debounce.current = setTimeout(() => fetchQuote(source, tokenIn, tokenOut, amountIn), 600)
+  }, [source, tokenIn, tokenOut, amountIn])
   const handleSwap = async () => {
     if (!address || !amountIn) return
     setLoading(true); setStatus(null)
     try {
       if (source === 'eoa') {
+        setStatus({ type:'warning', msg:'MetaMask akan meminta approval/swap signature dari wallet EOA Anda.' })
         const result = await swapFromEoa({ tokenIn, tokenOut, amountIn })
         setStatus({ type:'success', msg:`✓ ${result?.amountIn || amountIn} ${tokenIn} → ${result?.amountOut || result?.estimatedOutput?.amount || ''} ${tokenOut}`, link:result?.explorerUrl })
       } else {

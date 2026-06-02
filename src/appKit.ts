@@ -245,4 +245,18 @@ export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: strin
   } as any)
 }
 
+export async function estimateEoaSwapWithAppKit(args: { tokenIn: string; tokenOut: string; amountIn: string; kitKey: string }): Promise<any> {
+  await switchToArcTestnet()
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
+  return await kit.estimateSwap({
+    from: { adapter, chain: SwapChain.Arc_Testnet },
+    tokenIn: args.tokenIn,
+    tokenOut: args.tokenOut,
+    amountIn: args.amountIn,
+    config: { kitKey: args.kitKey, allowanceStrategy: 'approve' },
+  } as any)
+}
+
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
