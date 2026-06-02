@@ -114,6 +114,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   const handleRegisterAgent = () => run(t('agentic.registering'), async () => {
     const owner = requireAddress()
     if (!metadataUri.trim()) throw new Error(t('agentic.metadataRequired'))
+    if (profile && !window.confirm(t('agentic.registerAgainConfirm'))) return
     const result = await registerAgent(owner, metadataUri.trim())
     const next = { owner, agentId: result.agentId, metadataUri: metadataUri.trim(), txHash: result.hash, createdAt: Date.now() }
     saveAgentProfile(next)

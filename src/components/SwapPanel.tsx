@@ -13,11 +13,15 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const [tokenOut, setTokenOut] = useState('EURC')
   const [amountIn, setAmountIn] = useState('')
   const [quote, setQuote] = useState<{amountOut:string;fee:string;rate:number}|null>(null)
+  const [quoteLoading, setQuoteLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<Status|null>(null)
   const debounce = useRef<any>(null)
   const fetchQuote = async (src:'circle'|'eoa', tin:string, tout:string, amt:string) => {
     if (!amt || parseFloat(amt) <= 0 || tin === tout) { setQuote(null); return }
+    if (src === 'circle' && (!address || !circleWallet)) { setQuote(null); return }
+    if (src === 'eoa' && !address) { setQuote(null); return }
+    setQuoteLoading(true)
     try {
       const d = src === 'eoa'
         ? await quoteEoaSwap({tokenIn:tin,tokenOut:tout,amountIn:amt})
@@ -31,7 +35,13 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
         setStatus(null)
         setQuote(d)
       }
-    } catch(e) { console.error('fetchQuote error:', e instanceof Error ? e.message : String(e)) }
+    } catch(e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('fetchQuote error:', msg)
+      setQuote(null)
+      setStatus({ type:'warning', msg })
+    }
+    setQuoteLoading(false)
   }
   useEffect(() => {
     clearTimeout(debounce.current)
@@ -99,9 +109,10 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.source')}</span><span>{walletLabel}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.wallet')}</span><span style={{color:source==='circle'?'#818cf8':'#f59e0b',fontFamily:'monospace',fontSize:11}}>{walletAddr?.slice(0,8)}...{walletAddr?.slice(-6)}</span></div>
       </div>
+      {quoteLoading && <div style={{padding:10,borderRadius:10,fontSize:12,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>Mengambil estimasi swap...</div>}
       {status && <div style={{padding:10,borderRadius:10,fontSize:13,background:status.type==='success'?'rgba(16,185,129,0.1)':status.type==='warning'?'rgba(245,158,11,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':status.type==='warning'?'#f59e0b':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':status.type==='warning'?'1px solid rgba(245,158,11,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&<div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}</div>}
       {!address ? <div style={{padding:10,borderRadius:10,fontSize:13,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>{t('swap.connectWalletHint')}</div>
-      : <button onClick={handleSwap} disabled={!amountIn||loading||tokenIn===tokenOut||(source==='circle'&&!circleWallet)} className='btn btn-primary'>{loading?`⏳ ${t('common.processing')}`:amountIn?t('swap.actionAmount', { amount: amountIn, tokenIn, tokenOut, source: source==='circle'?'Circle':'EOA' }):t('swap.action')}</button>}
+      : <button onClick={handleSwap} disabled={!amountIn||!quote||quoteLoading||loading||tokenIn===tokenOut||(source==='circle'&&!circleWallet)} className='btn btn-primary'>{loading?`⏳ ${t('common.processing')}`:quoteLoading?'Mengambil estimasi...':amountIn&&!quote?'Menunggu estimasi':amountIn?t('swap.actionAmount', { amount: amountIn, tokenIn, tokenOut, source: source==='circle'?'Circle':'EOA' }):t('swap.action')}</button>}
     </div>
   )
 }
