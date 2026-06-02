@@ -3,6 +3,7 @@ export type ChainKey =
   | 'Ethereum_Sepolia'
   | 'Base_Sepolia'
   | 'Arbitrum_Sepolia'
+  | 'HyperEVM_Testnet'
   | 'Solana_Devnet'
 
 export interface ChainCfg {
@@ -99,6 +100,24 @@ export const CHAINS: ChainCfg[] = [
       nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
       rpcUrls: ['https://sepolia-rollup.arbitrum.io/rpc'],
       blockExplorerUrls: ['https://sepolia.arbiscan.io'],
+    },
+  },
+  {
+    id: 'HyperEVM_Testnet',
+    label: 'HyperEVM Testnet',
+    chainId: '0x3e6',
+    domain: 19,
+    tokenMessenger: TOKEN_MESSENGER_V2_EVM,
+    usdc: '0x2B3370eE501B4a559b57D449569354196457D8Ab',
+    explorer: 'https://app.hyperliquid-testnet.xyz/explorer',
+    isEvm: true,
+    isInstantFinality: false,
+    addParams: {
+      chainId: '0x3e6',
+      chainName: 'HyperEVM Testnet',
+      nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
+      rpcUrls: ['https://rpc.hyperliquid-testnet.xyz/evm'],
+      blockExplorerUrls: ['https://app.hyperliquid-testnet.xyz/explorer'],
     },
   },
   {

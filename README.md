@@ -1,117 +1,77 @@
-# Arc DEX
+# ARCOX DEX
 
-A decentralized exchange prototype for bridging USDC across chains using Arc AppKit Bridge & Circle CCTP.
+Retail testnet DEX for Arc Network using Circle App Kit, CCTP v2, MetaMask, and Solana Devnet wallets.
 
-## Features
-- Bridge USDC on EVM chains and Solana via Circle CCTP
-- Swap within Arc Testnet using Viem and Arc SDK
-- Near-instant testnet transactions
+Live app: https://arc-dex-bice.vercel.app/
 
-## Getting Started
+## Local Development
 
-Install deps:
+Frontend:
+
 ```bash
-pnpm i
+cd /home/ubuntu/arc-dex
+npm install
+npm run dev
 ```
 
-Start Arc DEX API (backend):
+Backend:
+
 ```bash
-cd arc-dex-api
-node server.mjs
+cd /home/ubuntu/arc-dex-api
+npm install
+node --env-file=.env server.mjs
 ```
 
-Start Frontend Next.js:
+The Vite dev server proxies `/api/*` to `http://localhost:3001`.
+
+## Vercel Frontend
+
+The frontend can run on Vercel. `vercel.json` builds with `VITE_BASE_PATH=/` and rewrites `/api/*` to the current backend:
+
+```txt
+https://43.163.98.128.nip.io/api/*
+```
+
+Deploy steps:
+
 ```bash
-cd frontend
-pnpm dev
+cd /home/ubuntu/arc-dex
+vercel
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+If the backend moves, update `vercel.json` rewrite destination.
 
-## Testing
-Run the unit tests
+## Security Notes
+
+- Circle Wallet actions require MetaMask signature authentication.
+- Auth tokens are sent as `Authorization: Bearer <token>`.
+- `/api/send`, `/api/swap`, `/api/quote`, `/api/wallet`, `/api/prepare-bridge`, and `/api/send-estimate` reject requests without a valid wallet token.
+- Server-signed mint endpoints are disabled unless `ENABLE_SERVER_SIGNED_MINT=true`.
+- Set a dedicated backend `AUTH_SECRET` before production.
+- Keep Circle secrets and private keys only in backend env vars, never in Vercel frontend env.
+
+Recommended backend env:
+
 ```bash
-pnpm test
+AUTH_SECRET=<random-32-byte-secret>
+ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app,https://43.163.98.128.nip.io
+CIRCLE_API_KEY=...
+CIRCLE_ENTITY_SECRET=...
+KIT_KEY=...
+SOLANA_DEVNET_RPC=https://api.devnet.solana.com
+ENABLE_SERVER_SIGNED_MINT=false
 ```
 
-## React Compiler
+## Build
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+VPS subpath build:
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-
-```js
-// eslint.config.js
-export default defineConfig([
- globalIgnores(['dist']),
- {
-   languageOptions: {
-     parserOptions: {
-       projectService: true,
-       tsconfigRootDir: import.meta.dirname,
-     },
-   },
- }
- // other options...
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
----
-
-# Solana Devnet Bridge (Circle CCTP)
-
-Arc DEX sekarang mendukung **Circle CCTP bridge** ke jaringan **Solana Devnet** (domain 1). Integrasi backend menggunakan Arc AppKit Bridge + Circle Iris attestation polling.
-
-*Catatan:* Setelah proses burn selesai, wallet Solflare akan otomatis menampilkan popup untuk mint USDC. Pastikan wallet sudah terhubung sebelum memulai bridge.
-
-## Config Cepat Local
-- Chain: `Solana_Devnet` sudah ditambahkan ke `CCTP` config di `arc-dex-api/server.mjs`
-- Domain Circle CCTP: 1
-- USDC devnet address: `G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5`
-- Circle services:
-  - tokenMessenger: `CirXL1Ljxok6y32zhM3C5C22AevqEM95aERkf36de22`
-  - messageTransmitter: `CirAct9xT5NfB5f6pZD5s9sE3o4bxCF58UHk3gHJAVR`
-
-
-## Endpoints baru
-POST `/api/prepare-bridge-solana`<br>
-Trigger: initiate USDC burn on Arc Testnet → return burnTxHash dan explorer url Arc
-
-POST `/api/mint-cctp-solana`<br>
-Expected: `{ "burnTxHash": "0x...", "toAddress": "G5fNzNsjeqc7L7ZcKwF3K9a..." }`<br>
-Poll Circle Iris attestation → mint GAGAL via transaction receiveMessage di Solana → return txHash Solana & explorer urls
-
-Contoh curling (backend sudah berjalan di localhost:3001):
 ```bash
-# 1. Start backend
-cd arc-dex-api && node server.mjs
-
-# 2. Inisiasi burn
-curl -s -X POST http://localhost:3001/api/prepare-bridge-solana \
-  -H 'Content-Type: application/json' \
-  -d '{"metamaskAddress":"0xAb5801a7D398351b8bE11C439e05C5B3259aeC9","amount":"10"}'
-
-# Ambil txHash hasil diatas lalu step 3:
-curl -s -X POST http://localhost:3001/api/mint-cptp-solana \
-  -H 'Content-Type: application/json' \
-  -d '{"burnTxHash":"<txHash-dari-step2>","toAddress":"G5fNzNsjeqc7L7ZcKwF3K9aPuTtmZje5rv7SR2Y727i"}'
+npm run build
 ```
 
-## Environment Variable (wajib set, jangan di-commit)
-- SOLANA_DEVNET_RPC=https://api.devnet.solana.com
-- OWNER_PRIVATE_KEY=0x... (opsional; kalau tidak ada, gunakan private key default aplikasi dari env Circle wallets trigger)
+Vercel/root build:
 
-## Iris Attestation
-Circle Iris sandbox endpoint (devnet): `https://iris-api-sandbox.circle.com/v2/messages/:domain?transactionHash=:txHash`
-- Domain: `1` untuk Solana Devnet
-- Poll interval: 3 detik, max 40x retries (~2 menit timeout)
-
-## Referensi
-- Circle CCTP https://developers.circle.com/cross-chain-transfer-protocol
-- Arc AppKit Bridge https://docs.arc.io/app-kit/bridge
-- Iris API https://developers.circle.com/stable/docs/iris-api
+```bash
+VITE_BASE_PATH=/ npm run build
+```

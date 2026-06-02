@@ -1,8 +1,14 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function safePost(baseUrl: string, path: string, body: object): Promise<any> {
+  const token = localStorage.getItem('arc-dex-auth')
+  let authToken = ''
+  try { authToken = token ? JSON.parse(token)?.token || '' : '' } catch {}
   const resp = await fetch(baseUrl + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
     body: JSON.stringify(body),
   })
   const text = await resp.text()

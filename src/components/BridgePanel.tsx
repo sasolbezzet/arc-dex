@@ -1,7 +1,9 @@
 /* eslint-disable */
 import { useState, useEffect } from 'react'
 import { safePost } from '../api'
+import { txHistory } from '../txHistory'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
+import { useI18n } from '../i18n'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -12,6 +14,7 @@ const EVM_CHAINS = [
   { id: 'Ethereum_Sepolia', label: 'Ethereum Sepolia', chainId: '0xaa36a7', addParams: null },
   { id: 'Base_Sepolia', label: 'Base Sepolia', chainId: '0x14a34', addParams: null },
   { id: 'Arbitrum_Sepolia', label: 'Arbitrum Sepolia', chainId: '0x66eee', addParams: null },
+  { id: 'HyperEVM_Testnet', label: 'HyperEVM Testnet', chainId: '0x3e6', addParams: { chainId:'0x3e6', chainName:'HyperEVM Testnet', nativeCurrency:{name:'HYPE',symbol:'HYPE',decimals:18}, rpcUrls:['https://rpc.hyperliquid-testnet.xyz/evm'], blockExplorerUrls:['https://app.hyperliquid-testnet.xyz/explorer'] } },
 ]
 const SOLANA_CHAIN = { id: 'Solana_Devnet', label: 'Solana Devnet (Solana)' }
 const ALL_DST_CHAINS = [...EVM_CHAINS, SOLANA_CHAIN]
@@ -23,8 +26,9 @@ const CCTP_SRC: Record<string,{tokenMessenger:string;usdc:string;cirbtc?:string;
   Ethereum_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', cirbtc:'0x3a3fe695F684Bf9b9e43CF43C2b895Ea5e392bB3', domain:0 },
   Base_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x036CbD53842c5426634e7929541eC2318f3dCF7e', domain:6 },
   Arbitrum_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', domain:3 },
+  HyperEVM_Testnet: { tokenMessenger:'0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', usdc:'0x2B3370eE501B4a559b57D449569354196457D8Ab', domain:19 },
 }
-const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, Solana_Devnet:5 }
+const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, HyperEVM_Testnet:19, Solana_Devnet:5 }
 
 // Solana CCTP burn config
 const SOLANA_CCTP = {
@@ -41,6 +45,7 @@ function encAddr(a: string) { return a.slice(2).toLowerCase().padStart(64,'0') }
 const explorerFor = (chain: string, tx: string) => chain === 'Arc_Testnet' ? `https://testnet.arcscan.app/tx/${tx}` :
   chain === 'Base_Sepolia' ? `https://sepolia.basescan.org/tx/${tx}` :
   chain === 'Arbitrum_Sepolia' ? `https://sepolia.arbiscan.io/tx/${tx}` :
+  chain === 'HyperEVM_Testnet' ? `https://app.hyperliquid-testnet.xyz/explorer/tx/${tx}` :
   `https://sepolia.etherscan.io/tx/${tx}`
 
 type BridgeStep = { name:string; state:'pending'|'success'|'error'; txHash?:string; explorerUrl?:string }
@@ -55,12 +60,14 @@ interface Props {
 }
 
 export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRefresh }: Props) {
+  const { t } = useI18n()
   void circleWallet;
 
 
   const [fromChain, setFromChain] = useState('Arc_Testnet')
 
   const [toChain, setToChain] = useState('Ethereum_Sepolia')
+  const [source, setSource] = useState<'circle'|'eoa'>('circle')
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState('')
@@ -75,10 +82,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const circleB = parseFloat(balances[token]||'0')
   const eoaB = parseFloat(eoaBalances[token]||'0')
   const totalB = circleB + eoaB
-  const fee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
-  const est = amount ? (parseFloat(amount)-parseFloat(fee==='-'?'0':fee)).toFixed(4) : '-'
   const isToSolana = toChain === 'Solana_Devnet'
   const isFromSolana = fromChain === 'Solana_Devnet'
+  const sourceBalance = source === 'circle' && fromChain === 'Arc_Testnet' ? circleB : isFromSolana ? parseFloat(solanaUsdcBal || '0') : eoaB
+  const customFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
+  const cctpFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
+  const forwardingFee = isFromSolana || isToSolana ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
+  const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
+  const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
 
   // ── Solana wallet connect ──
   const connectSolana = async (): Promise<{address:string;provider:any}|null> => {
@@ -115,10 +126,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   // Reset token jika tidak tersedia untuk route yang dipilih
   useEffect(() => {
-    if (token==='cirBTC' && (isFromSolana||isToSolana||!CCTP_SRC[fromChain]?.cirbtc)) {
+    if (token==='cirBTC' && (isFromSolana||isToSolana||!CCTP_SRC[fromChain]?.cirbtc||!CCTP_SRC[toChain]?.cirbtc)) {
       setToken('USDC')
     }
   }, [fromChain, toChain, isFromSolana, isToSolana, token])
+
+  useEffect(() => {
+    if (fromChain !== 'Arc_Testnet' && source === 'circle') setSource('eoa')
+  }, [fromChain, source])
 
   useEffect(() => {
     if (isFromSolana && !solanaWallet) connectSolana()
@@ -132,18 +147,29 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const amtNum = parseFloat(amount)
     const amtMicro = BigInt(Math.round(amtNum * 10**tokenDec))
     const localSteps: BridgeStep[] = []
+    let historyId: string|null = null
     const srcInfo = CCTP_SRC[fromChain]
     const burnToken = token === 'cirBTC' && srcInfo?.cirbtc ? srcInfo.cirbtc : srcInfo?.usdc || ''
 
-    // Step 0: Circle → EOA jika perlu
-    if (fromChain === 'Arc_Testnet' && circleB >= amtNum && eoaB < amtNum) {
+    if (source === 'circle' && fromChain !== 'Arc_Testnet') {
+      throw new Error('Circle Wallet hanya tersedia untuk source Arc Testnet.')
+    }
+    if (source === 'eoa' && fromChain === 'Arc_Testnet' && eoaB < amtNum) {
+      throw new Error(`Saldo ${token} EOA tidak cukup. Pilih Circle Wallet atau isi saldo MetaMask.`)
+    }
+    if (source === 'circle' && circleB < amtNum) {
+      throw new Error(`Saldo ${token} Circle Wallet tidak cukup.`)
+    }
+
+    // Step 0: Circle → EOA dalam satu flow jika sumber Circle dipilih.
+    if (source === 'circle' && fromChain === 'Arc_Testnet') {
       setStep('Transfer dari Circle Wallet ke MetaMask...')
       setStatus({ type:'info', msg:`⏳ Mentransfer ${token} dari Circle Wallet ke MetaMask...` })
-      const d = await safePost(API, '/api/prepare-bridge', {metamaskAddress:address,amount})
+      const d = await safePost(API, '/api/prepare-bridge', {metamaskAddress:address,amount,token})
       if (d.error) throw new Error(d.error)
       localSteps.push({ name:'circle-transfer', state:'success', txHash:d.txHash, explorerUrl:d.explorerUrl })
       setStatus({ type:'info', msg:`✓ ${token} di MetaMask!\n⏳ Siapkan approve...`, steps:[...localSteps] })
-      await new Promise(r=>setTimeout(r,3000))
+      await new Promise(r=>setTimeout(r,5000))
     }
 
     // Switch network
@@ -210,6 +236,21 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     await waitEvmTx(burnTx)
     localSteps[localSteps.length-1].state='success'
     localSteps[localSteps.length-1].explorerUrl=explorerFor(fromChain, burnTx)
+    historyId = `bridge-${Date.now()}-${burnTx.slice(-6)}`
+    txHistory.add({
+      id: historyId,
+      ts: Date.now(),
+      from: fromChain,
+      to: toChain,
+      amount,
+      token,
+      status: 'pending',
+      burnTx,
+      burnExplorerUrl: explorerFor(fromChain, burnTx),
+      srcDomain: srcInfo.domain,
+      dstDomain: dstDomain,
+      note: 'Burn complete. Mint/receive step pending.',
+    })
 
     // Attestation + Mint
     localSteps.push({ name:'attestation', state:'pending' })
@@ -230,11 +271,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         try {
           const solTxHash = await signSolanaReceiveMessage(mintData.attestation, mintData.message, sw!.address, sw!.provider)
           localSteps.push({ name:'mint', state:'success', txHash:solTxHash, explorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet` })
+          if (historyId) txHistory.update(historyId, { status:'success', mintTx:solTxHash, mintExplorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet`, note:'Bridge completed on Solana destination.' })
           setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} → Solana Devnet`, steps:[...localSteps] })
           fetchSolanaUsdcBalance(sw!.address, sw!.provider)
           setTimeout(() => fetchSolanaUsdcBalance(sw!.address, sw!.provider), 3000)
         } catch(e:any) {
           localSteps.push({ name:'mint', state:'error' })
+          if (historyId) txHistory.update(historyId, { status:'error', error:e.message || 'Mint Solana gagal' })
           setStatus({
             type:'warning',
             msg:`✗ Mint GAGAL di Solana Devnet\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (${token} sudah di-burn):\n${burnTx.slice(0,40)}...\n\n${token} Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
@@ -245,6 +288,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       } else {
         // Backend sudah handle mint (requiresSolanaSign=false)
         localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash || burnTx, explorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=devnet` })
+        if (historyId) txHistory.update(historyId, { status:'success', mintTx:mintData.txHash || burnTx, mintExplorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=devnet`, note:'Bridge completed on Solana destination.' })
         setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} → Solana Devnet`, steps:[...localSteps] })
       }
     } else {
@@ -267,6 +311,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       }
       if (!attData.success) {
         localSteps.push({ name:'mint', state:'error' })
+        if (historyId) txHistory.update(historyId, { status:'error', error:attData.error || 'Attestation timeout' })
         throw new Error(attData.error || 'Attestation timeout')
       }
 
@@ -322,6 +367,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         await waitEvmTx(mintTx)
       } catch(e:any) {
         localSteps[localSteps.length-1].state='error'
+        if (historyId) txHistory.update(historyId, { status:'error', error:e.message || 'Mint via MetaMask gagal' })
         setStatus({ type:'error', msg:`✗ Mint GAGAL di ${toChain}\nAlasan: ${e.message?.slice(0,200)}\n\nBurn sudah sukses (tx: ${burnTx.slice(0,12)}...).\nHubungi support atau retry bridge manual.`, steps:[...localSteps] })
         throw new Error(e.message || 'Mint via MetaMask gagal')
       }
@@ -329,6 +375,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       localSteps[localSteps.length-1].state='success'
       const explorerUrl = explorerFor(toChain, mintTx)
       localSteps[localSteps.length-1].explorerUrl = explorerUrl
+      if (historyId) txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl:explorerUrl, note:'Bridge completed on EVM destination.' })
       setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} → ${toChain}`, steps:[...localSteps] })
     }
 
@@ -349,7 +396,22 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     try {
       // Burn USDC di Solana via Solflare
       const burnTxHash = await burnSolanaUsdc(amtNum, address, sw.provider, sw.address)
+      const historyId = `bridge-${Date.now()}-${burnTxHash.slice(-6)}`
       localSteps.push({ name:'burn', state:'success', txHash:burnTxHash, explorerUrl:`https://explorer.solana.com/tx/${burnTxHash}?cluster=devnet` })
+      txHistory.add({
+        id: historyId,
+        ts: Date.now(),
+        from: 'Solana_Devnet',
+        to: 'Arc_Testnet',
+        amount,
+        token,
+        status: 'pending',
+        burnTx: burnTxHash,
+        burnExplorerUrl: `https://explorer.solana.com/tx/${burnTxHash}?cluster=devnet`,
+        srcDomain: SOLANA_CCTP.domain,
+        dstDomain: DST_DOMAIN.Arc_Testnet,
+        note: 'Solana burn complete. Arc mint pending.',
+      })
       setStatus({ type:'info', msg:`✓ Burn sukses di Solana!\n⏳ Menunggu attestation (~20 detik)...`, steps:[...localSteps] })
 
       // Backend mint di Arc
@@ -359,12 +421,18 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       if (!mintData.success) throw new Error(mintData.error||'Mint di Arc gagal')
       localSteps[localSteps.length-1].state='success'
       localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash, explorerUrl:mintData.explorerUrl })
+      txHistory.update(historyId, { status:'success', mintTx:mintData.txHash, mintExplorerUrl:mintData.explorerUrl, note:'Bridge completed on Arc Testnet.' })
       setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} Solana → Arc Testnet`, steps:[...localSteps] })
       setAmount('')
       fetchSolanaUsdcBalance(sw.address, sw.provider)
       setTimeout(onRefresh,3000)
       setTimeout(() => fetchSolanaUsdcBalance(sw.address, sw.provider), 3000)
     } catch(e:any) {
+      const lastBurn = localSteps.find(s => s.name === 'burn')?.txHash
+      if (lastBurn) {
+        const rec = txHistory.list().find(r => r.burnTx === lastBurn)
+        if (rec) txHistory.update(rec.id, { status:'error', error:e?.message || 'Bridge Solana gagal' })
+      }
       setStatus({ type:'error', msg:e?.message||'Bridge Solana gagal', steps:[...localSteps] })
     }
   }
@@ -733,6 +801,23 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
+      {/* Source selector */}
+      {!isFromSolana && fromChain === 'Arc_Testnet' && (
+        <div>
+          <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.from')}</label>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            <button onClick={()=>setSource('circle')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:source==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:source==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>
+              Circle Wallet
+              <div style={{fontSize:10,marginTop:2,color:'#94a3b8'}}>{circleB.toFixed(4)} {token}</div>
+            </button>
+            <button onClick={()=>setSource('eoa')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:source==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:source==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>
+              EOA MetaMask
+              <div style={{fontSize:10,marginTop:2,color:'#94a3b8'}}>{eoaB.toFixed(4)} {token}</div>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Balance */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🔵 Circle Wallet</span><span style={{color:'#818cf8',fontWeight:600}}>{circleB.toFixed(4)} {token}</span></div>
@@ -744,19 +829,20 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       {/* Solana Wallet Card */}
       {(isToSolana || isFromSolana) && (
         <div className='glass' style={{padding:12,borderRadius:12,border:'1px solid rgba(167,139,250,0.3)'}}>
-          <div style={{fontWeight:600,fontSize:13,color:'#a78bfa',marginBottom:8}}>🪄 Wallet Solana</div>
+          <div style={{fontWeight:600,fontSize:13,color:'#a78bfa',marginBottom:8}}>🪄 {t('bridge.solanaWallet')}</div>
           {solanaWallet ? (
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
                 <span style={{color:'#a78bfa',fontFamily:'monospace',fontSize:11}}>{solanaWallet.address.slice(0,8)}...{solanaWallet.address.slice(-6)}</span>
-                <button onClick={()=>setSolanaWallet(null)} style={{fontSize:10,background:'rgba(239,68,68,0.1)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)',padding:'2px 8px',borderRadius:6,cursor:'pointer'}}>Disconnect</button>
+                <button onClick={()=>setSolanaWallet(null)} style={{fontSize:10,background:'rgba(239,68,68,0.1)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)',padding:'2px 8px',borderRadius:6,cursor:'pointer'}}>{t('wallet.disconnect')}</button>
               </div>
               <div style={{fontSize:12,color:'#64748b'}}>SOL: <span style={{color:'#e2e8f0'}}>-</span> &nbsp; USDC: <span style={{color:'#e2e8f0'}}>{solanaUsdcBal}</span></div>
-              <div style={{fontSize:11,color:'#10b981',marginTop:4}}>✓ Tujuan otomatis: alamat Solflare Anda</div>
+              <div style={{fontSize:11,color:'#10b981',marginTop:4}}>✓ {t('bridge.solanaRequired')}</div>
+              <div style={{fontSize:11,color:'#10b981',marginTop:3}}>✓ {t('bridge.solanaAuto')}</div>
             </div>
           ) : (
             <button onClick={connectSolana} style={{width:'100%',background:'rgba(167,139,250,0.15)',color:'#a78bfa',border:'1px solid rgba(167,139,250,0.4)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600}}>
-              🔗 Connect Solflare / Phantom
+              🔗 {t('bridge.connectSolana')}
             </button>
           )}
         </div>
@@ -764,9 +850,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
       {/* From Chain */}
       <div style={{display:'flex',justifyContent:'space-between'}}>
-        <label style={{color:'#64748b',fontSize:13}}>Dari Chain</label>
-        <button onClick={()=>setAmount(isFromSolana?solanaUsdcBal:totalB.toFixed(4))} style={{color:'#818cf8',background:'none',border:'none',cursor:'pointer',fontSize:12,padding:0}}>
-          Max: {isFromSolana ? solanaUsdcBal : totalB.toFixed(4)} {token}
+        <label style={{color:'#64748b',fontSize:13}}>{t('bridge.fromChain')}</label>
+        <button onClick={()=>setAmount(sourceBalance.toString())} style={{color:'#818cf8',background:'none',border:'none',cursor:'pointer',fontSize:12,padding:0}}>
+          {t('common.max')}: {sourceBalance.toFixed(token==='cirBTC'?8:4)} {token}
         </button>
       </div>
       <CompactChainPicker value={fromChain} options={ALL_DST_CHAINS} onChange={setFromChain} />
@@ -777,7 +863,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
       {/* To Chain */}
       <div>
-        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Ke Chain</label>
+        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.toChain')}</label>
         <CompactChainPicker value={toChain} options={ALL_DST_CHAINS.filter(c=>c.id!==fromChain)} onChange={setToChain} />
       </div>
 
@@ -786,22 +872,26 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         <CompactTokenPicker
           value={token}
           width={104}
-          options={BRIDGE_TOKENS.filter(t=>!(t==='cirBTC' && (isFromSolana||isToSolana||!CCTP_SRC[fromChain]?.cirbtc)))}
+          options={BRIDGE_TOKENS.filter(t=>!(t==='cirBTC' && (isFromSolana||isToSolana||!CCTP_SRC[fromChain]?.cirbtc||!CCTP_SRC[toChain]?.cirbtc)))}
           onChange={t=>{setToken(t);setStatus(null)}}
         />
       </div>
 
       {/* Amount */}
       <div>
-        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Jumlah {token}</label>
+        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.amount', { token })}</label>
         <input className='input' type='number' placeholder='0.00' value={amount} onChange={e=>setAmount(e.target.value)} />
       </div>
 
       {/* Info */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>CCTP v2 {isToSolana||isFromSolana?'Fast Transfer':''}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Estimasi fee maks</span><span>{fee} {token}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Estimasi diterima</span><span style={{color:'#10b981'}}>{est} {token}</span></div>
+        {!isFromSolana && fromChain==='Arc_Testnet'&&<div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.fundingSource')}</span><span>{source==='circle'?'Circle → EOA → Bridge':'EOA MetaMask'}</span></div>}
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{totalDebit} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{customFee} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{cctpFee} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.forwardingFee')}</span><span>{forwardingFee} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:'#10b981'}}>{est} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span style={{color:'#10b981'}}>3x (approve + burn + mint)</span></div>}
         {!isFromSolana && isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span>2x + Solflare 1x</span></div>}
@@ -829,12 +919,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       )}
 
       <button onClick={handleBridge} disabled={!amount||loading||fromChain===toChain} className='btn btn-primary'>
-        {loading ? step||'⏳ Memproses...' : amount ? `Bridge ${amount} ${token}` : `Bridge ${token}`}
+        {loading ? step||`⏳ ${t('common.processing')}` : amount ? `Bridge ${amount} ${token}` : `Bridge ${token}`}
       </button>
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>
-        {isToSolana ? 'Bridge Arc → Solana via Circle CCTP v2. Solflare sign mint.' :
-         isFromSolana ? 'Bridge Solana → Arc via Circle CCTP v2. Solflare sign burn.' :
-         'Bridge langsung via CCTP v2. MetaMask popup 2x untuk konfirmasi.'}
+        {source==='circle' && fromChain==='Arc_Testnet' ? t('bridge.flowCircle') :
+         isToSolana ? t('bridge.flowToSolana') :
+         isFromSolana ? t('bridge.flowFromSolana') :
+         t('bridge.flowEvm')}
       </div>
     </div>
   )

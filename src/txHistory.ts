@@ -4,6 +4,7 @@ export type TxRecord = {
   from: ChainName
   to: ChainName
   amount: string
+  token?: string
   status: 'pending' | 'success' | 'error'
   burnTx?: string
   burnExplorerUrl?: string

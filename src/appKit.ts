@@ -14,6 +14,7 @@ import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
 import { wrapSolflare, wrapPhantom } from './solflareWrapper'
+import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 
 declare global {
   interface Window {
@@ -26,7 +27,7 @@ declare global {
 
 const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com'
 // USDC Devnet mint di Solana
-const USDC_DEVNET_MINT = 'G247gygHjYkwn9wECFrzzfuJxyDYpGXt9xFP6Q3FVSr5'
+const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 
 // ── Wallet kind tracking ──────────────────────────────────────────
 let _solanaKind: 'solflare' | 'phantom' | null = null
@@ -96,26 +97,6 @@ export async function buildEvmAdapter() {
     provider: window.ethereum,
     capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet] },
   } as any)
-}
-
-async function switchToArcTestnet() {
-  if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
-  const chainId = '0x4cef52'
-  try {
-    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] })
-  } catch (e: any) {
-    if (e?.code !== 4902 && e?.code !== -32603) throw e
-    await window.ethereum.request({
-      method: 'wallet_addEthereumChain',
-      params: [{
-        chainId,
-        chainName: 'Arc Testnet',
-        nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-        rpcUrls: ['https://rpc.testnet.arc.network/'],
-        blockExplorerUrls: ['https://testnet.arcscan.app'],
-      }],
-    })
-  }
 }
 
 // ── Solana adapter ──────────────────────────────────────────────
@@ -263,3 +244,5 @@ export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: strin
     config: { kitKey: args.kitKey, allowanceStrategy: 'approve' },
   } as any)
 }
+
+export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
