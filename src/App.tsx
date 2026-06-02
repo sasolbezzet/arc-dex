@@ -28,6 +28,7 @@ export default function App() {
   const [balances, setBalances] = useState<Record<string,string>>({...EMPTY_BAL})
   const [eoaBalances, setEoaBalances] = useState<Record<string,string>>({...EMPTY_BAL})
   const [loadingWallet, setLoadingWallet] = useState(false)
+  const [walletSetupError, setWalletSetupError] = useState('')
   const fetchCircleBal = async (addr:string) => {
     try {
       const r = await fetch(`${API}/api/balance/${addr}`)
@@ -65,10 +66,24 @@ export default function App() {
     if (address) fetchEoaBalRef.current(address)
   }, [circleWallet, address])
   const handleConnect = async (addr:string) => {
-    setAddress(addr); fetchEoaBal(addr); setLoadingWallet(true)
+    setWalletSetupError('')
+    setAddress(addr)
+    fetchEoaBal(addr)
+    setLoadingWallet(true)
+    try {
+      await ensureAuthSession(addr)
+    } catch(e) {
+      const msg = e instanceof Error ? e.message : 'Wallet login signature failed'
+      clearAuthSession()
+      setAddress(null)
+      setCircleWallet(null)
+      setLoadingWallet(false)
+      setWalletSetupError(msg)
+      return
+    }
+    let walletReady = false
     for (let i=0;i<3;i++) {
       try {
-        await ensureAuthSession(addr)
         const r = await fetch(`${API}/api/wallet`, {
           method:'POST',
           headers:{'Content-Type':'application/json', Authorization:`Bearer ${getAuthToken()}`},
@@ -76,12 +91,17 @@ export default function App() {
         })
         if (!r.ok) { await new Promise(x=>setTimeout(x,2000)); continue }
         const d = await r.json()
-        if (d.success) { setCircleWallet(d.wallet); fetchCircleBal(d.wallet.address); break }
-      } catch(e) { console.error('wallet connect attempt error:', e); await new Promise(x=>setTimeout(x,2000)) }
+        if (d.success) { walletReady = true; setCircleWallet(d.wallet); fetchCircleBal(d.wallet.address); break }
+      } catch(e) {
+        console.error('wallet connect attempt error:', e)
+        if (i === 2) setWalletSetupError(e instanceof Error ? e.message : 'Circle Wallet setup failed')
+        await new Promise(x=>setTimeout(x,2000))
+      }
     }
+    if (!walletReady) setWalletSetupError('Circle Wallet setup failed. Please disconnect and connect again.')
     setLoadingWallet(false)
   }
-  const handleDisconnect = () => { clearAuthSession(); setAddress(null); setCircleWallet(null); setBalances({...EMPTY_BAL}); setEoaBalances({...EMPTY_BAL}) }
+  const handleDisconnect = () => { clearAuthSession(); setWalletSetupError(''); setAddress(null); setCircleWallet(null); setBalances({...EMPTY_BAL}); setEoaBalances({...EMPTY_BAL}) }
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('to')) setTab('send')
@@ -144,6 +164,9 @@ export default function App() {
                 <div><div style={{color:'#e2e8f0',fontWeight:600,fontSize:13}}>{title}</div><div style={{color:'#64748b',fontSize:12}}>{desc}</div></div>
               </div>
             ))}
+            {walletSetupError && (
+              <div style={{marginTop:12,padding:10,borderRadius:10,fontSize:12,background:'rgba(239,68,68,0.1)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)'}}>{walletSetupError}</div>
+            )}
           </div>
         ) : loadingWallet ? (
           <div className='glass' style={{borderRadius:20,padding:32,textAlign:'center'}}>

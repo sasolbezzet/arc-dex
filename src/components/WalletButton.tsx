@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
+import { getAuthToken } from '../auth'
 declare global { interface Window { ethereum?: any } }
 interface Props { address: string|null; onConnect:(a:string)=>void; onDisconnect:()=>void }
 export function WalletButton({ address, onConnect, onDisconnect }: Props) {
@@ -14,7 +15,9 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   })
   useEffect(() => {
     if (!window.ethereum) return
-    window.ethereum.request({ method: 'eth_accounts' }).then((a: string[]) => { if (a[0]) onConnectRef.current(a[0]) })
+    window.ethereum.request({ method: 'eth_accounts' }).then((a: string[]) => {
+      if (a[0] && getAuthToken()) onConnectRef.current(a[0])
+    })
     const handler = (a: string[]) => { if (a[0]) onConnectRef.current(a[0]); else onDisconnectRef.current() }
     window.ethereum.on('accountsChanged', handler)
     return () => {
