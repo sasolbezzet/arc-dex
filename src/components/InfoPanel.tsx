@@ -33,10 +33,52 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   const waitEvmTx = async (txHash: string) => {
     for (let i = 0; i < 90; i++) {
       const r = await (window as any).ethereum.request({ method:'eth_getTransactionReceipt', params:[txHash] })
-      if (r) return r
+      if (r?.status === '0x1') return r
+      if (r?.status === '0x0') throw new Error('Retry mint transaction failed on-chain.')
       await new Promise(resolve => setTimeout(resolve, 2000))
     }
-    return null
+    throw new Error('Retry mint timeout. Cek explorer lalu coba lagi.')
+  }
+  const toHex = (n: bigint) => `0x${n.toString(16)}`
+  const getBufferedEvmFees = async (tx: any, multiplier = 3n) => {
+    const out: any = {}
+    try {
+      const gasHex = await (window as any).ethereum.request({ method:'eth_estimateGas', params:[tx] })
+      out.gas = toHex((BigInt(gasHex) * 13n) / 10n + 10_000n)
+    } catch(e) {
+      console.warn('retry eth_estimateGas failed:', e instanceof Error ? e.message : String(e))
+    }
+    try {
+      const block = await (window as any).ethereum.request({ method:'eth_getBlockByNumber', params:['latest', false] })
+      const baseFee = block?.baseFeePerGas ? BigInt(block.baseFeePerGas) : 0n
+      if (baseFee > 0n) {
+        let tip = 0n
+        try { tip = BigInt(await (window as any).ethereum.request({ method:'eth_maxPriorityFeePerGas' })) } catch {}
+        if (tip < 1_500_000n) tip = 1_500_000n
+        out.maxPriorityFeePerGas = toHex(tip)
+        out.maxFeePerGas = toHex(baseFee * multiplier + tip * 2n)
+        return out
+      }
+    } catch(e) {
+      console.warn('retry EIP-1559 fee lookup failed:', e instanceof Error ? e.message : String(e))
+    }
+    try {
+      const gasPrice = BigInt(await (window as any).ethereum.request({ method:'eth_gasPrice' }))
+      out.gasPrice = toHex(gasPrice * multiplier)
+    } catch {}
+    return out
+  }
+  const sendEvmTxBuffered = async (tx: any): Promise<string> => {
+    const firstFees = await getBufferedEvmFees(tx, 3n)
+    try {
+      return await (window as any).ethereum.request({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
+    } catch(e:any) {
+      const msg = e?.message || ''
+      if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw e
+      await new Promise(resolve => setTimeout(resolve, 1200))
+      const retryFees = await getBufferedEvmFees(tx, 6n)
+      return await (window as any).ethereum.request({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
+    }
   }
   const switchDestinationChain = async () => {
     const chain = findChain(rec.to)
@@ -77,10 +119,7 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
         functionName: 'receiveMessage',
         args: [att.message, att.attestation],
       })
-      const mintTx = await (window as any).ethereum.request({
-        method:'eth_sendTransaction',
-        params:[{ from, to: att.messageTransmitter, data }],
-      })
+      const mintTx = await sendEvmTxBuffered({ from, to: att.messageTransmitter, data })
       await waitEvmTx(mintTx)
       const chain = findChain(rec.to)
       const explorerUrl = chain?.explorer ? `${chain.explorer}/tx/${mintTx}` : undefined
