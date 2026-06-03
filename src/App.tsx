@@ -67,6 +67,13 @@ export default function App() {
   }, [circleWallet, address])
   const loadCircleWallet = async (addr:string) => {
     let lastError = ''
+    try {
+      await ensureAuthSession(addr)
+    } catch(e) {
+      const msg = e instanceof Error ? e.message : 'Wallet login signature failed'
+      setWalletSetupError(msg)
+      return false
+    }
     for (let i=0;i<3;i++) {
       try {
         const r = await fetch(`${API}/api/wallet`, {
@@ -75,6 +82,11 @@ export default function App() {
           body:JSON.stringify({metamaskAddress:addr}),
         })
         if (!r.ok) {
+          if (r.status === 401) {
+            clearAuthSession()
+            await ensureAuthSession(addr, true)
+            continue
+          }
           const text = await r.text().catch(() => '')
           lastError = text || `HTTP ${r.status}`
           await new Promise(x=>setTimeout(x,2000))
