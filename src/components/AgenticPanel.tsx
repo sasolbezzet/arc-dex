@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { getAddress } from 'viem'
+import { getAuthToken } from '../auth'
 import { useI18n } from '../i18n'
 import {
   approveAndFundJob,
@@ -104,7 +105,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   const [jobInfo, setJobInfo] = useState<AgenticJob | null>(null)
   const [linkAgentId, setLinkAgentId] = useState('')
   const [aiName, setAiName] = useState('ARCOX Retail Payment Agent')
-  const [aiEndpoint, setAiEndpoint] = useState('http://127.0.0.1:8787/agent')
+  const [aiEndpoint, setAiEndpoint] = useState('/api/agent/ask')
   const [aiCapabilities, setAiCapabilities] = useState('quote_payments, create_job_plan, verify_deliverable')
   const [agentMetadataJson, setAgentMetadataJson] = useState('')
   const [simulationPrompt, setSimulationPrompt] = useState('Create a retail payment escrow job for 1 USDC on Arc Testnet and verify the deliverable.')
@@ -227,20 +228,24 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
     try {
       const response = await fetch(agentLink.endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(agentLink.endpoint.startsWith('/api/') ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+        },
         body: JSON.stringify({
           agentId: agentLink.agentId,
           owner: agentLink.owner,
           prompt: simulationPrompt.trim(),
           capabilities: agentLink.capabilities,
           requester: address,
+          address,
           source: 'arcox-dex-ui',
         }),
       })
       endpointResult = await response.json().catch(() => null)
       if (!response.ok || endpointResult?.error) throw new Error(endpointResult?.error || `Agent endpoint HTTP ${response.status}`)
     } catch (e) {
-      throw new Error(`AI agent endpoint tidak merespons. Jalankan: npm run agent -- serve --port 8787. Detail: ${e instanceof Error ? e.message : 'unknown error'}`)
+      throw new Error(`AI agent endpoint tidak merespons. Gunakan /api/agent/ask untuk hosted agent, atau jalankan terminal agent lokal: npm run agent -- serve --port 8787. Detail: ${e instanceof Error ? e.message : 'unknown error'}`)
     }
     const requestId = endpointResult?.requestId || `agent-${Date.now()}`
     const deliverableText = endpointResult?.deliverable || `${agentLink.agentId}:${simulationPrompt}:${agentLink.ownerSignature.slice(0, 18)}`

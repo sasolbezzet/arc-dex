@@ -1,6 +1,11 @@
 # ARCOX Terminal AI Agent
 
-This repository includes a local terminal AI agent that can connect to ARCOX DEX Agent Jobs.
+This repository includes two agent paths for ARCOX DEX Agent Jobs:
+
+- Hosted planner agent: `/api/agent/ask`
+- Local terminal/onchain agent: `npm run agent`
+
+The hosted planner is the default UI endpoint. It works for all logged-in users and returns a job plan, budget, provider/evaluator suggestion, deliverable text, and deliverable hash. It does not sign transactions.
 
 The agent has two modes:
 
@@ -18,6 +23,12 @@ Use this endpoint in the ARCOX DEX Agent Jobs UI:
 
 ```text
 http://127.0.0.1:8787/agent
+```
+
+For normal users, keep the default hosted endpoint:
+
+```text
+/api/agent/ask
 ```
 
 The endpoint accepts job prompts from the UI and returns:
@@ -109,3 +120,5 @@ AGENT_PRIVATE_KEY=0xYOUR_AGENT_PRIVATE_KEY npm run agent -- serve --port 8787
 Never commit `AGENT_PRIVATE_KEY`.
 
 Use testnet-only keys for this flow. This agent is a local developer agent for Arc testnet experiments.
+
+The hosted planner agent cannot approve, swap, bridge, send, submit, or complete using a user's wallet. It only creates structured intent. User-wallet actions must still be signed by the user in MetaMask or another wallet.
