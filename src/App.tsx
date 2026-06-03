@@ -6,7 +6,7 @@ import { SendPanel } from './components/SendPanel'
 import { ReceivePanel } from './components/ReceivePanel'
 import { AgenticPanel } from './components/AgenticPanel'
 import { InfoPanel } from './components/InfoPanel'
-import { LANGUAGES, useI18n, type Lang } from './i18n'
+import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 const API = ''
 const TABS = [{ id:'swap', labelKey:'tab.swap', icon:'⇄' },{ id:'bridge', labelKey:'tab.bridge', icon:'⛓' },{ id:'send', labelKey:'tab.send', icon:'→' },{ id:'receive', labelKey:'tab.receive', icon:'↓' },{ id:'agentic', labelKey:'tab.agentic', icon:'◎' },{ id:'info', labelKey:'tab.info', icon:'ℹ' }] as const
@@ -156,9 +156,20 @@ export default function App() {
             <span style={{fontSize:11,background:'rgba(99,102,241,0.2)',color:'#818cf8',padding:'2px 8px',borderRadius:100,border:'1px solid rgba(99,102,241,0.3)'}}>{t('app.testnet')}</span>
           </div>
           <div className='header-actions'>
-            <select className='language-select' value={lang} onChange={e=>setLang(e.target.value as Lang)} aria-label='Language'>
-              {LANGUAGES.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}
-            </select>
+            <div className='language-switcher' role='group' aria-label='Language'>
+              {LANGUAGES.map(item => (
+                <button
+                  key={item.code}
+                  type='button'
+                  className={lang === item.code ? 'active' : ''}
+                  onClick={() => setLang(item.code)}
+                  aria-pressed={lang === item.code}
+                  title={item.label}
+                >
+                  {item.code === 'zh' ? '中文' : item.code.toUpperCase()}
+                </button>
+              ))}
+            </div>
             <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
           </div>
         </div>
