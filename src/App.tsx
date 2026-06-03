@@ -6,7 +6,6 @@ import { SendPanel } from './components/SendPanel'
 import { ReceivePanel } from './components/ReceivePanel'
 import { AgenticPanel } from './components/AgenticPanel'
 import { InfoPanel } from './components/InfoPanel'
-import { OnboardingPanel } from './components/OnboardingPanel'
 import { LANGUAGES, useI18n, type Lang } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 const API = ''
@@ -66,6 +65,39 @@ export default function App() {
     if (circleWallet?.address) fetchCircleBalRef.current(circleWallet.address)
     if (address) fetchEoaBalRef.current(address)
   }, [circleWallet, address])
+  const loadCircleWallet = async (addr:string) => {
+    let lastError = ''
+    for (let i=0;i<3;i++) {
+      try {
+        const r = await fetch(`${API}/api/wallet`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json', Authorization:`Bearer ${getAuthToken()}`},
+          body:JSON.stringify({metamaskAddress:addr}),
+        })
+        if (!r.ok) {
+          const text = await r.text().catch(() => '')
+          lastError = text || `HTTP ${r.status}`
+          await new Promise(x=>setTimeout(x,2000))
+          continue
+        }
+        const d = await r.json()
+        if (d.success) {
+          setCircleWallet(d.wallet)
+          fetchCircleBal(d.wallet.address)
+          setWalletSetupError('')
+          return true
+        }
+        lastError = d.error || 'Circle Wallet setup failed'
+      } catch(e) {
+        lastError = e instanceof Error ? e.message : 'Circle Wallet setup failed'
+        console.error('wallet connect attempt error:', e)
+      }
+      await new Promise(x=>setTimeout(x,2000))
+    }
+    setCircleWallet(null)
+    setWalletSetupError(lastError || 'Circle Wallet setup failed. Please retry.')
+    return false
+  }
   const handleConnect = async (addr:string) => {
     setWalletSetupError('')
     setAddress(addr)
@@ -82,24 +114,14 @@ export default function App() {
       setWalletSetupError(msg)
       return
     }
-    let walletReady = false
-    for (let i=0;i<3;i++) {
-      try {
-        const r = await fetch(`${API}/api/wallet`, {
-          method:'POST',
-          headers:{'Content-Type':'application/json', Authorization:`Bearer ${getAuthToken()}`},
-          body:JSON.stringify({metamaskAddress:addr}),
-        })
-        if (!r.ok) { await new Promise(x=>setTimeout(x,2000)); continue }
-        const d = await r.json()
-        if (d.success) { walletReady = true; setCircleWallet(d.wallet); fetchCircleBal(d.wallet.address); break }
-      } catch(e) {
-        console.error('wallet connect attempt error:', e)
-        if (i === 2) setWalletSetupError(e instanceof Error ? e.message : 'Circle Wallet setup failed')
-        await new Promise(x=>setTimeout(x,2000))
-      }
-    }
-    if (!walletReady) setWalletSetupError('Circle Wallet setup failed. Please disconnect and connect again.')
+    await loadCircleWallet(addr)
+    setLoadingWallet(false)
+  }
+  const retryCircleWallet = async () => {
+    if (!address) return
+    setWalletSetupError('')
+    setLoadingWallet(true)
+    await loadCircleWallet(address)
     setLoadingWallet(false)
   }
   const handleDisconnect = () => { clearAuthSession(); setWalletSetupError(''); setAddress(null); setCircleWallet(null); setBalances({...EMPTY_BAL}); setEoaBalances({...EMPTY_BAL}) }
@@ -112,7 +134,6 @@ export default function App() {
     const iv = setInterval(refresh, 15000)
     return () => clearInterval(iv)
   }, [circleWallet, address, refresh])
-  const hasBalance = parseFloat(balances.USDC||'0')>0 || parseFloat(balances.EURC||'0')>0 || parseFloat(balances.USYC||'0')>0 || parseFloat(eoaBalances.USDC||'0')>0 || parseFloat(eoaBalances.EURC||'0')>0 || parseFloat(eoaBalances.USYC||'0')>0 || parseFloat(eoaBalances.cirBTC||'0')>0
   return (
     <div className='app-shell'>
       <header className='glass app-header'>
@@ -129,10 +150,19 @@ export default function App() {
             <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
           </div>
         </div>
-        {address && circleWallet && (
+        {address && (
           <div className='balance-strip'>
             <div className='glass chip'><span style={{color:'#64748b'}}>MetaMask: </span><span style={{color:'#f59e0b',fontFamily:'monospace'}}>{address.slice(0,6)}...{address.slice(-4)}</span></div>
-            <div className='glass chip'><span style={{color:'#64748b'}}>Circle: </span><span style={{color:'#818cf8',fontFamily:'monospace'}}>{circleWallet.address.slice(0,6)}...{circleWallet.address.slice(-4)}</span></div>
+            <div className='glass chip'>
+              <span style={{color:'#64748b'}}>Circle: </span>
+              {circleWallet ? (
+                <span style={{color:'#818cf8',fontFamily:'monospace'}}>{circleWallet.address.slice(0,6)}...{circleWallet.address.slice(-4)}</span>
+              ) : loadingWallet ? (
+                <span style={{color:'#818cf8'}}>Preparing...</span>
+              ) : (
+                <button onClick={retryCircleWallet} style={{background:'none',border:'none',color:'#f87171',fontSize:12,cursor:'pointer',padding:0}}>Retry setup</button>
+              )}
+            </div>
             {parseFloat(balances.USDC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>C-USDC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(balances.USDC).toFixed(4)}</span></div>}
             <div className='glass chip'><span style={{color:'#64748b'}}>E-USDC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(eoaBalances.USDC).toFixed(4)}</span></div>
             <div className='glass chip'><span style={{color:'#64748b'}}>E-cirBTC: </span><span style={{color:'#f7931a',fontWeight:600}}>{parseFloat(eoaBalances.cirBTC).toFixed(6)}</span></div>
@@ -140,6 +170,7 @@ export default function App() {
             {parseFloat(balances.EURC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>EURC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(balances.EURC).toFixed(4)}</span></div>}
             {parseFloat(balances.USYC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>C-USYC: </span><span style={{color:'#10b981',fontWeight:600}}>{parseFloat(balances.USYC).toFixed(4)}</span></div>}
             {parseFloat(balances.cirBTC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>C-cirBTC: </span><span style={{color:'#f7931a',fontWeight:600}}>{parseFloat(balances.cirBTC).toFixed(6)}</span></div>}
+            {walletSetupError && <div className='glass chip'><span style={{color:'#f87171'}}>{walletSetupError.slice(0,90)}</span></div>}
           </div>
         )}
       </header>
@@ -169,14 +200,6 @@ export default function App() {
               <div style={{marginTop:12,padding:10,borderRadius:10,fontSize:12,background:'rgba(239,68,68,0.1)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)'}}>{walletSetupError}</div>
             )}
           </div>
-        ) : loadingWallet ? (
-          <div className='glass' style={{borderRadius:20,padding:32,textAlign:'center'}}>
-            <div style={{fontSize:32,marginBottom:12}}>⚙️</div>
-            <p style={{color:'#818cf8',fontWeight:600}}>{t('app.preparingWallet')}</p>
-            <p style={{color:'#64748b',fontSize:13,marginTop:8}}>{t('app.preparingWalletDesc')}</p>
-          </div>
-        ) : !hasBalance ? (
-          <OnboardingPanel circleWallet={circleWallet} onRefresh={()=>circleWallet&&fetchCircleBal(circleWallet.address)} />
         ) : (
           <div className='glass' style={{borderRadius:20,overflow:'hidden'}}>
             <div className='tab-bar'>
