@@ -31,6 +31,7 @@ export default function App() {
   const [eoaBalances, setEoaBalances] = useState<Record<string,string>>({...EMPTY_BAL})
   const [loadingWallet, setLoadingWallet] = useState(false)
   const [walletSetupError, setWalletSetupError] = useState('')
+  const connectInFlightRef = useRef('')
   const fetchCircleBal = async (addr:string) => {
     try {
       const r = await fetch(`${API}/api/balance/${addr}`)
@@ -67,26 +68,19 @@ export default function App() {
     if (circleWallet?.address) fetchCircleBalRef.current(circleWallet.address)
     if (address) fetchEoaBalRef.current(address)
   }, [circleWallet, address])
-  const loadCircleWallet = async (addr:string) => {
+  const loadCircleWallet = async (addr:string, token = getAuthToken()) => {
     let lastError = ''
-    try {
-      await ensureAuthSession(addr)
-    } catch(e) {
-      const msg = e instanceof Error ? e.message : 'Wallet login signature failed'
-      setWalletSetupError(msg)
-      return false
-    }
     for (let i=0;i<3;i++) {
       try {
         const r = await fetch(`${API}/api/wallet`, {
           method:'POST',
-          headers:{'Content-Type':'application/json', Authorization:`Bearer ${getAuthToken()}`},
+          headers:{'Content-Type':'application/json', Authorization:`Bearer ${token || getAuthToken()}`},
           body:JSON.stringify({metamaskAddress:addr}),
         })
         if (!r.ok) {
           if (r.status === 401) {
             clearAuthSession()
-            await ensureAuthSession(addr, true)
+            token = await ensureAuthSession(addr, true)
             continue
           }
           const text = await r.text().catch(() => '')
@@ -113,12 +107,16 @@ export default function App() {
     return false
   }
   const handleConnect = async (addr:string) => {
+    const normalized = addr.toLowerCase()
+    if (connectInFlightRef.current === normalized) return
+    connectInFlightRef.current = normalized
     setWalletSetupError('')
     setAddress(addr)
     fetchEoaBal(addr)
     setLoadingWallet(true)
     try {
-      await ensureAuthSession(addr)
+      const token = await ensureAuthSession(addr)
+      await loadCircleWallet(addr, token)
     } catch(e) {
       const msg = e instanceof Error ? e.message : 'Wallet login signature failed'
       clearAuthSession()
@@ -127,9 +125,10 @@ export default function App() {
       setLoadingWallet(false)
       setWalletSetupError(msg)
       return
+    } finally {
+      connectInFlightRef.current = ''
+      setLoadingWallet(false)
     }
-    await loadCircleWallet(addr)
-    setLoadingWallet(false)
   }
   const retryCircleWallet = async () => {
     if (!address) return

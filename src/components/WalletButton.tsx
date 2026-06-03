@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
 import { getAuthToken } from '../auth'
 declare global { interface Window { ethereum?: any } }
-interface Props { address: string|null; onConnect:(a:string)=>void; onDisconnect:()=>void }
+interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void }
 export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   const { t } = useI18n()
   const [loading, setLoading] = useState(false)
@@ -29,7 +29,7 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
     if (!window.ethereum) { setError(t('wallet.installMetamask')); setLoading(false); return }
     try {
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
-      onConnect(accounts[0])
+      await onConnect(accounts[0])
     } catch(e:any) { setError(e?.message || t('wallet.connectFailed')) }
   setLoading(false)
   }
