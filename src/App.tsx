@@ -14,7 +14,7 @@ const TABS = [{ id:'swap', labelKey:'tab.swap', icon:'⇄' },{ id:'bridge', labe
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 function ArcoxLogo() {
   return (
-    <div style={{width:36,height:36,borderRadius:10,background:'linear-gradient(135deg,#22d3ee 0%,#6366f1 48%,#f59e0b 100%)',display:'grid',placeItems:'center',boxShadow:'0 10px 28px rgba(99,102,241,0.32)',position:'relative',overflow:'hidden'}}>
+    <div className='arcox-logo' style={{width:36,height:36,borderRadius:10,background:'linear-gradient(135deg,#22d3ee 0%,#6366f1 48%,#f59e0b 100%)',display:'grid',placeItems:'center',boxShadow:'0 10px 28px rgba(99,102,241,0.32)',position:'relative',overflow:'hidden'}}>
       <div style={{position:'absolute',inset:3,border:'1px solid rgba(255,255,255,0.38)',borderRadius:8}} />
       <div style={{width:18,height:18,border:'3px solid rgba(255,255,255,0.95)',borderLeftColor:'transparent',transform:'rotate(45deg)',borderRadius:5}} />
       <div style={{position:'absolute',width:9,height:9,borderRadius:'50%',background:'#0a0a0f',right:8,top:8,border:'2px solid rgba(255,255,255,0.9)'}} />
@@ -161,8 +161,8 @@ export default function App() {
         <div className='header-row'>
           <div className='brand-row'>
             <ArcoxLogo />
-            <span style={{fontWeight:'bold',color:'#e2e8f0',fontSize:16}}>ARCOX DEX</span>
-            <span style={{fontSize:11,background:'rgba(99,102,241,0.2)',color:'#818cf8',padding:'2px 8px',borderRadius:100,border:'1px solid rgba(99,102,241,0.3)'}}>{t('app.testnet')}</span>
+            <span className='brand-title'>ARCOX DEX</span>
+            <span className='env-pill'>{t('app.testnet')}</span>
           </div>
           <div className='header-actions'>
             <div className='language-switcher' role='group' aria-label='Language'>
@@ -229,28 +229,27 @@ export default function App() {
             <DocsPanel />
           </div>
         ) : !address ? (
-          <div className='glass' style={{borderRadius:20,padding:32,textAlign:'center'}}>
-            <div style={{fontSize:48,marginBottom:16}}>👋</div>
-            <div style={{display:'flex',justifyContent:'center',marginBottom:14}}><ArcoxLogo /></div>
-            <h2 style={{color:'#e2e8f0',fontWeight:'bold',marginBottom:8}}>{t('app.welcomeTitle')}</h2>
-            <p style={{color:'#64748b',fontSize:13,marginBottom:20}}>{t('app.welcomeCopy')}</p>
+          <div className='glass welcome-card'>
+            <div className='welcome-logo'><ArcoxLogo /></div>
+            <h2>{t('app.welcomeTitle')}</h2>
+            <p>{t('app.welcomeCopy')}</p>
             {[
               ['1', t('app.stepConnectTitle'), t('app.stepConnectDesc')],
               ['2', t('app.stepCircleTitle'), t('app.stepCircleDesc')],
               ['3', t('app.stepFundTitle'), t('app.stepFundDesc')],
               ['4', t('app.stepTradeTitle'), t('app.stepTradeDesc')],
             ].map(([n,title,desc])=>(
-              <div key={n} style={{display:'flex',gap:10,alignItems:'flex-start',marginBottom:12,textAlign:'left'}}>
-                <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(99,102,241,0.2)',border:'1px solid rgba(99,102,241,0.4)',display:'flex',alignItems:'center',justifyContent:'center',color:'#818cf8',fontWeight:'bold',fontSize:12,flexShrink:0}}>{n}</div>
-                <div><div style={{color:'#e2e8f0',fontWeight:600,fontSize:13}}>{title}</div><div style={{color:'#64748b',fontSize:12}}>{desc}</div></div>
+              <div key={n} className='welcome-step'>
+                <div className='welcome-step-number'>{n}</div>
+                <div><div className='welcome-step-title'>{title}</div><div className='welcome-step-desc'>{desc}</div></div>
               </div>
             ))}
             {walletSetupError && (
-              <div style={{marginTop:12,padding:10,borderRadius:10,fontSize:12,background:'rgba(239,68,68,0.1)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)'}}>{walletSetupError}</div>
+              <div className='inline-error'>{walletSetupError}</div>
             )}
           </div>
         ) : (
-          <div className='glass' style={{borderRadius:20,overflow:'hidden'}}>
+          <div className='glass app-main-card'>
             <div className='tab-bar'>
               {TABS.map(item=>(
                 <button key={item.id} onClick={()=>setTab(item.id)} className={`tab-button ${tab===item.id?'active':''}`}>
@@ -268,7 +267,7 @@ export default function App() {
             </div>
           </div>
         )}
-        <p style={{textAlign:'center',fontSize:11,color:'#64748b',marginTop:16}}>Powered by <a href='https://arc.network' style={{color:'#818cf8'}}>Arc Network</a> & <a href='https://developers.circle.com' style={{color:'#818cf8'}}>Circle App Kit</a></p>
+        <p className='app-footer'>Powered by <a href='https://arc.network'>Arc Network</a> & <a href='https://developers.circle.com'>Circle App Kit</a></p>
       </div>
     </div>
   )
