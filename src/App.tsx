@@ -6,10 +6,11 @@ import { SendPanel } from './components/SendPanel'
 import { ReceivePanel } from './components/ReceivePanel'
 import { AgenticPanel } from './components/AgenticPanel'
 import { InfoPanel } from './components/InfoPanel'
+import { DocsPanel } from './components/DocsPanel'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 const API = ''
-const TABS = [{ id:'swap', labelKey:'tab.swap', icon:'⇄' },{ id:'bridge', labelKey:'tab.bridge', icon:'⛓' },{ id:'send', labelKey:'tab.send', icon:'→' },{ id:'receive', labelKey:'tab.receive', icon:'↓' },{ id:'agentic', labelKey:'tab.agentic', icon:'◎' },{ id:'info', labelKey:'tab.info', icon:'ℹ' }] as const
+const TABS = [{ id:'swap', labelKey:'tab.swap', icon:'⇄' },{ id:'bridge', labelKey:'tab.bridge', icon:'⛓' },{ id:'send', labelKey:'tab.send', icon:'→' },{ id:'receive', labelKey:'tab.receive', icon:'↓' },{ id:'agentic', labelKey:'tab.agentic', icon:'◎' },{ id:'info', labelKey:'tab.info', icon:'ℹ' },{ id:'docs', labelKey:'tab.docs', icon:'?' }] as const
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 function ArcoxLogo() {
   return (
@@ -239,6 +240,7 @@ export default function App() {
               {tab==='receive'&&<ReceivePanel address={address} circleWallet={circleWallet} />}
               {tab==='agentic'&&<AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />}
               {tab==='info'&&<InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />}
+              {tab==='docs'&&<DocsPanel />}
             </div>
           </div>
         )}
