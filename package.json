@@ -3,8 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "bin": {
+    "arcox-agent": "./scripts/arcox-codex-cli.mjs"
+  },
   "scripts": {
     "agent": "node scripts/arcox-agent.mjs",
+    "codex-agent": "node scripts/arcox-codex-cli.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

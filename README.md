@@ -24,6 +24,27 @@ node --env-file=.env server.mjs
 
 The Vite dev server proxies `/api/*` to `http://localhost:3001`.
 
+## ARCOX Codex Agent
+
+Run the local-first CLI agent:
+
+```bash
+cp .env.example .env
+npm run codex-agent -- identity
+npm run codex-agent -- connect
+npm run codex-agent -- "send 1 USDC to 0x0000000000000000000000000000000000000001"
+```
+
+Start the local UI endpoint:
+
+```bash
+npm run codex-agent -- serve --port 8787
+```
+
+Then link `http://127.0.0.1:8787/agent` in `Agent Jobs -> AI Link`.
+
+Full guide: `docs/codex-cli-agent.md`.
+
 ## Vercel Frontend
 
 The frontend can run on Vercel. `vercel.json` builds with `VITE_BASE_PATH=/` and rewrites `/api/*` to the current backend:
