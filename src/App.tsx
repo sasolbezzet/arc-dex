@@ -10,7 +10,7 @@ import { DocsPanel } from './components/DocsPanel'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 const API = ''
-const TABS = [{ id:'swap', labelKey:'tab.swap', icon:'⇄' },{ id:'bridge', labelKey:'tab.bridge', icon:'⛓' },{ id:'send', labelKey:'tab.send', icon:'→' },{ id:'receive', labelKey:'tab.receive', icon:'↓' },{ id:'agentic', labelKey:'tab.agentic', icon:'◎' },{ id:'info', labelKey:'tab.info', icon:'ℹ' },{ id:'docs', labelKey:'tab.docs', icon:'?' }] as const
+const TABS = [{ id:'swap', labelKey:'tab.swap', icon:'⇄' },{ id:'bridge', labelKey:'tab.bridge', icon:'⛓' },{ id:'send', labelKey:'tab.send', icon:'→' },{ id:'receive', labelKey:'tab.receive', icon:'↓' },{ id:'agentic', labelKey:'tab.agentic', icon:'◎' },{ id:'info', labelKey:'tab.info', icon:'ℹ' }] as const
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 function ArcoxLogo() {
   return (
@@ -24,6 +24,7 @@ function ArcoxLogo() {
 export default function App() {
   const { lang, setLang, t } = useI18n()
   const [tab, setTab] = useState('swap')
+  const [page, setPage] = useState<'app'|'docs'>('app')
   const [address, setAddress] = useState<string|null>(null)
   const [circleWallet, setCircleWallet] = useState<{id:string;address:string}|null>(null)
   const [balances, setBalances] = useState<Record<string,string>>({...EMPTY_BAL})
@@ -140,8 +141,15 @@ export default function App() {
   const handleDisconnect = () => { clearAuthSession(); setWalletSetupError(''); setAddress(null); setCircleWallet(null); setBalances({...EMPTY_BAL}); setEoaBalances({...EMPTY_BAL}) }
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    if (params.get('page') === 'docs') setPage('docs')
     if (params.get('to')) setTab('send')
   }, [])
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (page === 'docs') url.searchParams.set('page', 'docs')
+    else url.searchParams.delete('page')
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [page])
   useEffect(() => {
     if (!circleWallet?.address) return
     const iv = setInterval(refresh, 15000)
@@ -171,10 +179,13 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <button type='button' className='header-link-button' onClick={() => setPage(page === 'docs' ? 'app' : 'docs')}>
+              {page === 'docs' ? 'App' : 'Docs'}
+            </button>
             <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
           </div>
         </div>
-        {address && (
+        {address && page === 'app' && (
           <div className='balance-strip'>
             <div className='glass chip'><span style={{color:'#64748b'}}>MetaMask: </span><span style={{color:'#f59e0b',fontFamily:'monospace'}}>{address.slice(0,6)}...{address.slice(-4)}</span></div>
             <div className='glass chip'>
@@ -199,11 +210,25 @@ export default function App() {
         )}
       </header>
       <div className='hero-copy'>
-        <h1>{t('app.heroTitle')} <span style={{color:'#818cf8'}}>ARCOX</span></h1>
-        <p>{t('app.heroSubtitle')}</p>
+        {page === 'docs' ? (
+          <>
+            <h1>ARCOX DEX <span style={{color:'#818cf8'}}>Docs</span></h1>
+            <p>User guide, bridge retry, and feature tutorial</p>
+          </>
+        ) : (
+          <>
+            <h1>{t('app.heroTitle')} <span style={{color:'#818cf8'}}>ARCOX</span></h1>
+            <p>{t('app.heroSubtitle')}</p>
+          </>
+        )}
       </div>
-      <div className='app-panel-wrap'>
-        {!address ? (
+      <div className={page === 'docs' ? 'docs-page-wrap' : 'app-panel-wrap'}>
+        {page === 'docs' ? (
+          <div className='glass docs-page-shell'>
+            <button type='button' className='docs-back-button' onClick={() => setPage('app')}>Back to app</button>
+            <DocsPanel />
+          </div>
+        ) : !address ? (
           <div className='glass' style={{borderRadius:20,padding:32,textAlign:'center'}}>
             <div style={{fontSize:48,marginBottom:16}}>👋</div>
             <div style={{display:'flex',justifyContent:'center',marginBottom:14}}><ArcoxLogo /></div>
@@ -240,7 +265,6 @@ export default function App() {
               {tab==='receive'&&<ReceivePanel address={address} circleWallet={circleWallet} />}
               {tab==='agentic'&&<AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />}
               {tab==='info'&&<InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />}
-              {tab==='docs'&&<DocsPanel />}
             </div>
           </div>
         )}
