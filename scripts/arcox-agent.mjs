@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from 'crypto'
+import { existsSync, readFileSync } from 'fs'
 import { createServer } from 'http'
 import {
   createPublicClient,
@@ -16,13 +17,23 @@ import {
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
+loadLocalEnv()
+
 const ARC_RPC = process.env.ARC_RPC || 'https://rpc.testnet.arc.network/'
 const EXPLORER_TX = 'https://testnet.arcscan.app/tx/'
 const AGENTIC_COMMERCE_CONTRACT = '0x0747EEf0706327138c69792bF28Cd525089e4583'
 const IDENTITY_REGISTRY = '0x8004A818BFB912233c491871b3d84c89A494BD9e'
 const ARC_USDC = '0x3600000000000000000000000000000000000000'
+const ARCOX_API_URL = process.env.ARCOX_API_URL || 'https://arc-dex-bice.vercel.app'
+const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired']
+const ARC_TOKENS = {
+  USDC: { address: ARC_USDC, decimals: 6 },
+  EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
+  USYC: { address: '0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C', decimals: 6 },
+  CIRBTC: { address: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', decimals: 8 },
+}
 
 const arcTestnet = defineChain({
   id: 5042002,
@@ -99,6 +110,12 @@ function help() {
 
 Usage:
   npm run agent -- help
+  npm run agent -- env-template
+  npm run agent -- identity
+  npm run agent -- connect
+  npm run agent -- run --prompt "send 1 USDC to 0x..." --yes
+  npm run agent -- run --prompt "bridge 5 USDC from Arbitrum Sepolia to Arc"
+  npm run agent -- run --prompt "swap 10 USDC to EURC"
   npm run agent -- serve --port 8787
   npm run agent -- ask --prompt "Create escrow job for 1 USDC"
   npm run agent -- status
@@ -112,18 +129,38 @@ Usage:
   npm run agent -- complete --job-id 1 --reason "approved"
 
 Required for onchain commands:
-  AGENT_PRIVATE_KEY=0x... npm run agent -- status
+  Copy .env.example to .env and set AGENT_PRIVATE_KEY=0x...
 
 Local endpoint for ARCOX DEX UI:
-  AGENT_PRIVATE_KEY=0x... npm run agent -- serve --port 8787
+  npm run agent -- serve --port 8787
   Use endpoint: http://127.0.0.1:8787/agent
+
+Safety:
+  Retail payment commands show a preview first. Add --yes only after checking the route.
+  The agent never needs the user's browser-wallet private key.
 `)
+}
+
+function loadLocalEnv() {
+  if (!existsSync('.env')) return
+  const lines = readFileSync('.env', 'utf8').split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue
+    const [key, ...rest] = trimmed.split('=')
+    if (process.env[key]) continue
+    process.env[key] = rest.join('=').replace(/^['"]|['"]$/g, '')
+  }
 }
 
 function arg(name, fallback = '') {
   const index = process.argv.indexOf(`--${name}`)
   if (index === -1) return fallback
   return process.argv[index + 1] || fallback
+}
+
+function hasFlag(name) {
+  return process.argv.includes(`--${name}`)
 }
 
 function command() {
@@ -142,8 +179,136 @@ function wallet() {
   return { account, walletClient }
 }
 
+function localAgentId(owner) {
+  if (process.env.AGENT_ID) return process.env.AGENT_ID
+  const digest = createHash('sha256').update(`arcox:${owner}:${ARC_RPC}`).digest('hex').slice(0, 16)
+  return `arcox-codex-${digest}`
+}
+
+function metadataFor(owner) {
+  return {
+    name: DEFAULT_AGENT_NAME,
+    description: 'Local-first ARCOX agent for retail swap, bridge, send, and Arc ERC-8183 job workflows.',
+    agent_type: 'retail_payment_agent',
+    owner,
+    local_agent_id: localAgentId(owner),
+    arc_agent_id: process.env.ARC_AGENT_ID || process.env.AGENT_ID || '',
+    endpoint: `http://127.0.0.1:${process.env.AGENT_PORT || '8787'}/agent`,
+    arcox_api_url: ARCOX_API_URL,
+    capabilities: [
+      'send_usdc_on_arc',
+      'plan_swap',
+      'plan_bridge',
+      'create_erc8183_job',
+      'submit_erc8183_deliverable',
+      'complete_erc8183_job',
+    ],
+    chain: {
+      name: arcTestnet.name,
+      id: arcTestnet.id,
+      rpc: ARC_RPC,
+      identity_registry: IDENTITY_REGISTRY,
+      agentic_commerce: AGENTIC_COMMERCE_CONTRACT,
+    },
+    signing: 'local_private_key_env_only',
+    version: '1.1.0',
+  }
+}
+
 function hashTextBytes32(text) {
   return keccak256(toHex(text || 'arcox-agent-deliverable'))
+}
+
+function extractFirstAddress(text) {
+  const match = String(text || '').match(/0x[a-fA-F0-9]{40}/)
+  return match ? getAddress(match[0]) : ''
+}
+
+function extractAmountToken(text) {
+  const match = String(text || '').match(/(\d+(?:\.\d+)?)\s*(USDC|EURC|USYC|cirBTC)/i)
+  if (!match) return { amount: '', token: 'USDC' }
+  return { amount: match[1], token: match[2].toUpperCase() === 'CIRBTC' ? 'CIRBTC' : match[2].toUpperCase() }
+}
+
+function classifyPrompt(prompt) {
+  const text = String(prompt || '').trim()
+  const lower = text.toLowerCase()
+  const { amount, token } = extractAmountToken(text)
+  const to = extractFirstAddress(text)
+  if (lower.includes('send') || lower.includes('transfer') || lower.includes('kirim')) return { action: 'send', amount, token, to }
+  if (lower.includes('swap') || lower.includes('tukar')) {
+    const tokenOut = (text.match(/\bto\s+(USDC|EURC|USYC|cirBTC)\b/i)?.[1] || '').toUpperCase()
+    return { action: 'swap', amount, tokenIn: token, tokenOut: tokenOut === 'CIRBTC' ? 'CIRBTC' : tokenOut }
+  }
+  if (lower.includes('bridge')) return { action: 'bridge', amount, token, to }
+  if (lower.includes('create job') || lower.includes('buat job')) return { action: 'create-job', amount, token, provider: arg('provider') || to, evaluator: arg('evaluator') || to }
+  if (lower.includes('accept job') || lower.includes('terima job')) return { action: 'accept-job', jobId: arg('job-id') || (text.match(/\bjob\s*#?(\d+)/i)?.[1] || '') }
+  return { action: 'plan', amount, token }
+}
+
+async function executeSend(intent, owner) {
+  if (!intent.amount || !intent.to) throw new Error('Send command needs amount and recipient address, example: send 1 USDC to 0x...')
+  const token = ARC_TOKENS[intent.token]
+  if (!token) throw new Error(`Unsupported Arc token: ${intent.token}`)
+  const { walletClient } = wallet()
+  const value = parseUnits(intent.amount, token.decimals)
+  const hash = await walletClient.writeContract({
+    address: token.address,
+    abi: erc20Abi,
+    functionName: 'transfer',
+    args: [intent.to, value],
+  })
+  await publicClient.waitForTransactionReceipt({ hash })
+  return {
+    status: 'submitted',
+    action: 'send',
+    from: owner,
+    to: intent.to,
+    amount: intent.amount,
+    token: intent.token,
+    tx: hash,
+    explorer: EXPLORER_TX + hash,
+  }
+}
+
+async function runPrompt() {
+  const prompt = arg('prompt')
+  if (!prompt) throw new Error('Missing --prompt')
+  const { account } = wallet()
+  const intent = classifyPrompt(prompt)
+  const preview = {
+    agent: metadataFor(account.address),
+    prompt,
+    intent,
+    approval_required: true,
+    approval_mode: 'CLI --yes confirmation with local AGENT_PRIVATE_KEY signer',
+    note: 'Private key stays in the local .env file. ARCOX DEX only receives status/metadata if you choose to report it.',
+  }
+  if (!hasFlag('yes')) {
+    console.log(JSON.stringify({ ...preview, status: 'preview_only', next: 'Review this plan. Re-run with --yes to execute supported onchain actions.' }, null, 2))
+    return
+  }
+  if (intent.action === 'send') {
+    console.log(JSON.stringify(await executeSend(intent, account.address), null, 2))
+    return
+  }
+  if (intent.action === 'create-job') {
+    const provider = getAddress(intent.provider || arg('provider') || account.address)
+    const evaluator = getAddress(intent.evaluator || arg('evaluator') || account.address)
+    const description = prompt
+    const expiredAt = BigInt(Math.floor(Date.now() / 1000) + (Number(arg('hours', '24')) || 24) * 3600)
+    const { walletClient } = wallet()
+    const hash = await walletClient.writeContract({ address: AGENTIC_COMMERCE_CONTRACT, abi: agenticCommerceAbi, functionName: 'createJob', args: [provider, evaluator, expiredAt, description, ZERO_ADDRESS] })
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    console.log(JSON.stringify({ status: 'submitted', action: 'create-job', tx: hash, explorer: EXPLORER_TX + hash, jobId: parseJobId(receipt.logs), provider, evaluator }, null, 2))
+    return
+  }
+  console.log(JSON.stringify({
+    ...preview,
+    status: 'route_adapter_required',
+    reason: 'This command is recognized, but autonomous execution is disabled until a concrete quote/bridge adapter is wired for this CLI route.',
+    safe_next_step: 'Use ARCOX DEX web UI for swap/bridge signing, or add a CLI adapter that returns quote, allowance, gas, route, and destination before execution.',
+  }, null, 2))
 }
 
 function parseJobId(logs) {
@@ -253,13 +418,7 @@ async function serve() {
     }
     if (req.method === 'GET' && req.url === '/metadata') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      return res.end(JSON.stringify({
-        name: process.env.AGENT_NAME || 'ARCOX Terminal AI Agent',
-        agent_type: 'retail_payment_agent',
-        capabilities: ['create_job_plan', 'verify_deliverable', 'submit_job_result'],
-        owner,
-        endpoint: `http://127.0.0.1:${port}/agent`,
-      }))
+      return res.end(JSON.stringify(metadataFor(owner), null, 2))
     }
     if (req.method === 'POST' && req.url === '/agent') {
       let body = ''
@@ -289,6 +448,45 @@ async function serve() {
 async function main() {
   const cmd = command()
   if (cmd === 'help') return help()
+  if (cmd === 'env-template') {
+    console.log(`# ARCOX local agent env. Keep this file on the user's computer only.
+AGENT_PRIVATE_KEY=0xYOUR_LOCAL_AGENT_PRIVATE_KEY
+AGENT_NAME=ARCOX Codex Retail Agent
+AGENT_PORT=8787
+ARC_RPC=https://rpc.testnet.arc.network/
+ARCOX_API_URL=https://arc-dex-bice.vercel.app
+
+# Optional: set after onchain register returns an Arc ERC-8004 token id.
+ARC_AGENT_ID=
+`)
+    return
+  }
+  if (cmd === 'identity') {
+    const { account } = wallet()
+    console.log(JSON.stringify(metadataFor(account.address), null, 2))
+    return
+  }
+  if (cmd === 'connect') {
+    const { account } = wallet()
+    const metadata = metadataFor(account.address)
+    console.log(JSON.stringify({
+      status: 'ready_to_link',
+      owner: account.address,
+      localAgentId: metadata.local_agent_id,
+      arcAgentId: metadata.arc_agent_id || null,
+      endpoint: metadata.endpoint,
+      ui: `${ARCOX_API_URL}/`,
+      instructions: [
+        'Run: npm run agent -- serve --port 8787',
+        'Open ARCOX DEX Agent Jobs -> AI Link.',
+        'Register/read your Arc Agent ID, then set endpoint to the local endpoint above.',
+        'Sign the link message with the same owner wallet.',
+      ],
+      metadata,
+    }, null, 2))
+    return
+  }
+  if (cmd === 'run') return runPrompt()
   if (cmd === 'serve') return serve()
   if (cmd === 'ask') {
     const result = makeAgentResponse({ prompt: arg('prompt'), jobId: arg('job-id'), agentId: process.env.AGENT_ID, owner: process.env.AGENT_OWNER })
