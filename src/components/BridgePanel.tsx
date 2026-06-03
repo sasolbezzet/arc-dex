@@ -4,6 +4,7 @@ import { safePost } from '../api'
 import { txHistory } from '../txHistory'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 import { useI18n } from '../i18n'
+import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -94,7 +95,12 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   // ── Solana wallet connect ──
   const connectSolana = async (): Promise<{address:string;provider:any}|null> => {
     try {
-      const provider = window.solflare || window.solana
+      const rawProvider = window.solflare || window.phantom?.solana || window.solana
+      const provider = window.solflare
+        ? wrapSolflare(window.solflare)
+        : (window.phantom?.solana || window.solana?.isPhantom)
+          ? wrapPhantom(window.phantom?.solana || window.solana)
+          : rawProvider
       if (!provider) { alert('Install Solflare atau Phantom wallet'); return null }
       await provider.connect()
       const addr = provider.publicKey?.toString()
@@ -204,7 +210,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     // Approve
     setStep(`MetaMask: Approve ${token} (1/2)...`)
     setStatus({ type:'info', msg:`⏳ MetaMask popup 1/2: Approve ${token}...`, steps:[...localSteps] })
-    const approveTx = await window.ethereum.request({ method:'eth_sendTransaction', params:[{ from:address, to:burnToken, data:'0x095ea7b3'+encAddr(srcInfo.tokenMessenger)+enc256(amtMicro) }] })
+    const approveTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0x095ea7b3'+encAddr(srcInfo.tokenMessenger)+enc256(amtMicro) })
     localSteps.push({ name:'approve', state:'pending', txHash:approveTx })
     setStatus({ type:'info', msg:'⏳ Menunggu approve...', steps:[...localSteps] })
     await waitEvmTx(approveTx)
@@ -230,7 +236,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       burnData = '0x8e0250ee'+enc256(amtMicro)+enc256(BigInt(dstDomain))+encAddr(address)+encAddr(burnToken)+enc256(0n)+enc256(maxFeeMicro)+enc256(CCTP_FAST_FINALITY_THRESHOLD)
     }
 
-    const burnTx = await window.ethereum.request({ method:'eth_sendTransaction', params:[{ from:address, to:srcInfo.tokenMessenger, data:burnData }] })
+    const burnTx = await sendEvmTxBuffered({ from:address, to:srcInfo.tokenMessenger, data:burnData })
     localSteps.push({ name:'burn', state:'pending', txHash:burnTx })
     setStatus({ type:'info', msg:'⏳ Menunggu burn...', steps:[...localSteps] })
     await waitEvmTx(burnTx)
@@ -358,10 +364,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       localSteps.push({ name:'mint', state:'pending' })
       let mintTx: string
       try {
-        mintTx = await window.ethereum.request({
-          method:'eth_sendTransaction',
-          params:[{ from:address, to:msgTxAddr, data:callData }]
-        })
+        mintTx = await sendEvmTxBuffered({ from:address, to:msgTxAddr, data:callData })
         localSteps[localSteps.length-1].txHash = mintTx
         setStatus({ type:'info', msg:'⏳ Menunggu mint...', steps:[...localSteps] })
         await waitEvmTx(mintTx)
@@ -473,10 +476,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       localSteps.push({ name:'mint', state:'pending' })
       setStep('MetaMask: Mint USDC di Arc Testnet...')
       setStatus({ type:'info', msg:'✓ Attestasi siap!\n⏳ MetaMask popup: Mint USDC di Arc Testnet...', steps:[...localSteps] })
-      const mintTx = await window.ethereum.request({
-        method:'eth_sendTransaction',
-        params:[{ from:address, to:attData.messageTransmitter, data:callData }]
-      })
+      const mintTx = await sendEvmTxBuffered({ from:address, to:attData.messageTransmitter, data:callData })
       localSteps[localSteps.length-1].txHash = mintTx
       setStatus({ type:'info', msg:'⏳ Menunggu mint di Arc Testnet...', steps:[...localSteps] })
       await waitEvmTx(mintTx)
@@ -532,6 +532,48 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const evmNativeBalance = async (ownerAddr: string): Promise<bigint> => {
     const out = await window.ethereum!.request({ method:'eth_getBalance', params:[ownerAddr, 'latest'] })
     return BigInt(out || '0x0')
+  }
+  const toHex = (n: bigint) => `0x${n.toString(16)}`
+  const getBufferedEvmFees = async (tx: any, multiplier = 3n) => {
+    const out: any = {}
+    try {
+      const gasHex = await window.ethereum!.request({ method:'eth_estimateGas', params:[tx] })
+      out.gas = toHex((BigInt(gasHex) * 13n) / 10n + 10_000n)
+    } catch(e) {
+      console.warn('eth_estimateGas failed, wallet will estimate:', e instanceof Error ? e.message : String(e))
+    }
+    try {
+      const block = await window.ethereum!.request({ method:'eth_getBlockByNumber', params:['latest', false] })
+      const baseFee = block?.baseFeePerGas ? BigInt(block.baseFeePerGas) : 0n
+      if (baseFee > 0n) {
+        let tip = 0n
+        try { tip = BigInt(await window.ethereum!.request({ method:'eth_maxPriorityFeePerGas' })) } catch {}
+        const minTip = 1_500_000n
+        if (tip < minTip) tip = minTip
+        out.maxPriorityFeePerGas = toHex(tip)
+        out.maxFeePerGas = toHex(baseFee * multiplier + tip * 2n)
+        return out
+      }
+    } catch(e) {
+      console.warn('EIP-1559 fee lookup failed:', e instanceof Error ? e.message : String(e))
+    }
+    try {
+      const gasPrice = BigInt(await window.ethereum!.request({ method:'eth_gasPrice' }))
+      out.gasPrice = toHex(gasPrice * multiplier)
+    } catch {}
+    return out
+  }
+  const sendEvmTxBuffered = async (tx: any): Promise<string> => {
+    const firstFees = await getBufferedEvmFees(tx, 3n)
+    try {
+      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
+    } catch(e:any) {
+      const msg = e?.message || ''
+      if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw e
+      await new Promise(r => setTimeout(r, 1200))
+      const retryFees = await getBufferedEvmFees(tx, 6n)
+      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
+    }
   }
 
   // ── Solana burn helper ──
@@ -756,9 +798,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     //   Remaining accounts: token_messenger_minter, remote_token_messenger, token_minter, local_token,
     //                       mint, recipient_ata, custody_token_account, token_program,
     //                       event_authority, message_transmitter_program
-    for (let attempt = 0; attempt < 1; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (attempt > 0) {
+          await new Promise(r => setTimeout(r, 1200))
           const freshBlock = await conn.getLatestBlockhash('confirmed')
           curBlockhash = freshBlock.blockhash
           curLastValid = freshBlock.lastValidBlockHeight
@@ -814,7 +857,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         if (logsText && !e.message?.includes('Program log:')) {
           throw new Error(`${e.message}${logsText}`)
         }
-        throw e
+        if (attempt === 2) throw e
       }
     }
     throw new Error('receiveMessage failed')
