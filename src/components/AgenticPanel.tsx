@@ -77,6 +77,11 @@ type SimResult = {
   nextSteps: string[]
 }
 
+type AgentEndpointResponse = Partial<SimResult> & {
+  deliverable?: string
+  error?: string
+}
+
 export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   const { t } = useI18n()
   const [view, setView] = useState<View>('agent')
@@ -99,7 +104,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   const [jobInfo, setJobInfo] = useState<AgenticJob | null>(null)
   const [linkAgentId, setLinkAgentId] = useState('')
   const [aiName, setAiName] = useState('ARCOX Retail Payment Agent')
-  const [aiEndpoint, setAiEndpoint] = useState('https://agent.example.com/arcox')
+  const [aiEndpoint, setAiEndpoint] = useState('http://127.0.0.1:8787/agent')
   const [aiCapabilities, setAiCapabilities] = useState('quote_payments, create_job_plan, verify_deliverable')
   const [agentMetadataJson, setAgentMetadataJson] = useState('')
   const [simulationPrompt, setSimulationPrompt] = useState('Create a retail payment escrow job for 1 USDC on Arc Testnet and verify the deliverable.')
@@ -218,18 +223,38 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   const handleRunSimulation = () => run(t('agentic.simulating'), async () => {
     if (!agentLink) throw new Error(t('agentic.linkRequired'))
     if (!simulationPrompt.trim()) throw new Error(t('agentic.descriptionRequired'))
-    const requestId = `sim-${Date.now()}`
-    const deliverableHash = hashTextBytes32(`${agentLink.agentId}:${simulationPrompt}:${agentLink.ownerSignature.slice(0, 18)}`)
+    let endpointResult: AgentEndpointResponse | null = null
+    try {
+      const response = await fetch(agentLink.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: agentLink.agentId,
+          owner: agentLink.owner,
+          prompt: simulationPrompt.trim(),
+          capabilities: agentLink.capabilities,
+          requester: address,
+          source: 'arcox-dex-ui',
+        }),
+      })
+      endpointResult = await response.json().catch(() => null)
+      if (!response.ok || endpointResult?.error) throw new Error(endpointResult?.error || `Agent endpoint HTTP ${response.status}`)
+    } catch (e) {
+      throw new Error(`AI agent endpoint tidak merespons. Jalankan: npm run agent -- serve --port 8787. Detail: ${e instanceof Error ? e.message : 'unknown error'}`)
+    }
+    const requestId = endpointResult?.requestId || `agent-${Date.now()}`
+    const deliverableText = endpointResult?.deliverable || `${agentLink.agentId}:${simulationPrompt}:${agentLink.ownerSignature.slice(0, 18)}`
+    const deliverableHash = endpointResult?.deliverableHash || hashTextBytes32(deliverableText)
     const result: SimResult = {
       requestId,
       agentId: agentLink.agentId,
-      status: 'accepted',
-      summary: `${agentLink.aiName} accepted the simulated task and mapped it to an ERC-8183 escrow workflow.`,
-      suggestedProvider: agentLink.owner,
-      suggestedEvaluator: address || agentLink.owner,
-      suggestedBudget: '1',
+      status: endpointResult?.status || 'accepted',
+      summary: endpointResult?.summary || `${agentLink.aiName} accepted the task and mapped it to an ERC-8183 escrow workflow.`,
+      suggestedProvider: endpointResult?.suggestedProvider || agentLink.owner,
+      suggestedEvaluator: endpointResult?.suggestedEvaluator || address || agentLink.owner,
+      suggestedBudget: endpointResult?.suggestedBudget || '1',
       deliverableHash,
-      nextSteps: [
+      nextSteps: endpointResult?.nextSteps || [
         'Create ERC-8183 job with provider = linked agent owner.',
         'Set budget and fund escrow with USDC.',
         'Provider submits deliverable hash.',
@@ -240,7 +265,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
     setProvider(result.suggestedProvider)
     setEvaluator(result.suggestedEvaluator)
     setBudget(result.suggestedBudget)
-    setDeliverable(result.deliverableHash)
+    setDeliverable(deliverableText)
     setDescription(simulationPrompt.trim())
     setStatus({ type: 'success', msg: t('agentic.simulated') })
   })
