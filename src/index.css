@@ -21,8 +21,8 @@ select.input { cursor:pointer; }
 .brand-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .language-select { width: auto; background: rgba(10,10,15,0.86); color: #cbd5e1; border: 1px solid #1e1e2e; border-radius: 10px; padding: 7px 10px; font-size: 12px; outline: none; cursor: pointer; }
-.balance-strip { max-width: 1024px; margin: 0 auto; padding: 0 20px 10px; display: flex; gap: 6px; flex-wrap: wrap; }
-.chip { padding: 4px 10px; border-radius: 8px; font-size: 11px; max-width: 100%; }
+.balance-strip { max-width: 1024px; margin: 0 auto; padding: 0 20px 10px; display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.chip { padding: 4px 10px; border-radius: 8px; font-size: 11px; max-width: 100%; min-width: 0; line-height: 1.35; }
 .chip span { overflow-wrap: anywhere; }
 .hero-copy { text-align: center; padding: 28px 16px 20px; }
 .hero-copy h1 { font-size: 28px; font-weight: bold; color: #e2e8f0; margin-bottom: 8px; line-height: 1.18; }
@@ -47,9 +47,10 @@ select.input { cursor:pointer; }
   .header-actions { width: 100%; justify-content: space-between; }
   .language-select { flex: 0 0 auto; max-width: 42%; }
   .brand-row > span:first-of-type { font-size: 15px !important; }
-  .balance-strip { padding: 0 12px 8px; gap: 5px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .balance-strip::-webkit-scrollbar { display: none; }
-  .chip { flex: 0 0 auto; white-space: nowrap; font-size: 10px; padding: 4px 8px; }
+  .balance-strip { padding: 0 12px 8px; gap: 6px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  .balance-strip .chip { display: flex; align-items: center; justify-content: space-between; gap: 5px; white-space: normal; font-size: 10px; padding: 5px 7px; }
+  .balance-strip .chip span:first-child { flex: 0 0 auto; }
+  .balance-strip .chip span:last-child, .balance-strip .chip button { min-width: 0; text-align: right; overflow-wrap: anywhere; }
   .hero-copy { padding: 18px 12px 14px; }
   .hero-copy h1 { font-size: 22px; }
   .hero-copy p { font-size: 12px; }
@@ -71,6 +72,7 @@ select.input { cursor:pointer; }
 }
 
 @media (max-width: 340px) {
+  .balance-strip { grid-template-columns: minmax(0, 1fr); }
   .tab-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tab-button { min-height: 42px; font-size: 10px; }
 }
