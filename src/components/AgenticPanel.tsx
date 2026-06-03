@@ -225,12 +225,12 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
     if (!agentLink) throw new Error(t('agentic.linkRequired'))
     if (!simulationPrompt.trim()) throw new Error(t('agentic.descriptionRequired'))
     let endpointResult: AgentEndpointResponse | null = null
-    try {
-      const response = await fetch(agentLink.endpoint, {
+    const callAgentEndpoint = async (endpoint: string) => {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(agentLink.endpoint.startsWith('/api/') ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+          ...(endpoint.startsWith('/api/') ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
         },
         body: JSON.stringify({
           agentId: agentLink.agentId,
@@ -242,10 +242,22 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
           source: 'arcox-dex-ui',
         }),
       })
-      endpointResult = await response.json().catch(() => null)
-      if (!response.ok || endpointResult?.error) throw new Error(endpointResult?.error || `Agent endpoint HTTP ${response.status}`)
+      const data = await response.json().catch(() => null) as AgentEndpointResponse | null
+      if (!response.ok || data?.error) throw new Error(data?.error || `Agent endpoint HTTP ${response.status}`)
+      return data
+    }
+    try {
+      endpointResult = await callAgentEndpoint(agentLink.endpoint)
     } catch (e) {
-      throw new Error(`AI agent endpoint tidak merespons. Gunakan /api/agent/ask untuk hosted agent, atau jalankan terminal agent lokal: npm run agent -- serve --port 8787. Detail: ${e instanceof Error ? e.message : 'unknown error'}`)
+      const localEndpoint = agentLink.endpoint.includes('127.0.0.1') || agentLink.endpoint.includes('localhost')
+      if (!localEndpoint) {
+        throw new Error(`AI agent endpoint tidak merespons. Gunakan /api/agent/ask untuk hosted agent, atau jalankan terminal agent lokal: npm run agent -- serve --port 8787. Detail: ${e instanceof Error ? e.message : 'unknown error'}`)
+      }
+      endpointResult = await callAgentEndpoint('/api/agent/ask')
+      const migrated = { ...agentLink, endpoint: '/api/agent/ask', linkedAt: Date.now() }
+      saveAgentLink(migrated)
+      setAgentLink(migrated)
+      setAiEndpoint('/api/agent/ask')
     }
     const requestId = endpointResult?.requestId || `agent-${Date.now()}`
     const deliverableText = endpointResult?.deliverable || `${agentLink.agentId}:${simulationPrompt}:${agentLink.ownerSignature.slice(0, 18)}`
