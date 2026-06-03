@@ -26,9 +26,16 @@ The Vite dev server proxies `/api/*` to `http://localhost:3001`.
 
 ## ARCOX Codex Agent
 
+The local agent is separated from the frontend in:
+
+```text
+/home/ubuntu/arc-dex/arcox-agent
+```
+
 Run the local-first CLI agent:
 
 ```bash
+cd /home/ubuntu/arc-dex/arcox-agent
 cp .env.example .env
 npm run codex-agent -- identity
 npm run codex-agent -- connect
@@ -43,7 +50,7 @@ npm run codex-agent -- serve --port 8787
 
 Then link `http://127.0.0.1:8787/agent` in `Agent Jobs -> AI Link`.
 
-Full guide: `docs/codex-cli-agent.md`.
+Full guide: `arcox-agent/docs/codex-cli-agent.md`.
 
 ## Vercel Frontend
 

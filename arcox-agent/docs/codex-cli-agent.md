@@ -7,7 +7,7 @@ The user keeps the private key in their own `.env` file. ARCOX DEX never receive
 ## Setup
 
 ```bash
-cd /home/ubuntu/arc-dex
+cd /home/ubuntu/arc-dex/arcox-agent
 cp .env.example .env
 ```
 

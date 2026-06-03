@@ -1,0 +1,28 @@
+{
+  "id": "arcox-codex-retail-agent",
+  "name": "ARCOX Codex Retail Agent",
+  "agent_type": "retail_payment_agent",
+  "description": "Local-first ARCOX agent for retail swap planning, bridge planning, Arc token send, and ERC-8183 job workflows.",
+  "env_file": "./.env",
+  "endpoint": "http://127.0.0.1:8787/agent",
+  "capabilities": [
+    "send_usdc_on_arc",
+    "plan_swap",
+    "plan_bridge",
+    "create_erc8183_job",
+    "submit_erc8183_deliverable",
+    "complete_erc8183_job"
+  ],
+  "arc": {
+    "network": "Arc Testnet",
+    "chain_id": 5042002,
+    "rpc_env": "ARC_RPC",
+    "identity_registry": "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+    "agentic_commerce": "0x0747EEf0706327138c69792bF28Cd525089e4583"
+  },
+  "security": {
+    "signing": "local_private_key_env_only",
+    "server_private_key_storage": false,
+    "requires_preview_before_yes": true
+  }
+}

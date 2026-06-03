@@ -2,6 +2,8 @@
 import { createHash } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { createServer } from 'http'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 import {
   createPublicClient,
   createWalletClient,
@@ -16,6 +18,9 @@ import {
   toHex,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const AGENT_HOME = dirname(__dirname)
 
 loadLocalEnv()
 
@@ -142,8 +147,11 @@ Safety:
 }
 
 function loadLocalEnv() {
-  if (!existsSync('.env')) return
-  const lines = readFileSync('.env', 'utf8').split(/\r?\n/)
+  const agentEnv = join(AGENT_HOME, '.env')
+  const fallbackEnv = join(process.cwd(), '.env')
+  const envPath = existsSync(agentEnv) ? agentEnv : fallbackEnv
+  if (!existsSync(envPath)) return
+  const lines = readFileSync(envPath, 'utf8').split(/\r?\n/)
   for (const line of lines) {
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue

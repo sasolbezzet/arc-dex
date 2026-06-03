@@ -1,0 +1,16 @@
+{
+  "name": "@arcox/agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "arcox-agent": "./bin/arcox-codex-cli.mjs"
+  },
+  "scripts": {
+    "agent": "node bin/arcox-agent.mjs",
+    "codex-agent": "node bin/arcox-codex-cli.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.50.4"
+  }
+}

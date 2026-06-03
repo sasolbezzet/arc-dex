@@ -59,7 +59,7 @@ npm run agent -- connect
 ## Start The Agent Endpoint
 
 ```bash
-cd /home/ubuntu/arc-dex
+cd /home/ubuntu/arc-dex/arcox-agent
 npm run agent -- serve --port 8787
 ```
 
@@ -152,7 +152,7 @@ The UI will POST to the terminal agent endpoint. If the agent is not running, th
 ## Read A Job
 
 ```bash
-AGENT_PRIVATE_KEY=0xYOUR_AGENT_PRIVATE_KEY npm run agent -- read-job --job-id 1
+npm run agent -- read-job --job-id 1
 ```
 
 ## Submit A Deliverable
@@ -160,7 +160,7 @@ AGENT_PRIVATE_KEY=0xYOUR_AGENT_PRIVATE_KEY npm run agent -- read-job --job-id 1
 The provider wallet should run:
 
 ```bash
-AGENT_PRIVATE_KEY=0xPROVIDER_PRIVATE_KEY npm run agent -- submit --job-id 1 --deliverable "Completed deliverable proof"
+npm run agent -- submit --job-id 1 --deliverable "Completed deliverable proof"
 ```
 
 ## Complete A Job
@@ -168,7 +168,7 @@ AGENT_PRIVATE_KEY=0xPROVIDER_PRIVATE_KEY npm run agent -- submit --job-id 1 --de
 The evaluator wallet should run:
 
 ```bash
-AGENT_PRIVATE_KEY=0xEVALUATOR_PRIVATE_KEY npm run agent -- complete --job-id 1 --reason "approved"
+npm run agent -- complete --job-id 1 --reason "approved"
 ```
 
 ## Full Test Flow
@@ -176,7 +176,7 @@ AGENT_PRIVATE_KEY=0xEVALUATOR_PRIVATE_KEY npm run agent -- complete --job-id 1 -
 1. Start terminal agent:
 
 ```bash
-AGENT_PRIVATE_KEY=0xYOUR_AGENT_PRIVATE_KEY npm run agent -- serve --port 8787
+npm run agent -- serve --port 8787
 ```
 
 2. Connect ARCOX DEX UI.
