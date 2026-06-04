@@ -30,6 +30,14 @@ Execute after checking preview:
 npm run codex-agent -- "send 1 USDC to 0x0000000000000000000000000000000000000001" --yes
 ```
 
+Bridge USDC EVM to EVM after checking preview:
+
+```bash
+npm run codex-agent -- "bridge 1 USDC from Arc to Arbitrum Sepolia" --yes
+```
+
+Supported CLI bridge routes: Arc Testnet, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, HyperEVM Testnet. Solana bridge remains a web-wallet flow.
+
 Link this endpoint in ARCOX DEX `Agent Jobs -> AI Link`:
 
 ```text

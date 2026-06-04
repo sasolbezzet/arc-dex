@@ -29,6 +29,9 @@ const EXPLORER_TX = 'https://testnet.arcscan.app/tx/'
 const AGENTIC_COMMERCE_CONTRACT = '0x0747EEf0706327138c69792bF28Cd525089e4583'
 const IDENTITY_REGISTRY = '0x8004A818BFB912233c491871b3d84c89A494BD9e'
 const ARC_USDC = '0x3600000000000000000000000000000000000000'
+const TOKEN_MESSENGER_V2_EVM = '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA'
+const MESSAGE_TRANSMITTER_V2_EVM = '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275'
+const IRIS = 'https://iris-api-sandbox.circle.com'
 const ARCOX_API_URL = process.env.ARCOX_API_URL || 'https://arc-dex-bice.vercel.app'
 const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -49,6 +52,93 @@ const arcTestnet = defineChain({
 })
 
 const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) })
+
+const cctpChains = {
+  Arc_Testnet: {
+    id: 'Arc_Testnet',
+    aliases: ['arc', 'arc testnet', 'arc_testnet'],
+    domain: 26,
+    usdc: ARC_USDC,
+    tokenMessenger: TOKEN_MESSENGER_V2_EVM,
+    messageTransmitter: MESSAGE_TRANSMITTER_V2_EVM,
+    explorer: 'https://testnet.arcscan.app/tx/',
+    rpc: ARC_RPC,
+    chain: arcTestnet,
+    fast: true,
+  },
+  Ethereum_Sepolia: {
+    id: 'Ethereum_Sepolia',
+    aliases: ['ethereum', 'ethereum sepolia', 'eth sepolia', 'sepolia'],
+    domain: 0,
+    usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+    tokenMessenger: TOKEN_MESSENGER_V2_EVM,
+    messageTransmitter: MESSAGE_TRANSMITTER_V2_EVM,
+    explorer: 'https://sepolia.etherscan.io/tx/',
+    rpc: process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com',
+    chain: defineChain({ id: 11155111, name: 'Ethereum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com'] } }, blockExplorers: { default: { name: 'Etherscan', url: 'https://sepolia.etherscan.io' } } }),
+    fast: false,
+  },
+  Base_Sepolia: {
+    id: 'Base_Sepolia',
+    aliases: ['base', 'base sepolia'],
+    domain: 6,
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    tokenMessenger: TOKEN_MESSENGER_V2_EVM,
+    messageTransmitter: MESSAGE_TRANSMITTER_V2_EVM,
+    explorer: 'https://sepolia.basescan.org/tx/',
+    rpc: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
+    chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org'] } }, blockExplorers: { default: { name: 'BaseScan', url: 'https://sepolia.basescan.org' } } }),
+    fast: false,
+  },
+  Arbitrum_Sepolia: {
+    id: 'Arbitrum_Sepolia',
+    aliases: ['arbitrum', 'arbitrum sepolia', 'arb sepolia'],
+    domain: 3,
+    usdc: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+    tokenMessenger: TOKEN_MESSENGER_V2_EVM,
+    messageTransmitter: MESSAGE_TRANSMITTER_V2_EVM,
+    explorer: 'https://sepolia.arbiscan.io/tx/',
+    rpc: process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com',
+    chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com'] } }, blockExplorers: { default: { name: 'Arbiscan', url: 'https://sepolia.arbiscan.io' } } }),
+    fast: false,
+  },
+  HyperEVM_Testnet: {
+    id: 'HyperEVM_Testnet',
+    aliases: ['hyperevm', 'hyper evm', 'hypevm', 'hype', 'hyperevm testnet'],
+    domain: 19,
+    usdc: '0x2B3370eE501B4a559b57D449569354196457D8Ab',
+    tokenMessenger: TOKEN_MESSENGER_V2_EVM,
+    messageTransmitter: MESSAGE_TRANSMITTER_V2_EVM,
+    explorer: 'https://app.hyperliquid-testnet.xyz/explorer/tx/',
+    rpc: process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm',
+    chain: defineChain({ id: 998, name: 'HyperEVM Testnet', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: [process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm'] } }, blockExplorers: { default: { name: 'Hyperliquid', url: 'https://app.hyperliquid-testnet.xyz/explorer' } } }),
+    fast: false,
+  },
+}
+
+const tokenMessengerAbi = [{
+  type: 'function',
+  name: 'depositForBurn',
+  stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'amount', type: 'uint256' },
+    { name: 'destinationDomain', type: 'uint32' },
+    { name: 'mintRecipient', type: 'bytes32' },
+    { name: 'burnToken', type: 'address' },
+    { name: 'destinationCaller', type: 'bytes32' },
+    { name: 'maxFee', type: 'uint256' },
+    { name: 'minFinalityThreshold', type: 'uint32' },
+  ],
+  outputs: [],
+}]
+
+const messageTransmitterAbi = [{
+  type: 'function',
+  name: 'receiveMessage',
+  stateMutability: 'nonpayable',
+  inputs: [{ name: 'message', type: 'bytes' }, { name: 'attestation', type: 'bytes' }],
+  outputs: [{ name: 'success', type: 'bool' }],
+}]
 
 const agenticCommerceAbi = [
   {
@@ -206,7 +296,7 @@ function metadataFor(owner) {
     capabilities: [
       'send_usdc_on_arc',
       'plan_swap',
-      'plan_bridge',
+      'bridge_usdc_evm_cctp',
       'create_erc8183_job',
       'submit_erc8183_deliverable',
       'complete_erc8183_job',
@@ -238,6 +328,26 @@ function extractAmountToken(text) {
   return { amount: match[1], token: match[2].toUpperCase() === 'CIRBTC' ? 'CIRBTC' : match[2].toUpperCase() }
 }
 
+function normalizeChainName(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ')
+  if (!normalized) return ''
+  for (const chain of Object.values(cctpChains)) {
+    if (chain.id.toLowerCase().replace(/_/g, ' ') === normalized) return chain.id
+    if (chain.aliases.includes(normalized)) return chain.id
+  }
+  return ''
+}
+
+function extractBridgeRoute(text) {
+  const value = String(text || '')
+  const fromMatch = value.match(/\bfrom\s+(.+?)\s+to\s+(.+?)(?:\s+for\s+|\s+with\s+|$)/i)
+  if (!fromMatch) return { fromChain: 'Arc_Testnet', toChain: 'Ethereum_Sepolia' }
+  return {
+    fromChain: normalizeChainName(fromMatch[1]),
+    toChain: normalizeChainName(fromMatch[2]),
+  }
+}
+
 function classifyPrompt(prompt) {
   const text = String(prompt || '').trim()
   const lower = text.toLowerCase()
@@ -248,10 +358,159 @@ function classifyPrompt(prompt) {
     const tokenOut = (text.match(/\bto\s+(USDC|EURC|USYC|cirBTC)\b/i)?.[1] || '').toUpperCase()
     return { action: 'swap', amount, tokenIn: token, tokenOut: tokenOut === 'CIRBTC' ? 'CIRBTC' : tokenOut }
   }
-  if (lower.includes('bridge')) return { action: 'bridge', amount, token, to }
+  if (lower.includes('bridge')) return { action: 'bridge', amount, token, to, ...extractBridgeRoute(text) }
   if (lower.includes('create job') || lower.includes('buat job')) return { action: 'create-job', amount, token, provider: arg('provider') || to, evaluator: arg('evaluator') || to }
   if (lower.includes('accept job') || lower.includes('terima job')) return { action: 'accept-job', jobId: arg('job-id') || (text.match(/\bjob\s*#?(\d+)/i)?.[1] || '') }
   return { action: 'plan', amount, token }
+}
+
+function bytes32Address(address) {
+  return `0x${address.slice(2).toLowerCase().padStart(64, '0')}`
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function clientFor(chainInfo) {
+  return createPublicClient({ chain: chainInfo.chain, transport: http(chainInfo.rpc) })
+}
+
+function walletFor(chainInfo) {
+  const account = privateKeyToAccount(privateKey())
+  const walletClient = createWalletClient({ account, chain: chainInfo.chain, transport: http(chainInfo.rpc) })
+  return { account, walletClient }
+}
+
+async function bufferedFees(client, multiplier = 3n) {
+  try {
+    const block = await client.getBlock()
+    const baseFee = block.baseFeePerGas || 0n
+    if (baseFee > 0n) {
+      let tip = 0n
+      try { tip = await client.estimateMaxPriorityFeePerGas() } catch {}
+      const minTip = 1_500_000n
+      if (tip < minTip) tip = minTip
+      return { maxPriorityFeePerGas: tip, maxFeePerGas: baseFee * multiplier + tip * 2n }
+    }
+  } catch {}
+  try {
+    const gasPrice = await client.getGasPrice()
+    return { gasPrice: gasPrice * multiplier }
+  } catch {
+    return {}
+  }
+}
+
+async function writeContractBuffered({ chainInfo, address, abi, functionName, args }) {
+  const sourceClient = clientFor(chainInfo)
+  const { walletClient } = walletFor(chainInfo)
+  const fees = await bufferedFees(sourceClient, 3n)
+  try {
+    return await walletClient.writeContract({ address, abi, functionName, args, ...fees })
+  } catch (error) {
+    const msg = error?.message || ''
+    if (!/max fee per gas less than block base fee|underpriced|fee/i.test(msg)) throw error
+    await sleep(1200)
+    const retryFees = await bufferedFees(sourceClient, 6n)
+    return walletClient.writeContract({ address, abi, functionName, args, ...retryFees })
+  }
+}
+
+async function pollAttestation(domain, txHash, chainInfo) {
+  const maxPolls = chainInfo.fast ? 90 : Number(process.env.BRIDGE_ATTESTATION_POLLS || '700')
+  const url = `${IRIS}/v2/messages/${domain}?transactionHash=${txHash}`
+  let lastStatus = ''
+  for (let i = 0; i < maxPolls; i++) {
+    const delay = chainInfo.fast ? 1000 : i < 20 ? 1000 : 3000
+    await sleep(delay)
+    try {
+      const response = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (!response.ok) continue
+      const data = await response.json()
+      const message = data?.messages?.[0]
+      const status = message?.status || 'pending'
+      if (status !== lastStatus || i % 10 === 0) {
+        console.error(`[bridge] attestation ${i + 1}/${maxPolls}: ${status}`)
+        lastStatus = status
+      }
+      if (status === 'complete' && message.attestation && message.message) {
+        return { attestation: message.attestation, message: message.message }
+      }
+    } catch (error) {
+      if (i % 10 === 0) console.error(`[bridge] attestation error: ${error.message}`)
+    }
+  }
+  throw new Error(`Attestation timeout for ${chainInfo.id}. Burn completed, retry mint later with burn tx ${txHash}.`)
+}
+
+async function executeBridge(intent, owner) {
+  if ((intent.token || 'USDC') !== 'USDC') throw new Error('CLI bridge adapter currently supports USDC only.')
+  if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Bridge command needs amount, example: bridge 5 USDC from Arbitrum Sepolia to Arc')
+  const fromInfo = cctpChains[intent.fromChain]
+  const toInfo = cctpChains[intent.toChain]
+  if (!fromInfo || !toInfo) throw new Error('Unsupported bridge route. Use Arc, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, or HyperEVM Testnet.')
+  if (fromInfo.id === toInfo.id) throw new Error('Bridge source and destination must be different.')
+
+  const amount = parseUnits(intent.amount, 6)
+  const sourceClient = clientFor(fromInfo)
+  const destinationClient = clientFor(toInfo)
+  const tokenBalance = await sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [owner] })
+  if (tokenBalance < amount) {
+    throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
+  }
+
+  console.error(`[bridge] route ${fromInfo.id} -> ${toInfo.id}`)
+  console.error(`[bridge] approve ${intent.amount} USDC`)
+  const approveHash = await writeContractBuffered({
+    chainInfo: fromInfo,
+    address: fromInfo.usdc,
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [fromInfo.tokenMessenger, amount],
+  })
+  await sourceClient.waitForTransactionReceipt({ hash: approveHash })
+
+  console.error(`[bridge] burn ${intent.amount} USDC`)
+  const maxFee = 10n
+  const minFinalityThreshold = 1000
+  const burnHash = await writeContractBuffered({
+    chainInfo: fromInfo,
+    address: fromInfo.tokenMessenger,
+    abi: tokenMessengerAbi,
+    functionName: 'depositForBurn',
+    args: [amount, toInfo.domain, bytes32Address(owner), fromInfo.usdc, `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
+  })
+  await sourceClient.waitForTransactionReceipt({ hash: burnHash })
+
+  console.error(`[bridge] wait attestation from Circle Iris`)
+  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
+
+  console.error(`[bridge] mint on ${toInfo.id}`)
+  const mintHash = await writeContractBuffered({
+    chainInfo: toInfo,
+    address: toInfo.messageTransmitter,
+    abi: messageTransmitterAbi,
+    functionName: 'receiveMessage',
+    args: [attestation.message, attestation.attestation],
+  })
+  await destinationClient.waitForTransactionReceipt({ hash: mintHash })
+
+  return {
+    status: 'submitted',
+    action: 'bridge',
+    from: fromInfo.id,
+    to: toInfo.id,
+    owner,
+    amount: intent.amount,
+    token: 'USDC',
+    approveTx: approveHash,
+    burnTx: burnHash,
+    mintTx: mintHash,
+    approveExplorer: fromInfo.explorer + approveHash,
+    burnExplorer: fromInfo.explorer + burnHash,
+    mintExplorer: toInfo.explorer + mintHash,
+  }
 }
 
 async function executeSend(intent, owner) {
@@ -298,6 +557,10 @@ async function runPrompt() {
   }
   if (intent.action === 'send') {
     console.log(JSON.stringify(await executeSend(intent, account.address), null, 2))
+    return
+  }
+  if (intent.action === 'bridge') {
+    console.log(JSON.stringify(await executeBridge(intent, account.address), null, 2))
     return
   }
   if (intent.action === 'create-job') {

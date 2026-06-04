@@ -8,7 +8,7 @@
   "capabilities": [
     "send_usdc_on_arc",
     "plan_swap",
-    "plan_bridge",
+    "bridge_usdc_evm_cctp",
     "create_erc8183_job",
     "submit_erc8183_deliverable",
     "complete_erc8183_job"
