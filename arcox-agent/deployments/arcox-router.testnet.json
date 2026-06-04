@@ -35,6 +35,14 @@
       "domain": 0,
       "usdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
       "tokenMessenger": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA"
+    },
+    "Solana_Devnet": {
+      "address": "C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH",
+      "deployTx": "bFEyV6NhtgWvN18paErxsXwWVwtc1ZsroK4Ljbx1risKDEzv2yXw5PTwu27hQE9pDwo1q6xQHH6tZSgkvjLnLrJ",
+      "chainId": "solana-devnet",
+      "domain": 5,
+      "usdc": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+      "tokenMessenger": "CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe"
     }
   },
   "errors": {}

@@ -65,7 +65,7 @@ Pending:
 
 ```text
 HyperEVM_Testnet: skipped/no native gas
-Solana_Devnet: router skeleton ready, deploy blocked by missing Solana CLI + Anchor CLI
+Solana_Devnet: deployed
 ```
 
 Solana Devnet router structure:
@@ -81,9 +81,10 @@ Current Solana Devnet deploy status:
 
 ```text
 Program ID: C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH
+Deploy signature: bFEyV6NhtgWvN18paErxsXwWVwtc1ZsroK4Ljbx1risKDEzv2yXw5PTwu27hQE9pDwo1q6xQHH6tZSgkvjLnLrJ
 Fee payer: 8BiDjZHWQiGtjuKcZ5mRv5uey9YQsXFsV8uDPseZwyQy
-Required balance: about 2.14 SOL devnet
-Status: build succeeded, deploy blocked because devnet faucet rate-limited and fee payer has 0 SOL
+Remaining fee payer balance: 0.36644652 SOL
+Status: deployed to Solana Devnet
 ```
 
 Link this endpoint in ARCOX DEX `Agent Jobs -> AI Link`:
