@@ -8,9 +8,14 @@
   },
   "scripts": {
     "agent": "node bin/arcox-agent.mjs",
-    "codex-agent": "node bin/arcox-codex-cli.mjs"
+    "codex-agent": "node bin/arcox-codex-cli.mjs",
+    "compile:router": "node scripts/compile-router.mjs",
+    "deploy:router": "node scripts/deploy-router.mjs"
   },
   "dependencies": {
     "viem": "^2.50.4"
+  },
+  "devDependencies": {
+    "solc": "^0.8.35"
   }
 }

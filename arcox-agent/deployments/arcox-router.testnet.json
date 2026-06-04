@@ -1,0 +1,36 @@
+{
+  "deployer": "0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e",
+  "treasury": "0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e",
+  "feeBps": 30,
+  "createdAt": "2026-06-04T07:39:25.211Z",
+  "deployments": {
+    "Arc_Testnet": {
+      "address": "0xDf800310443BEB589CEf91A09854203Ea36e43a7",
+      "deployTx": "0xf98fd8197e45b2acbefdab2b3b3fa15cfb413514dd59db861705cfe29bb88a87",
+      "chainId": 5042002,
+      "domain": 26,
+      "usdc": "0x3600000000000000000000000000000000000000",
+      "tokenMessenger": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA"
+    },
+    "Base_Sepolia": {
+      "address": "0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc",
+      "deployTx": "0xa9b198f7d5564d551161309e631de90e63a1ca7e91aeddd15d7f47d490b4c61b",
+      "chainId": 84532,
+      "domain": 6,
+      "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "tokenMessenger": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA"
+    },
+    "Arbitrum_Sepolia": {
+      "address": "0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7",
+      "deployTx": "0x8df9251be8cf550e8b3027631e85a403258e51c4c061a89d56a42f6badc808e9",
+      "chainId": 421614,
+      "domain": 3,
+      "usdc": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+      "tokenMessenger": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA"
+    }
+  },
+  "errors": {
+    "Ethereum_Sepolia": "insufficient native gas for deployment",
+    "HyperEVM_Testnet": "[HyperEVM_Testnet] no native gas"
+  }
+}

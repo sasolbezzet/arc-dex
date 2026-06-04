@@ -24,5 +24,18 @@
     "signing": "local_private_key_env_only",
     "server_private_key_storage": false,
     "requires_preview_before_yes": true
+  },
+  "router": {
+    "fee_bps": 30,
+    "deployments_file": "./deployments/arcox-router.testnet.json",
+    "deployed": {
+      "Arc_Testnet": "0xDf800310443BEB589CEf91A09854203Ea36e43a7",
+      "Base_Sepolia": "0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc",
+      "Arbitrum_Sepolia": "0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7"
+    },
+    "pending_gas": [
+      "Ethereum_Sepolia",
+      "HyperEVM_Testnet"
+    ]
   }
 }

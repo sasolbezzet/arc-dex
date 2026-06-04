@@ -52,6 +52,7 @@ const arcTestnet = defineChain({
 })
 
 const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) })
+const routerDeployments = loadRouterDeployments()
 
 const cctpChains = {
   Arc_Testnet: {
@@ -139,6 +140,37 @@ const messageTransmitterAbi = [{
   inputs: [{ name: 'message', type: 'bytes' }, { name: 'attestation', type: 'bytes' }],
   outputs: [{ name: 'success', type: 'bool' }],
 }]
+
+const arcoxRouterAbi = [
+  {
+    type: 'function',
+    name: 'bridgeUsdcWithFee',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amount', type: 'uint256' },
+      { name: 'destinationDomain', type: 'uint32' },
+      { name: 'mintRecipient', type: 'bytes32' },
+      { name: 'destinationCaller', type: 'bytes32' },
+      { name: 'maxFee', type: 'uint256' },
+      { name: 'minFinalityThreshold', type: 'uint32' },
+    ],
+    outputs: [{ name: 'fee', type: 'uint256' }, { name: 'netAmount', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'sendTokenWithFee',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'token', type: 'address' }, { name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }],
+    outputs: [{ name: 'fee', type: 'uint256' }, { name: 'netAmount', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'quoteFee',
+    stateMutability: 'view',
+    inputs: [{ name: 'amount', type: 'uint256' }],
+    outputs: [{ name: 'fee', type: 'uint256' }, { name: 'netAmount', type: 'uint256' }],
+  },
+]
 
 const agenticCommerceAbi = [
   {
@@ -249,6 +281,28 @@ function loadLocalEnv() {
     if (process.env[key]) continue
     process.env[key] = rest.join('=').replace(/^['"]|['"]$/g, '')
   }
+}
+
+function loadRouterDeployments() {
+  const path = join(AGENT_HOME, 'deployments', 'arcox-router.testnet.json')
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')).deployments || {}
+  } catch {
+    return {}
+  }
+}
+
+function envRouterName(chainId) {
+  return `ARCOX_ROUTER_${String(chainId).toUpperCase()}`
+}
+
+function routerFor(chainId) {
+  const envValue = process.env[envRouterName(chainId)]
+  if (envValue && /^0x[0-9a-fA-F]{40}$/.test(envValue)) return getAddress(envValue)
+  const deployed = routerDeployments[chainId]?.address
+  if (deployed && /^0x[0-9a-fA-F]{40}$/.test(deployed)) return getAddress(deployed)
+  return ''
 }
 
 function arg(name, fallback = '') {
@@ -460,27 +514,38 @@ async function executeBridge(intent, owner) {
     throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
   }
 
+  const router = routerFor(fromInfo.id)
+  const spender = router || fromInfo.tokenMessenger
+
   console.error(`[bridge] route ${fromInfo.id} -> ${toInfo.id}`)
-  console.error(`[bridge] approve ${intent.amount} USDC`)
+  console.error(`[bridge] approve ${intent.amount} USDC to ${router ? 'ArcoxRouter' : 'CCTP TokenMessenger'}`)
   const approveHash = await writeContractBuffered({
     chainInfo: fromInfo,
     address: fromInfo.usdc,
     abi: erc20Abi,
     functionName: 'approve',
-    args: [fromInfo.tokenMessenger, amount],
+    args: [spender, amount],
   })
   await sourceClient.waitForTransactionReceipt({ hash: approveHash })
 
-  console.error(`[bridge] burn ${intent.amount} USDC`)
+  console.error(`[bridge] burn ${intent.amount} USDC ${router ? 'via ArcoxRouter fee route' : 'direct CCTP fallback'}`)
   const maxFee = 10n
   const minFinalityThreshold = 1000
-  const burnHash = await writeContractBuffered({
-    chainInfo: fromInfo,
-    address: fromInfo.tokenMessenger,
-    abi: tokenMessengerAbi,
-    functionName: 'depositForBurn',
-    args: [amount, toInfo.domain, bytes32Address(owner), fromInfo.usdc, `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
-  })
+  const burnHash = router
+    ? await writeContractBuffered({
+      chainInfo: fromInfo,
+      address: router,
+      abi: arcoxRouterAbi,
+      functionName: 'bridgeUsdcWithFee',
+      args: [amount, toInfo.domain, bytes32Address(owner), `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
+    })
+    : await writeContractBuffered({
+      chainInfo: fromInfo,
+      address: fromInfo.tokenMessenger,
+      abi: tokenMessengerAbi,
+      functionName: 'depositForBurn',
+      args: [amount, toInfo.domain, bytes32Address(owner), fromInfo.usdc, `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
+    })
   await sourceClient.waitForTransactionReceipt({ hash: burnHash })
 
   console.error(`[bridge] wait attestation from Circle Iris`)
@@ -499,6 +564,8 @@ async function executeBridge(intent, owner) {
   return {
     status: 'submitted',
     action: 'bridge',
+    route: router ? 'arcox-router' : 'direct-cctp-fallback',
+    router: router || null,
     from: fromInfo.id,
     to: toInfo.id,
     owner,
@@ -517,22 +584,39 @@ async function executeSend(intent, owner) {
   if (!intent.amount || !intent.to) throw new Error('Send command needs amount and recipient address, example: send 1 USDC to 0x...')
   const token = ARC_TOKENS[intent.token]
   if (!token) throw new Error(`Unsupported Arc token: ${intent.token}`)
-  const { walletClient } = wallet()
   const value = parseUnits(intent.amount, token.decimals)
-  const hash = await walletClient.writeContract({
-    address: token.address,
-    abi: erc20Abi,
-    functionName: 'transfer',
-    args: [intent.to, value],
-  })
+  const router = routerFor('Arc_Testnet')
+  const { walletClient } = wallet()
+  let approveTx = ''
+  let hash
+  if (router) {
+    approveTx = await walletClient.writeContract({ address: token.address, abi: erc20Abi, functionName: 'approve', args: [router, value] })
+    await publicClient.waitForTransactionReceipt({ hash: approveTx })
+    hash = await walletClient.writeContract({
+      address: router,
+      abi: arcoxRouterAbi,
+      functionName: 'sendTokenWithFee',
+      args: [token.address, intent.to, value],
+    })
+  } else {
+    hash = await walletClient.writeContract({
+      address: token.address,
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [intent.to, value],
+    })
+  }
   await publicClient.waitForTransactionReceipt({ hash })
   return {
     status: 'submitted',
     action: 'send',
+    route: router ? 'arcox-router' : 'direct-token-transfer',
+    router: router || null,
     from: owner,
     to: intent.to,
     amount: intent.amount,
     token: intent.token,
+    approveTx: approveTx || undefined,
     tx: hash,
     explorer: EXPLORER_TX + hash,
   }
