@@ -12,7 +12,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const [tokenIn, setTokenIn] = useState('USDC')
   const [tokenOut, setTokenOut] = useState('EURC')
   const [amountIn, setAmountIn] = useState('')
-  const [quote, setQuote] = useState<{amountOut:string;fee:string;rate:number}|null>(null)
+  const [quote, setQuote] = useState<{amountOut:string;fee:string;rate:number;platformFee?:{amount:string;token:string;swapAmountIn:string;bps:number}}|null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<Status|null>(null)
@@ -29,6 +29,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       if (d.available === false) {
         setQuote(null)
         setStatus({ type:'warning', msg:d.error || t('swap.routeUnavailable') })
+        setQuoteLoading(false)
         return
       }
       if (d.amountOut) {
@@ -62,7 +63,8 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
           setStatus({ type:'warning', msg:d.error || t('swap.routeUnavailable') })
           return
         }
-        setStatus({ type:'success', msg:`✓ ${d.result?.amountIn} ${d.result?.tokenIn} → ${d.result?.amountOut} ${d.result?.tokenOut}`, link:d.result?.explorerUrl })
+        const feeText = d.result?.platformFee?.amount ? ` • fee ${d.result.platformFee.amount} ${d.result.platformFee.token}` : ''
+        setStatus({ type:'success', msg:`✓ ${d.result?.amountIn} ${d.result?.tokenIn} → ${d.result?.amountOut} ${d.result?.tokenOut}${feeText}`, link:d.result?.explorerUrl })
       }
       setAmountIn(''); setQuote(null)
       setTimeout(onRefresh,3000); setTimeout(onRefresh,8000)
@@ -104,6 +106,8 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       </div>
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Testnet</span></div>
+        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span>{quote?.platformFee ? `${quote.platformFee.amount} ${quote.platformFee.token}` : '-'}</span></div>}
+        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Swap input</span><span>{quote?.platformFee ? `${quote.platformFee.swapAmountIn} ${tokenIn}` : '-'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.fee')}</span><span>{quote?quote.fee+' USDC':'-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.rate')}</span><span>{quote?`1 ${tokenIn} = ${quote.rate} ${tokenOut}`:'-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.source')}</span><span>{walletLabel}</span></div>

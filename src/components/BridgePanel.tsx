@@ -5,6 +5,7 @@ import { txHistory } from '../txHistory'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 import { useI18n } from '../i18n'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
+import { encodeFunctionData } from 'viem'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -30,6 +31,25 @@ const CCTP_SRC: Record<string,{tokenMessenger:string;usdc:string;cirbtc?:string;
   HyperEVM_Testnet: { tokenMessenger:'0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', usdc:'0x2B3370eE501B4a559b57D449569354196457D8Ab', domain:19 },
 }
 const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, HyperEVM_Testnet:19, Solana_Devnet:5 }
+const ARCOX_ROUTER: Record<string,string> = {
+  Arc_Testnet: '0xDf800310443BEB589CEf91A09854203Ea36e43a7',
+  Base_Sepolia: '0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc',
+  Arbitrum_Sepolia: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7',
+}
+const ARCOX_ROUTER_ABI = [{
+  type: 'function',
+  name: 'bridgeUsdcWithFee',
+  stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'amount', type: 'uint256' },
+    { name: 'destinationDomain', type: 'uint32' },
+    { name: 'mintRecipient', type: 'bytes32' },
+    { name: 'destinationCaller', type: 'bytes32' },
+    { name: 'maxFee', type: 'uint256' },
+    { name: 'minFinalityThreshold', type: 'uint32' },
+  ],
+  outputs: [{ name: 'fee', type: 'uint256' }, { name: 'netAmount', type: 'uint256' }],
+}] as const
 
 // Solana CCTP burn config
 const SOLANA_CCTP = {
@@ -89,8 +109,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const customFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const cctpFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const forwardingFee = isFromSolana || isToSolana ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
+  const routerFee = token === 'USDC' && !isFromSolana && !isToSolana && ARCOX_ROUTER[fromChain] ? (amount ? (parseFloat(amount)*0.003).toFixed(6) : '-') : '-'
   const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
-  const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
+  const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)-parseFloat(routerFee==='-'?'0':routerFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
 
   // ── Solana wallet connect ──
   const connectSolana = async (): Promise<{address:string;provider:any}|null> => {
@@ -156,6 +177,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     let historyId: string|null = null
     const srcInfo = CCTP_SRC[fromChain]
     const burnToken = token === 'cirBTC' && srcInfo?.cirbtc ? srcInfo.cirbtc : srcInfo?.usdc || ''
+    const routerAddr = token === 'USDC' && !isFromSolana && !isToSolana ? ARCOX_ROUTER[fromChain] : ''
 
     if (source === 'circle' && fromChain !== 'Arc_Testnet') {
       throw new Error('Circle Wallet hanya tersedia untuk source Arc Testnet.')
@@ -209,8 +231,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     // Approve
     setStep(`MetaMask: Approve ${token} (1/2)...`)
-    setStatus({ type:'info', msg:`⏳ MetaMask popup 1/2: Approve ${token}...`, steps:[...localSteps] })
-    const approveTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0x095ea7b3'+encAddr(srcInfo.tokenMessenger)+enc256(amtMicro) })
+    setStatus({ type:'info', msg:`⏳ MetaMask popup 1/2: Approve ${token}${routerAddr ? ' ke ArcoxRouter' : ''}...`, steps:[...localSteps] })
+    const approveSpender = routerAddr || srcInfo.tokenMessenger
+    const approveTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0x095ea7b3'+encAddr(approveSpender)+enc256(amtMicro) })
     localSteps.push({ name:'approve', state:'pending', txHash:approveTx })
     setStatus({ type:'info', msg:'⏳ Menunggu approve...', steps:[...localSteps] })
     await waitEvmTx(approveTx)
@@ -223,7 +246,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     let burnData: string
     const maxFeeMicro = 10n
-    if (isToSolana && sw) {
+    if (routerAddr) {
+      burnData = encodeFunctionData({
+        abi: ARCOX_ROUTER_ABI,
+        functionName: 'bridgeUsdcWithFee',
+        args: [amtMicro, Number(dstDomain), `0x${encAddr(address)}`, `0x${'0'.repeat(64)}`, maxFeeMicro, Number(CCTP_FAST_FINALITY_THRESHOLD)],
+      })
+    } else if (isToSolana && sw) {
       // CCTP v2 Solana requires the destination USDC token account, not the wallet address.
       const { PublicKey } = await import('@solana/web3.js')
       const { getAssociatedTokenAddress } = await import('@solana/spl-token')
@@ -236,7 +265,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       burnData = '0x8e0250ee'+enc256(amtMicro)+enc256(BigInt(dstDomain))+encAddr(address)+encAddr(burnToken)+enc256(0n)+enc256(maxFeeMicro)+enc256(CCTP_FAST_FINALITY_THRESHOLD)
     }
 
-    const burnTx = await sendEvmTxBuffered({ from:address, to:srcInfo.tokenMessenger, data:burnData })
+    const burnTx = await sendEvmTxBuffered({ from:address, to:routerAddr || srcInfo.tokenMessenger, data:burnData })
     localSteps.push({ name:'burn', state:'pending', txHash:burnTx })
     setStatus({ type:'info', msg:'⏳ Menunggu burn...', steps:[...localSteps] })
     await waitEvmTx(burnTx)
@@ -255,7 +284,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       burnExplorerUrl: explorerFor(fromChain, burnTx),
       srcDomain: srcInfo.domain,
       dstDomain: dstDomain,
-      note: 'Burn complete. Mint/receive step pending.',
+      note: routerAddr ? 'Burn via ArcoxRouter complete. Platform fee collected. Mint/receive step pending.' : 'Burn complete. Mint/receive step pending.',
     })
 
     // Attestation + Mint
