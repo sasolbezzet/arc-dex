@@ -91,9 +91,13 @@ async function deployOne(name, cfg) {
   return { address, deployTx: hash, chainId: cfg.chain.id, domain: cfg.domain, usdc: cfg.usdc, tokenMessenger: TOKEN_MESSENGER }
 }
 
+const outDir = join(root, 'deployments')
+mkdirSync(outDir, { recursive: true })
+const outPath = join(outDir, 'arcox-router.testnet.json')
+const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : {}
 const selected = (process.env.DEPLOY_CHAINS || Object.keys(chains).join(',')).split(',').map(item => item.trim()).filter(Boolean)
-const deployments = {}
-const errors = {}
+const deployments = { ...(previous.deployments || {}) }
+const errors = { ...(previous.errors || {}) }
 for (const name of selected) {
   const cfg = chains[name]
   if (!cfg) {
@@ -102,15 +106,13 @@ for (const name of selected) {
   }
   try {
     deployments[name] = await deployOne(name, cfg)
+    delete errors[name]
   } catch (error) {
     errors[name] = summarizeError(error.message)
     console.error(`[${name}] ERROR ${error.message}`)
   }
 }
 
-const outDir = join(root, 'deployments')
-mkdirSync(outDir, { recursive: true })
-const outPath = join(outDir, 'arcox-router.testnet.json')
 writeFileSync(outPath, JSON.stringify({
   deployer: account.address,
   treasury,
