@@ -75,7 +75,16 @@ cd /home/ubuntu/arc-dex/arcox-agent
 npm run deploy:solana-router
 ```
 
-Current blocker: this machine does not have Solana CLI or Anchor CLI installed. The skeleton lives in `solana-router/`.
+The router source lives in `solana-router/`. Solana CLI and Anchor CLI were installed locally for deployment.
+
+Current Solana Devnet deploy status:
+
+```text
+Program ID: C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH
+Fee payer: 8BiDjZHWQiGtjuKcZ5mRv5uey9YQsXFsV8uDPseZwyQy
+Required balance: about 2.14 SOL devnet
+Status: build succeeded, deploy blocked because devnet faucet rate-limited and fee payer has 0 SOL
+```
 
 Link this endpoint in ARCOX DEX `Agent Jobs -> AI Link`:
 

@@ -137,9 +137,9 @@ export const chainSupport = {
   HyperEVM_Testnet: { bridge: true, router: null, circleWallet: false },
   Solana_Devnet: {
     bridge: true,
-    router: null,
+    router: 'C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH',
     circleWallet: false,
-    note: 'User must use Solana Devnet wallet. Solana router skeleton exists, but deploy is blocked until Solana CLI and Anchor CLI are installed.',
+    note: 'User must use Solana Devnet wallet. Router program builds, but deployment is blocked until fee payer 8BiDjZHWQiGtjuKcZ5mRv5uey9YQsXFsV8uDPseZwyQy receives about 2.14 devnet SOL.',
   },
 }
 

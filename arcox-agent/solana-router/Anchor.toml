@@ -6,7 +6,7 @@ seeds = false
 skip-lint = false
 
 [programs.devnet]
-arcox_solana_router = "ArcoxRouter1111111111111111111111111111111111"
+arcox_solana_router = "C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH"
 
 [provider]
 cluster = "devnet"

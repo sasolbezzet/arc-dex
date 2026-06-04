@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from 'fs'
+import { copyFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
 import { dirname } from 'path'
@@ -41,8 +41,13 @@ const cluster = process.env.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com'
 console.log(`[solana-router] cluster=${cluster}`)
 spawnSync('solana', ['config', 'set', '--url', cluster, '--keypair', keypairPath], { stdio: 'inherit' })
 
-const build = spawnSync('anchor', ['build'], { cwd: routerDir, stdio: 'inherit' })
+const build = spawnSync('anchor', ['build', '--arch', 'sbf'], { cwd: routerDir, stdio: 'inherit' })
 if (build.status !== 0) process.exit(build.status || 1)
+
+const builtSo = join(routerDir, 'programs', 'arcox-solana-router', 'target', 'sbpf-solana-solana', 'release', 'arcox_solana_router.so')
+const deploySo = join(routerDir, 'target', 'deploy', 'arcox_solana_router.so')
+if (existsSync(builtSo)) copyFileSync(builtSo, deploySo)
+if (!existsSync(deploySo)) fail(`Missing deploy artifact: ${deploySo}`)
 
 const deploy = spawnSync('anchor', ['deploy'], { cwd: routerDir, stdio: 'inherit' })
 if (deploy.status !== 0) process.exit(deploy.status || 1)

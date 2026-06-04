@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("ArcoxRouter1111111111111111111111111111111111");
+declare_id!("C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH");
 
 #[program]
 pub mod arcox_solana_router {

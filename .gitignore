@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 .env
 .vercel
+arcox-agent/solana-router/target/
+arcox-agent/solana-router/programs/*/target/
