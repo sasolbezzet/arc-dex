@@ -11,7 +11,8 @@
     "codex-agent": "node bin/arcox-codex-cli.mjs",
     "mcp": "node mcp/server.mjs",
     "compile:router": "node scripts/compile-router.mjs",
-    "deploy:router": "node scripts/deploy-router.mjs"
+    "deploy:router": "node scripts/deploy-router.mjs",
+    "deploy:solana-router": "node scripts/deploy-solana-router.mjs"
   },
   "dependencies": {
     "viem": "^2.50.4"

@@ -32,7 +32,8 @@ const ARC_USDC = '0x3600000000000000000000000000000000000000'
 const TOKEN_MESSENGER_V2_EVM = '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA'
 const MESSAGE_TRANSMITTER_V2_EVM = '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275'
 const IRIS = 'https://iris-api-sandbox.circle.com'
-const ARCOX_API_URL = process.env.ARCOX_API_URL || 'https://arc-dex-bice.vercel.app'
+const ARCOX_WEB_URL = process.env.ARCOX_WEB_URL || process.env.ARCOX_API_URL || 'https://arc-dex-bice.vercel.app'
+const ARCOX_BACKEND_URL = process.env.ARCOX_BACKEND_URL || 'https://43.163.98.128.nip.io'
 const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired']
@@ -348,11 +349,13 @@ function metadataFor(owner) {
     local_agent_id: localAgentId(owner),
     arc_agent_id: process.env.ARC_AGENT_ID || process.env.AGENT_ID || '',
     endpoint: `http://127.0.0.1:${process.env.AGENT_PORT || '8787'}/agent`,
-    arcox_api_url: ARCOX_API_URL,
+    arcox_web_url: ARCOX_WEB_URL,
+    arcox_backend_url: ARCOX_BACKEND_URL,
     capabilities: [
       'send_usdc_on_arc',
-      'plan_swap',
+      'swap_circle_wallet_on_arc',
       'bridge_usdc_evm_cctp',
+      'retry_bridge_mint',
       'create_erc8183_job',
       'submit_erc8183_deliverable',
       'complete_erc8183_job',
@@ -419,6 +422,37 @@ function classifyPrompt(prompt) {
   if (lower.includes('create job') || lower.includes('buat job')) return { action: 'create-job', amount, token, provider: arg('provider') || to, evaluator: arg('evaluator') || to }
   if (lower.includes('accept job') || lower.includes('terima job')) return { action: 'accept-job', jobId: arg('job-id') || (text.match(/\bjob\s*#?(\d+)/i)?.[1] || '') }
   return { action: 'plan', amount, token }
+}
+
+function authMessage(address, issuedAt) {
+  return [
+    'ARCOX DEX login',
+    'Only sign this message on the official ARCOX DEX website.',
+    `Address: ${getAddress(address)}`,
+    `Issued At: ${issuedAt}`,
+    'Network: Arc Testnet',
+  ].join('\n')
+}
+
+async function postJson(path, body, token = '') {
+  const response = await fetch(`${ARCOX_BACKEND_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+async function backendSession(account) {
+  const issuedAt = new Date().toISOString()
+  const signature = await account.signMessage({ message: authMessage(account.address, issuedAt) })
+  const session = await postJson('/api/auth/session', { address: account.address, issuedAt, signature })
+  return session.token
 }
 
 function bytes32Address(address) {
@@ -658,6 +692,41 @@ async function executeSend(intent, owner) {
   }
 }
 
+async function executeSwap(intent, owner) {
+  const tokenIn = intent.tokenIn || 'USDC'
+  const tokenOut = intent.tokenOut || ''
+  if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Swap command needs amount, example: swap 10 USDC to EURC')
+  if (!ARC_TOKENS[tokenIn]) throw new Error(`Unsupported swap input token: ${tokenIn}`)
+  if (!ARC_TOKENS[tokenOut]) throw new Error('Swap command needs output token, example: swap 10 USDC to EURC')
+  if (tokenIn === tokenOut) throw new Error('Swap input and output token must be different.')
+
+  const account = privateKeyToAccount(privateKey())
+  const token = await backendSession(account)
+  const walletData = await postJson('/api/wallet', { metamaskAddress: owner }, token)
+  const quote = await postJson('/api/quote', { metamaskAddress: owner, tokenIn, tokenOut, amountIn: intent.amount }, token)
+  if (quote.available === false) {
+    return {
+      status: 'route_unavailable',
+      action: 'swap',
+      source: 'circle-wallet-proxy',
+      owner,
+      wallet: walletData.wallet,
+      quote,
+    }
+  }
+  const swap = await postJson('/api/swap', { metamaskAddress: owner, tokenIn, tokenOut, amountIn: intent.amount }, token)
+  return {
+    status: 'submitted',
+    action: 'swap',
+    source: 'circle-wallet-proxy',
+    owner,
+    wallet: walletData.wallet,
+    quote,
+    result: swap.result,
+    note: 'Circle wallet swap is executed by backend proxy wallet after local agent signs ARCOX login message.',
+  }
+}
+
 async function runPrompt() {
   const prompt = arg('prompt')
   if (!prompt) throw new Error('Missing --prompt')
@@ -685,6 +754,10 @@ async function runPrompt() {
   }
   if (intent.action === 'retry-bridge') {
     console.log(JSON.stringify(await retryBridgeMint(intent, account.address), null, 2))
+    return
+  }
+  if (intent.action === 'swap') {
+    console.log(JSON.stringify(await executeSwap(intent, account.address), null, 2))
     return
   }
   if (intent.action === 'create-job') {
@@ -850,6 +923,8 @@ AGENT_NAME=ARCOX Codex Retail Agent
 AGENT_PORT=8787
 ARC_RPC=https://rpc.testnet.arc.network/
 ARCOX_API_URL=https://arc-dex-bice.vercel.app
+ARCOX_WEB_URL=https://arc-dex-bice.vercel.app
+ARCOX_BACKEND_URL=https://43.163.98.128.nip.io
 
 # Optional: set after onchain register returns an Arc ERC-8004 token id.
 ARC_AGENT_ID=
@@ -870,7 +945,8 @@ ARC_AGENT_ID=
       localAgentId: metadata.local_agent_id,
       arcAgentId: metadata.arc_agent_id || null,
       endpoint: metadata.endpoint,
-      ui: `${ARCOX_API_URL}/`,
+      ui: `${ARCOX_WEB_URL}/`,
+      backend: ARCOX_BACKEND_URL,
       instructions: [
         'Run: npm run agent -- serve --port 8787',
         'Open ARCOX DEX Agent Jobs -> AI Link.',

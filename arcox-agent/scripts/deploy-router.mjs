@@ -95,7 +95,8 @@ const outDir = join(root, 'deployments')
 mkdirSync(outDir, { recursive: true })
 const outPath = join(outDir, 'arcox-router.testnet.json')
 const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : {}
-const selected = (process.env.DEPLOY_CHAINS || Object.keys(chains).join(',')).split(',').map(item => item.trim()).filter(Boolean)
+const defaultDeployChains = ['Arc_Testnet', 'Ethereum_Sepolia', 'Base_Sepolia', 'Arbitrum_Sepolia']
+const selected = (process.env.DEPLOY_CHAINS || defaultDeployChains.join(',')).split(',').map(item => item.trim()).filter(Boolean)
 const deployments = { ...(previous.deployments || {}) }
 const errors = { ...(previous.errors || {}) }
 for (const name of selected) {

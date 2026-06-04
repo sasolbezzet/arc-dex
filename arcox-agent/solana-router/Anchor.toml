@@ -1,0 +1,16 @@
+[toolchain]
+anchor_version = "0.31.1"
+
+[features]
+seeds = false
+skip-lint = false
+
+[programs.devnet]
+arcox_solana_router = "ArcoxRouter1111111111111111111111111111111111"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test"

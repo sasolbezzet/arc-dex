@@ -56,16 +56,26 @@ Current router deployments:
 
 ```text
 Arc_Testnet: 0xDf800310443BEB589CEf91A09854203Ea36e43a7
+Ethereum_Sepolia: 0x53aB114FeE64b177B8D6066056DfD03Ea38D0ef1
 Base_Sepolia: 0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc
 Arbitrum_Sepolia: 0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7
 ```
 
-Pending gas top-up:
+Pending:
 
 ```text
-Ethereum_Sepolia
-HyperEVM_Testnet
+HyperEVM_Testnet: skipped/no native gas
+Solana_Devnet: router skeleton ready, deploy blocked by missing Solana CLI + Anchor CLI
 ```
+
+Solana Devnet router structure:
+
+```bash
+cd /home/ubuntu/arc-dex/arcox-agent
+npm run deploy:solana-router
+```
+
+Current blocker: this machine does not have Solana CLI or Anchor CLI installed. The skeleton lives in `solana-router/`.
 
 Link this endpoint in ARCOX DEX `Agent Jobs -> AI Link`:
 

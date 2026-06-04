@@ -33,6 +33,7 @@ const CCTP_SRC: Record<string,{tokenMessenger:string;usdc:string;cirbtc?:string;
 const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, HyperEVM_Testnet:19, Solana_Devnet:5 }
 const ARCOX_ROUTER: Record<string,string> = {
   Arc_Testnet: '0xDf800310443BEB589CEf91A09854203Ea36e43a7',
+  Ethereum_Sepolia: '0x53aB114FeE64b177B8D6066056DfD03Ea38D0ef1',
   Base_Sepolia: '0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc',
   Arbitrum_Sepolia: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7',
 }
@@ -110,6 +111,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const cctpFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const forwardingFee = isFromSolana || isToSolana ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
   const routerFee = token === 'USDC' && !isFromSolana && !isToSolana && ARCOX_ROUTER[fromChain] ? (amount ? (parseFloat(amount)*0.003).toFixed(6) : '-') : '-'
+  const platformFeeLabel = routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
   const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
   const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)-parseFloat(routerFee==='-'?'0':routerFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
 
@@ -1024,6 +1026,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{totalDebit} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{customFee} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{cctpFee} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.forwardingFee')}</span><span>{forwardingFee} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:'#10b981'}}>{est} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
