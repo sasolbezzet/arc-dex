@@ -74,3 +74,14 @@ http://127.0.0.1:8787/agent
 ```
 
 Do not put private keys in the frontend root. Keep `AGENT_PRIVATE_KEY` only in this agent directory's `.env`.
+
+## MCP context server
+
+Skeleton MCP server for Codex/Hermes agent context:
+
+```bash
+cd /home/ubuntu/arc-dex/arcox-agent
+npm run mcp
+```
+
+It exposes ARCOX Web UI pages, actions, chain support, router deployments, and retail safety rules. See `mcp/README.md`.

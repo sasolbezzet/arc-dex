@@ -9,6 +9,7 @@
   "scripts": {
     "agent": "node bin/arcox-agent.mjs",
     "codex-agent": "node bin/arcox-codex-cli.mjs",
+    "mcp": "node mcp/server.mjs",
     "compile:router": "node scripts/compile-router.mjs",
     "deploy:router": "node scripts/deploy-router.mjs"
   },
