@@ -15,6 +15,7 @@ Natural-language commands:
   npm run codex-agent -- "send 1 USDC to 0x..." --yes
   npm run codex-agent -- "swap 10 USDC to EURC"
   npm run codex-agent -- "bridge 5 USDC from Arbitrum Sepolia to Arc"
+  npm run codex-agent -- "retry bridge 0xBURN_TX from Arc to Arbitrum Sepolia" --yes
   npm run codex-agent -- "create job audit app for 1 USDC" --yes
 
 Connection commands:
@@ -28,6 +29,7 @@ Direct ARCOX agent commands:
   npm run codex-agent -- register --metadata-uri ipfs://...
   npm run codex-agent -- read-agent --agent-id 1
   npm run codex-agent -- read-job --job-id 1
+  npm run codex-agent -- retry-bridge --burn-tx 0x... --from-chain Arc_Testnet --to-chain Arbitrum_Sepolia
   npm run codex-agent -- submit --job-id 1 --deliverable "proof"
   npm run codex-agent -- complete --job-id 1 --reason "approved"
 `)
@@ -62,6 +64,7 @@ const passthrough = new Set([
   'read-agent',
   'create-job',
   'read-job',
+  'retry-bridge',
   'set-budget',
   'fund',
   'submit',

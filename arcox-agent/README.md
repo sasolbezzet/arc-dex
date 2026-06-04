@@ -38,6 +38,18 @@ npm run codex-agent -- "bridge 1 USDC from Arc to Arbitrum Sepolia" --yes
 
 Supported CLI bridge routes: Arc Testnet, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, HyperEVM Testnet. Solana bridge remains a web-wallet flow.
 
+Retry pending bridge mint:
+
+```bash
+npm run codex-agent -- retry-bridge --burn-tx 0xBURN_TX --from-chain Arc_Testnet --to-chain Arbitrum_Sepolia
+```
+
+Or with natural prompt:
+
+```bash
+npm run codex-agent -- "retry bridge 0xBURN_TX from Arc to Arbitrum Sepolia" --yes
+```
+
 When a router exists in `deployments/arcox-router.testnet.json`, `send` and `bridge` use `ArcoxRouter` so platform fees are enforced onchain. If a source chain has no router deployment, bridge falls back to direct CCTP and prints `direct-cctp-fallback`.
 
 Current router deployments:

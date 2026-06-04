@@ -242,6 +242,7 @@ Usage:
   npm run agent -- connect
   npm run agent -- run --prompt "send 1 USDC to 0x..." --yes
   npm run agent -- run --prompt "bridge 5 USDC from Arbitrum Sepolia to Arc"
+  npm run agent -- run --prompt "retry bridge 0xBURN_TX from Arc to Arbitrum Sepolia" --yes
   npm run agent -- run --prompt "swap 10 USDC to EURC"
   npm run agent -- serve --port 8787
   npm run agent -- ask --prompt "Create escrow job for 1 USDC"
@@ -250,6 +251,7 @@ Usage:
   npm run agent -- read-agent --agent-id 1
   npm run agent -- create-job --provider 0x... --evaluator 0x... --description "..." --hours 24
   npm run agent -- read-job --job-id 1
+  npm run agent -- retry-bridge --burn-tx 0x... --from-chain Arc_Testnet --to-chain Arbitrum_Sepolia
   npm run agent -- set-budget --job-id 1 --amount 1
   npm run agent -- fund --job-id 1 --amount 1
   npm run agent -- submit --job-id 1 --deliverable "proof text"
@@ -412,6 +414,7 @@ function classifyPrompt(prompt) {
     const tokenOut = (text.match(/\bto\s+(USDC|EURC|USYC|cirBTC)\b/i)?.[1] || '').toUpperCase()
     return { action: 'swap', amount, tokenIn: token, tokenOut: tokenOut === 'CIRBTC' ? 'CIRBTC' : tokenOut }
   }
+  if (lower.includes('retry') && lower.includes('bridge')) return { action: 'retry-bridge', burnTx: text.match(/0x[a-fA-F0-9]{64}/)?.[0] || '', ...extractBridgeRoute(text) }
   if (lower.includes('bridge')) return { action: 'bridge', amount, token, to, ...extractBridgeRoute(text) }
   if (lower.includes('create job') || lower.includes('buat job')) return { action: 'create-job', amount, token, provider: arg('provider') || to, evaluator: arg('evaluator') || to }
   if (lower.includes('accept job') || lower.includes('terima job')) return { action: 'accept-job', jobId: arg('job-id') || (text.match(/\bjob\s*#?(\d+)/i)?.[1] || '') }
@@ -580,6 +583,39 @@ async function executeBridge(intent, owner) {
   }
 }
 
+async function retryBridgeMint({ burnTx, fromChain, toChain }, owner) {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(burnTx || '')) throw new Error('Missing valid --burn-tx 0x...')
+  const fromInfo = cctpChains[fromChain]
+  const toInfo = cctpChains[toChain]
+  if (!fromInfo || !toInfo) throw new Error('Unsupported retry route. Use Arc, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, or HyperEVM Testnet.')
+  if (fromInfo.id === toInfo.id) throw new Error('Retry source and destination must be different.')
+
+  const destinationClient = clientFor(toInfo)
+  console.error(`[retry-bridge] poll attestation for ${burnTx}`)
+  const attestation = await pollAttestation(fromInfo.domain, burnTx, fromInfo)
+
+  console.error(`[retry-bridge] mint on ${toInfo.id}`)
+  const mintHash = await writeContractBuffered({
+    chainInfo: toInfo,
+    address: toInfo.messageTransmitter,
+    abi: messageTransmitterAbi,
+    functionName: 'receiveMessage',
+    args: [attestation.message, attestation.attestation],
+  })
+  await destinationClient.waitForTransactionReceipt({ hash: mintHash })
+
+  return {
+    status: 'submitted',
+    action: 'retry-bridge',
+    owner,
+    from: fromInfo.id,
+    to: toInfo.id,
+    burnTx,
+    mintTx: mintHash,
+    mintExplorer: toInfo.explorer + mintHash,
+  }
+}
+
 async function executeSend(intent, owner) {
   if (!intent.amount || !intent.to) throw new Error('Send command needs amount and recipient address, example: send 1 USDC to 0x...')
   const token = ARC_TOKENS[intent.token]
@@ -645,6 +681,10 @@ async function runPrompt() {
   }
   if (intent.action === 'bridge') {
     console.log(JSON.stringify(await executeBridge(intent, account.address), null, 2))
+    return
+  }
+  if (intent.action === 'retry-bridge') {
+    console.log(JSON.stringify(await retryBridgeMint(intent, account.address), null, 2))
     return
   }
   if (intent.action === 'create-job') {
@@ -884,6 +924,13 @@ ARC_AGENT_ID=
   }
   if (cmd === 'read-job') {
     console.log(JSON.stringify(await readJob(arg('job-id')), null, 2))
+    return
+  }
+  if (cmd === 'retry-bridge') {
+    const { account } = wallet()
+    const fromChain = normalizeChainName(arg('from-chain')) || arg('from-chain')
+    const toChain = normalizeChainName(arg('to-chain')) || arg('to-chain')
+    console.log(JSON.stringify(await retryBridgeMint({ burnTx: arg('burn-tx'), fromChain, toChain }, account.address), null, 2))
     return
   }
   if (cmd === 'set-budget') {
