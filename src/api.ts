@@ -13,7 +13,8 @@ export async function safePost(baseUrl: string, path: string, body: object): Pro
   })
   const text = await resp.text()
   if (!resp.ok) {
-    if (!text.trim().startsWith('<')) {
+    const preview = sanitizePreview(text, resp.status)
+    if (!preview.startsWith('HTML ')) {
       try {
         const data = JSON.parse(text)
         if (data?.error) throw new Error(data.error)
@@ -21,7 +22,6 @@ export async function safePost(baseUrl: string, path: string, body: object): Pro
         if (e instanceof Error && e.message !== 'Unexpected end of JSON input') throw e
       }
     }
-    const preview = text.trim().startsWith('<') ? `HTML ${resp.status} page (endpoint missing or server error)` : text.slice(0, 200)
     throw new Error(`Server ${resp.status} on ${path}: ${preview}`)
   }
   try {
@@ -29,4 +29,12 @@ export async function safePost(baseUrl: string, path: string, body: object): Pro
   } catch {
     throw new Error(`Invalid JSON from ${path} (HTTP ${resp.status}): ${text.slice(0, 200)}`)
   }
+}
+
+function sanitizePreview(text: string, status: number): string {
+  const trimmed = text.replace(/^\uFEFF/, '').trim()
+  if (trimmed.startsWith('<') || trimmed.startsWith('<!')) {
+    return `HTML ${status} response (endpoint unavailable)`
+  }
+  return trimmed.slice(0, 200).replace(/[<>]/g, '')
 }

@@ -1,6 +1,6 @@
 # ARCOX MCP Server
 
-Purpose: give Codex/Hermes agents a structured view of ARCOX DEX Web UI, supported actions, chain routes, signing rules, and retry-bridge behavior.
+Purpose: give Codex/Hermes agents a structured view of ARCOX DEX and execute supported retail actions through MCP tools. Agents should call these MCP tools directly instead of searching the repository or running `npm run codex-agent`.
 
 Run locally:
 
@@ -34,15 +34,25 @@ Initial resources:
 - `arcox://rules/retail-safety`
 - `arcox://deployments/router`
 
-Initial tools:
+Tools:
 
 - `arcox_ui_map`: returns the full static UI/action registry.
 - `arcox_action_plan`: maps a user intent into an ARCOX action plan and missing slots.
 - `arcox_route_status`: checks chain/source/token support and router-fee applicability.
+- `arcox_agent_status`: returns the local signer address and Arc balances.
+- `arcox_quote_bridge`: quotes a USDC bridge route, platform fee, and estimated receive amount.
+- `arcox_execute_bridge`: executes a confirmed USDC bridge. Without `confirmed: true`, it returns a quote only.
+- `arcox_retry_bridge`: retries CCTP mint for a pending bridge burn. Without `confirmed: true`, it returns a preview only.
+- `arcox_quote_send`: quotes an Arc token send and platform fee.
+- `arcox_execute_send`: executes a confirmed Arc token send. Without `confirmed: true`, it returns a quote only.
+- `arcox_quote_swap`: quotes a Circle proxy wallet swap through the ARCOX backend.
+- `arcox_execute_swap`: executes a confirmed Circle proxy wallet swap. Without `confirmed: true`, it returns a quote only.
+- `arcox_agent_job`: plans and executes Agentic Economy operations: register agent, create/read job, set budget, fund, submit, and complete.
 
-Next build phase:
+Execution safety:
 
-- Add optional browser snapshot tool for live DOM/screenshot inspection.
-- Add authenticated read-only session status endpoint from Web UI.
-- Add per-page selectors for precise UI automation.
-- Keep value-moving actions behind user confirmation and wallet signature.
+- Value-moving tools must be called first as quote/preview.
+- Execute tools only submit transactions when `confirmed: true`.
+- EOA execution uses the local `AGENT_PRIVATE_KEY` in `arcox-agent/.env`.
+- Circle proxy wallet swap uses the ARCOX backend auth session signed by the local agent key.
+- Browser-wallet signing from the Web UI remains separate from terminal/MCP execution.

@@ -5,7 +5,7 @@ import { txHistory } from '../txHistory'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 import { useI18n } from '../i18n'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
-import { encodeFunctionData } from 'viem'
+import { encodeFunctionData, parseUnits } from 'viem'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -61,6 +61,8 @@ const SOLANA_CCTP = {
 }
 const SOLANA_MINT_CLIENT_VERSION = 'cctp-v2-solana-mint-20260601-09'
 const CCTP_FAST_FINALITY_THRESHOLD = 1000n
+const INITIAL_FEE_MULTIPLIER = 3n
+const MAX_FEE_MULTIPLIER = 4n
 
 function enc256(n: bigint) { return n.toString(16).padStart(64,'0') }
 function encAddr(a: string) { return a.slice(2).toLowerCase().padStart(64,'0') }
@@ -174,7 +176,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const sw = _solWallet?.provider ? _solWallet : solanaWallet
     if (!address || !amount || !window.ethereum) return
     const amtNum = parseFloat(amount)
-    const amtMicro = BigInt(Math.round(amtNum * 10**tokenDec))
+    const amtMicro = parseUnits(amount, tokenDec)
     const localSteps: BridgeStep[] = []
     let historyId: string|null = null
     const srcInfo = CCTP_SRC[fromChain]
@@ -422,14 +424,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const sw = _solWallet?.provider ? _solWallet : solanaWallet
     if (!sw || !amount || !address) return
     const localSteps: BridgeStep[] = []
-    const amtNum = parseFloat(amount)
 
     setStep('Mempersiapkan burn di Solana...')
     setStatus({ type:'info', msg:'⏳ Solflare akan popup untuk burn USDC (hanya USDC) di Solana...' })
 
     try {
       // Burn USDC di Solana via Solflare
-      const burnTxHash = await burnSolanaUsdc(amtNum, address, sw.provider, sw.address)
+      const burnTxHash = await burnSolanaUsdc(amount, address, sw.provider, sw.address)
       const historyId = `bridge-${Date.now()}-${burnTxHash.slice(-6)}`
       localSteps.push({ name:'burn', state:'success', txHash:burnTxHash, explorerUrl:`https://explorer.solana.com/tx/${burnTxHash}?cluster=devnet` })
       txHistory.add({
@@ -595,20 +596,20 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     return out
   }
   const sendEvmTxBuffered = async (tx: any): Promise<string> => {
-    const firstFees = await getBufferedEvmFees(tx, 3n)
+    const firstFees = await getBufferedEvmFees(tx, INITIAL_FEE_MULTIPLIER)
     try {
       return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
     } catch(e:any) {
       const msg = e?.message || ''
       if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw e
       await new Promise(r => setTimeout(r, 1200))
-      const retryFees = await getBufferedEvmFees(tx, 6n)
+      const retryFees = await getBufferedEvmFees(tx, MAX_FEE_MULTIPLIER)
       return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
     }
   }
 
   // ── Solana burn helper ──
-  const burnSolanaUsdc = async (amtNum: number, mintRecipientEvm: string, providerParam?: any, ownerAddress?: string): Promise<string> => {
+  const burnSolanaUsdc = async (amountInput: string, mintRecipientEvm: string, providerParam?: any, ownerAddress?: string): Promise<string> => {
     const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair } = await import('@solana/web3.js')
     const { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
@@ -626,7 +627,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const evmHex = (mintRecipientEvm.startsWith('0x') ? mintRecipientEvm.slice(2) : mintRecipientEvm).toLowerCase().padStart(64, '0')
     const mintRecipientBytes = hexToU8(evmHex)
 
-    const amountLamports = BigInt(Math.round(amtNum * 1e6))
+    const amountLamports = parseUnits(amountInput, 6)
 
     // deposit_for_burn Anchor discriminator: sha256("global:deposit_for_burn")[0..8]
     const discriminator = new Uint8Array([215, 60, 61, 46, 114, 55, 128, 176])

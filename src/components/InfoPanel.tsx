@@ -7,6 +7,8 @@ import { useI18n } from '../i18n'
 import { ChainLogo, TokenLogo } from './CompactPickers'
 const EXPLORER = 'https://testnet.arcscan.app'
 const SOLANA_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+const INITIAL_FEE_MULTIPLIER = 3n
+const MAX_FEE_MULTIPLIER = 4n
 const RECEIVE_MESSAGE_ABI = [{
   type: 'function',
   name: 'receiveMessage',
@@ -69,14 +71,14 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
     return out
   }
   const sendEvmTxBuffered = async (tx: any): Promise<string> => {
-    const firstFees = await getBufferedEvmFees(tx, 3n)
+    const firstFees = await getBufferedEvmFees(tx, INITIAL_FEE_MULTIPLIER)
     try {
       return await (window as any).ethereum.request({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
     } catch(e:any) {
       const msg = e?.message || ''
       if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw e
       await new Promise(resolve => setTimeout(resolve, 1200))
-      const retryFees = await getBufferedEvmFees(tx, 6n)
+      const retryFees = await getBufferedEvmFees(tx, MAX_FEE_MULTIPLIER)
       return await (window as any).ethereum.request({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
     }
   }

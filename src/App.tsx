@@ -151,8 +151,27 @@ export default function App() {
   }, [page])
   useEffect(() => {
     if (!circleWallet?.address) return
-    const iv = setInterval(refresh, 15000)
-    return () => clearInterval(iv)
+    let iv: ReturnType<typeof setInterval> | null = null
+    const stop = () => {
+      if (iv) clearInterval(iv)
+      iv = null
+    }
+    const start = () => {
+      if (!iv && !document.hidden) iv = setInterval(refresh, 15000)
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) stop()
+      else {
+        refresh()
+        start()
+      }
+    }
+    start()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      stop()
+    }
   }, [circleWallet, address, refresh])
   return (
     <div className='app-shell'>

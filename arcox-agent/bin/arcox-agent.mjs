@@ -18,6 +18,23 @@ import {
   toHex,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
+import bs58 from 'bs58'
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+} from '@solana/web3.js'
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddress,
+} from '@solana/spl-token'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AGENT_HOME = dirname(__dirname)
@@ -32,6 +49,10 @@ const ARC_USDC = '0x3600000000000000000000000000000000000000'
 const TOKEN_MESSENGER_V2_EVM = '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA'
 const MESSAGE_TRANSMITTER_V2_EVM = '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275'
 const IRIS = 'https://iris-api-sandbox.circle.com'
+const SOLANA_DEVNET_RPC = process.env.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com'
+const SOLANA_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+const SOLANA_TOKEN_MESSENGER_PROGRAM = 'CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe'
+const SOLANA_MESSAGE_TRANSMITTER_PROGRAM = 'CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC'
 const ARCOX_WEB_URL = process.env.ARCOX_WEB_URL || process.env.ARCOX_API_URL || 'https://arc-dex-bice.vercel.app'
 const ARCOX_BACKEND_URL = process.env.ARCOX_BACKEND_URL || 'https://43.163.98.128.nip.io'
 const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
@@ -115,6 +136,16 @@ const cctpChains = {
     rpc: process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm',
     chain: defineChain({ id: 998, name: 'HyperEVM Testnet', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: [process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm'] } }, blockExplorers: { default: { name: 'Hyperliquid', url: 'https://app.hyperliquid-testnet.xyz/explorer' } } }),
     fast: false,
+  },
+  Solana_Devnet: {
+    id: 'Solana_Devnet',
+    aliases: ['solana', 'solana devnet', 'solana_devnet', 'sol'],
+    domain: 5,
+    usdc: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    explorer: 'https://explorer.solana.com/tx/',
+    rpc: process.env.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com',
+    fast: true,
+    solana: true,
   },
 }
 
@@ -300,7 +331,7 @@ function envRouterName(chainId) {
   return `ARCOX_ROUTER_${String(chainId).toUpperCase()}`
 }
 
-function routerFor(chainId) {
+export function routerFor(chainId) {
   const envValue = process.env[envRouterName(chainId)]
   if (envValue && /^0x[0-9a-fA-F]{40}$/.test(envValue)) return getAddress(envValue)
   const deployed = routerDeployments[chainId]?.address
@@ -334,13 +365,65 @@ function wallet() {
   return { account, walletClient }
 }
 
+function solanaKeypair() {
+  const raw = process.env.SOLANA_PRIVATE_KEY || ''
+  if (!raw) throw new Error('Set SOLANA_PRIVATE_KEY in arcox-agent/.env for Solana bridge execution.')
+  try {
+    const bytes = raw.trim().startsWith('[')
+      ? Uint8Array.from(JSON.parse(raw))
+      : bs58.decode(raw.trim())
+    return Keypair.fromSecretKey(bytes)
+  } catch {
+    throw new Error('Invalid SOLANA_PRIVATE_KEY. Use a base58 Solana secret key or JSON byte array.')
+  }
+}
+
+function solanaConnection() {
+  return new Connection(SOLANA_DEVNET_RPC, 'confirmed')
+}
+
+function hexToU8(hex) {
+  const clean = String(hex || '').replace(/^0x/i, '')
+  if (clean.length % 2 !== 0) throw new Error('Invalid hex length.')
+  const out = new Uint8Array(clean.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+
+function concatU8(...arrays) {
+  const len = arrays.reduce((sum, arr) => sum + arr.length, 0)
+  const out = new Uint8Array(len)
+  let offset = 0
+  for (const arr of arrays) {
+    out.set(arr, offset)
+    offset += arr.length
+  }
+  return out
+}
+
+function u32LE(n) {
+  const out = new Uint8Array(4)
+  new DataView(out.buffer).setUint32(0, Number(n), true)
+  return out
+}
+
+function u64LE(n) {
+  const out = new Uint8Array(8)
+  new DataView(out.buffer).setBigUint64(0, BigInt(n), true)
+  return out
+}
+
+function enc(s) {
+  return new TextEncoder().encode(s)
+}
+
 function localAgentId(owner) {
   if (process.env.AGENT_ID) return process.env.AGENT_ID
   const digest = createHash('sha256').update(`arcox:${owner}:${ARC_RPC}`).digest('hex').slice(0, 16)
   return `arcox-codex-${digest}`
 }
 
-function metadataFor(owner) {
+export function metadataFor(owner) {
   return {
     name: DEFAULT_AGENT_NAME,
     description: 'Local-first ARCOX agent for retail swap, bridge, send, and Arc ERC-8183 job workflows.',
@@ -387,7 +470,7 @@ function extractAmountToken(text) {
   return { amount: match[1], token: match[2].toUpperCase() === 'CIRBTC' ? 'CIRBTC' : match[2].toUpperCase() }
 }
 
-function normalizeChainName(value) {
+export function normalizeChainName(value) {
   const normalized = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ')
   if (!normalized) return ''
   for (const chain of Object.values(cctpChains)) {
@@ -407,7 +490,7 @@ function extractBridgeRoute(text) {
   }
 }
 
-function classifyPrompt(prompt) {
+export function classifyPrompt(prompt) {
   const text = String(prompt || '').trim()
   const lower = text.toLowerCase()
   const { amount, token } = extractAmountToken(text)
@@ -448,7 +531,7 @@ async function postJson(path, body, token = '') {
   return data
 }
 
-async function backendSession(account) {
+export async function backendSession(account) {
   const issuedAt = new Date().toISOString()
   const signature = await account.signMessage({ message: authMessage(account.address, issuedAt) })
   const session = await postJson('/api/auth/session', { address: account.address, issuedAt, signature })
@@ -535,13 +618,154 @@ async function pollAttestation(domain, txHash, chainInfo) {
   throw new Error(`Attestation timeout for ${chainInfo.id}. Burn completed, retry mint later with burn tx ${txHash}.`)
 }
 
-async function executeBridge(intent, owner) {
+async function signSolanaReceiveMessage(attestationHex, messageHex, payer) {
+  const conn = solanaConnection()
+  const payerKey = payer.publicKey
+  const mint = new PublicKey(SOLANA_USDC_MINT)
+  const recipientAta = await getAssociatedTokenAddress(mint, payerKey)
+  const msgBytes = hexToU8(messageHex)
+  const attBytes = hexToU8(attestationHex)
+  const messageTransmitterProgram = new PublicKey(SOLANA_MESSAGE_TRANSMITTER_PROGRAM)
+  const tokenMessengerProgram = new PublicKey(SOLANA_TOKEN_MESSENGER_PROGRAM)
+  const sourceDomain = new DataView(msgBytes.buffer, msgBytes.byteOffset + 4, 4).getUint32(0, false)
+  const [messageTransmitterAccount] = PublicKey.findProgramAddressSync([enc('message_transmitter')], messageTransmitterProgram)
+  const nonceBuf = new Uint8Array(32)
+  nonceBuf.set(msgBytes.slice(12, 44), 0)
+  const [usedNoncePda] = PublicKey.findProgramAddressSync([enc('used_nonce'), nonceBuf], messageTransmitterProgram)
+  const [authorityPda] = PublicKey.findProgramAddressSync([enc('message_transmitter_authority'), tokenMessengerProgram.toBytes()], messageTransmitterProgram)
+  const [eventAuthority] = PublicKey.findProgramAddressSync([enc('__event_authority')], messageTransmitterProgram)
+  const [tokenMessenger] = PublicKey.findProgramAddressSync([enc('token_messenger')], tokenMessengerProgram)
+  const remoteDomainSeed = enc(sourceDomain.toString())
+  const [remoteTokenMessenger] = PublicKey.findProgramAddressSync([enc('remote_token_messenger'), remoteDomainSeed], tokenMessengerProgram)
+  const [localToken] = PublicKey.findProgramAddressSync([enc('local_token'), mint.toBytes()], tokenMessengerProgram)
+  const [tokenMinter] = PublicKey.findProgramAddressSync([enc('token_minter')], tokenMessengerProgram)
+  const sourceTokenBytes = msgBytes.slice(152, 184)
+  const [tokenPair] = PublicKey.findProgramAddressSync([enc('token_pair'), remoteDomainSeed, sourceTokenBytes], tokenMessengerProgram)
+  const [custodyTokenAccount] = PublicKey.findProgramAddressSync([enc('custody'), mint.toBytes()], tokenMessengerProgram)
+  const [tokenProgramEventAuthority] = PublicKey.findProgramAddressSync([enc('__event_authority')], tokenMessengerProgram)
+  const tokenMessengerInfo = await conn.getAccountInfo(tokenMessenger)
+  if (!tokenMessengerInfo?.data || tokenMessengerInfo.data.length < 141) throw new Error('Invalid Solana TokenMessenger account.')
+  const feeRecipient = new PublicKey(tokenMessengerInfo.data.slice(109, 141))
+  const feeRecipientAta = await getAssociatedTokenAddress(mint, feeRecipient, true)
+  const discriminator = new Uint8Array([38, 144, 127, 225, 31, 225, 238, 25])
+  const data = concatU8(discriminator, u32LE(msgBytes.length), msgBytes, u32LE(attBytes.length), attBytes)
+
+  let latest = await conn.getLatestBlockhash('confirmed')
+  if (!await conn.getAccountInfo(recipientAta)) {
+    const ataIx = createAssociatedTokenAccountInstruction(payerKey, recipientAta, payerKey, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+    const ataMsg = new TransactionMessage({ payerKey, recentBlockhash: latest.blockhash, instructions: [ataIx] }).compileToV0Message()
+    const ataTx = new VersionedTransaction(ataMsg)
+    ataTx.sign([payer])
+    const ataSig = await conn.sendRawTransaction(ataTx.serialize(), { skipPreflight: true, preflightCommitment: 'confirmed' })
+    await conn.confirmTransaction({ signature: ataSig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed')
+    latest = await conn.getLatestBlockhash('confirmed')
+  }
+
+  const recvIx = new TransactionInstruction({
+    programId: messageTransmitterProgram,
+    keys: [
+      { pubkey: payerKey, isSigner: true, isWritable: true },
+      { pubkey: payerKey, isSigner: true, isWritable: false },
+      { pubkey: authorityPda, isSigner: false, isWritable: false },
+      { pubkey: messageTransmitterAccount, isSigner: false, isWritable: false },
+      { pubkey: usedNoncePda, isSigner: false, isWritable: true },
+      { pubkey: tokenMessengerProgram, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: eventAuthority, isSigner: false, isWritable: false },
+      { pubkey: messageTransmitterProgram, isSigner: false, isWritable: false },
+      { pubkey: tokenMessenger, isSigner: false, isWritable: false },
+      { pubkey: remoteTokenMessenger, isSigner: false, isWritable: false },
+      { pubkey: tokenMinter, isSigner: false, isWritable: true },
+      { pubkey: localToken, isSigner: false, isWritable: true },
+      { pubkey: tokenPair, isSigner: false, isWritable: false },
+      { pubkey: feeRecipientAta, isSigner: false, isWritable: true },
+      { pubkey: recipientAta, isSigner: false, isWritable: true },
+      { pubkey: custodyTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramEventAuthority, isSigner: false, isWritable: false },
+      { pubkey: tokenMessengerProgram, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(data),
+  })
+  const recvMsg = new TransactionMessage({ payerKey, recentBlockhash: latest.blockhash, instructions: [recvIx] }).compileToV0Message()
+  const recvTx = new VersionedTransaction(recvMsg)
+  recvTx.sign([payer])
+  const sig = await conn.sendRawTransaction(recvTx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed' })
+  const conf = await conn.confirmTransaction({ signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed')
+  if (conf.value.err) throw new Error('Solana receiveMessage failed: ' + JSON.stringify(conf.value.err))
+  return sig
+}
+
+async function burnSolanaUsdc(amount, mintRecipientEvm, payer) {
+  const conn = solanaConnection()
+  const owner = payer.publicKey
+  const mint = new PublicKey(SOLANA_USDC_MINT)
+  const senderAta = await getAssociatedTokenAddress(mint, owner)
+  const mintRecipientBytes = hexToU8(mintRecipientEvm.slice(2).toLowerCase().padStart(64, '0'))
+  const amountLamports = parseUnits(String(amount), 6)
+  const discriminator = new Uint8Array([215, 60, 61, 46, 114, 55, 128, 176])
+  const data = concatU8(discriminator, u64LE(amountLamports), u32LE(26), mintRecipientBytes, new Uint8Array(32), u64LE(10n), u32LE(2000))
+  const tmProgram = new PublicKey(SOLANA_TOKEN_MESSENGER_PROGRAM)
+  const mtProgram = new PublicKey(SOLANA_MESSAGE_TRANSMITTER_PROGRAM)
+  const [tokenMessengerPda] = PublicKey.findProgramAddressSync([enc('token_messenger')], tmProgram)
+  const [senderAuthorityPda] = PublicKey.findProgramAddressSync([enc('sender_authority')], tmProgram)
+  const [remoteTokenMsgPda] = PublicKey.findProgramAddressSync([enc('remote_token_messenger'), enc('26')], tmProgram)
+  const [tokenMinterPda] = PublicKey.findProgramAddressSync([enc('token_minter')], tmProgram)
+  const [localTokenPda] = PublicKey.findProgramAddressSync([enc('local_token'), mint.toBytes()], tmProgram)
+  const [denylistAccountPda] = PublicKey.findProgramAddressSync([enc('denylist_account'), owner.toBytes()], tmProgram)
+  const [mtPda] = PublicKey.findProgramAddressSync([enc('message_transmitter')], mtProgram)
+  const [tokenMessengerEventAuthority] = PublicKey.findProgramAddressSync([enc('__event_authority')], tmProgram)
+  const messageSentEventData = Keypair.generate()
+  const ix = new TransactionInstruction({
+    programId: tmProgram,
+    keys: [
+      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: senderAuthorityPda, isSigner: false, isWritable: false },
+      { pubkey: senderAta, isSigner: false, isWritable: true },
+      { pubkey: denylistAccountPda, isSigner: false, isWritable: false },
+      { pubkey: mtPda, isSigner: false, isWritable: true },
+      { pubkey: tokenMessengerPda, isSigner: false, isWritable: false },
+      { pubkey: remoteTokenMsgPda, isSigner: false, isWritable: false },
+      { pubkey: tokenMinterPda, isSigner: false, isWritable: false },
+      { pubkey: localTokenPda, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: true },
+      { pubkey: messageSentEventData.publicKey, isSigner: true, isWritable: true },
+      { pubkey: mtProgram, isSigner: false, isWritable: false },
+      { pubkey: tmProgram, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: tokenMessengerEventAuthority, isSigner: false, isWritable: false },
+      { pubkey: tmProgram, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(data),
+  })
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
+  const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: owner })
+  tx.add(ix)
+  tx.partialSign(messageSentEventData, payer)
+  const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed' })
+  await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+  return sig
+}
+
+async function solanaUsdcBalance(owner = solanaKeypair().publicKey) {
+  const conn = solanaConnection()
+  const mint = new PublicKey(SOLANA_USDC_MINT)
+  const ata = await getAssociatedTokenAddress(mint, owner)
+  const bal = await conn.getTokenAccountBalance(ata).catch(() => null)
+  return { ata: ata.toBase58(), amount: bal?.value?.uiAmountString || '0' }
+}
+
+export async function executeBridge(intent, owner) {
   if ((intent.token || 'USDC') !== 'USDC') throw new Error('CLI bridge adapter currently supports USDC only.')
   if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Bridge command needs amount, example: bridge 5 USDC from Arbitrum Sepolia to Arc')
   const fromInfo = cctpChains[intent.fromChain]
   const toInfo = cctpChains[intent.toChain]
   if (!fromInfo || !toInfo) throw new Error('Unsupported bridge route. Use Arc, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, or HyperEVM Testnet.')
   if (fromInfo.id === toInfo.id) throw new Error('Bridge source and destination must be different.')
+  if (fromInfo.solana) return executeSolanaToEvm(intent, owner, fromInfo, toInfo)
+  if (toInfo.solana) return executeEvmToSolana(intent, owner, fromInfo, toInfo)
 
   const amount = parseUnits(intent.amount, 6)
   const sourceClient = clientFor(fromInfo)
@@ -617,7 +841,100 @@ async function executeBridge(intent, owner) {
   }
 }
 
-async function retryBridgeMint({ burnTx, fromChain, toChain }, owner) {
+async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
+  const solana = solanaKeypair()
+  const conn = solanaConnection()
+  const mint = new PublicKey(SOLANA_USDC_MINT)
+  const recipientAta = await getAssociatedTokenAddress(mint, solana.publicKey)
+  const amount = parseUnits(intent.amount, 6)
+  const sourceClient = clientFor(fromInfo)
+  const tokenBalance = await sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [owner] })
+  if (tokenBalance < amount) throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
+  const router = routerFor(fromInfo.id)
+  const spender = router || fromInfo.tokenMessenger
+  const mintRecipient = `0x${Buffer.from(recipientAta.toBuffer()).toString('hex')}`
+
+  const approveHash = await writeContractBuffered({
+    chainInfo: fromInfo,
+    address: fromInfo.usdc,
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [spender, amount],
+  })
+  await sourceClient.waitForTransactionReceipt({ hash: approveHash })
+  const burnHash = router
+    ? await writeContractBuffered({
+      chainInfo: fromInfo,
+      address: router,
+      abi: arcoxRouterAbi,
+      functionName: 'bridgeUsdcWithFee',
+      args: [amount, toInfo.domain, mintRecipient, `0x${'0'.repeat(64)}`, 10n, 1000],
+    })
+    : await writeContractBuffered({
+      chainInfo: fromInfo,
+      address: fromInfo.tokenMessenger,
+      abi: tokenMessengerAbi,
+      functionName: 'depositForBurn',
+      args: [amount, toInfo.domain, mintRecipient, fromInfo.usdc, `0x${'0'.repeat(64)}`, 10n, 1000],
+    })
+  await sourceClient.waitForTransactionReceipt({ hash: burnHash })
+  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
+  const mintTx = await signSolanaReceiveMessage(attestation.attestation, attestation.message, solana)
+  const solanaBalance = await conn.getBalance(solana.publicKey).catch(() => 0)
+  return {
+    status: 'submitted',
+    action: 'bridge',
+    route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
+    router: router || null,
+    from: fromInfo.id,
+    to: toInfo.id,
+    owner,
+    solanaRecipient: solana.publicKey.toBase58(),
+    solanaRecipientAta: recipientAta.toBase58(),
+    solanaLamports: solanaBalance,
+    amount: intent.amount,
+    token: 'USDC',
+    approveTx: approveHash,
+    burnTx: burnHash,
+    mintTx,
+    approveExplorer: fromInfo.explorer + approveHash,
+    burnExplorer: fromInfo.explorer + burnHash,
+    mintExplorer: `https://explorer.solana.com/tx/${mintTx}?cluster=devnet`,
+  }
+}
+
+async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
+  if (toInfo.solana) throw new Error('Solana to Solana bridge is not supported.')
+  const solana = solanaKeypair()
+  const destinationClient = clientFor(toInfo)
+  const burnHash = await burnSolanaUsdc(intent.amount, owner, solana)
+  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
+  const mintHash = await writeContractBuffered({
+    chainInfo: toInfo,
+    address: toInfo.messageTransmitter,
+    abi: messageTransmitterAbi,
+    functionName: 'receiveMessage',
+    args: [attestation.message, attestation.attestation],
+  })
+  await destinationClient.waitForTransactionReceipt({ hash: mintHash })
+  return {
+    status: 'submitted',
+    action: 'bridge',
+    route: 'solana-cctp',
+    from: fromInfo.id,
+    to: toInfo.id,
+    owner,
+    solanaSender: solana.publicKey.toBase58(),
+    amount: intent.amount,
+    token: 'USDC',
+    burnTx: burnHash,
+    mintTx: mintHash,
+    burnExplorer: `https://explorer.solana.com/tx/${burnHash}?cluster=devnet`,
+    mintExplorer: toInfo.explorer + mintHash,
+  }
+}
+
+export async function retryBridgeMint({ burnTx, fromChain, toChain }, owner) {
   if (!/^0x[0-9a-fA-F]{64}$/.test(burnTx || '')) throw new Error('Missing valid --burn-tx 0x...')
   const fromInfo = cctpChains[fromChain]
   const toInfo = cctpChains[toChain]
@@ -650,7 +967,7 @@ async function retryBridgeMint({ burnTx, fromChain, toChain }, owner) {
   }
 }
 
-async function executeSend(intent, owner) {
+export async function executeSend(intent, owner) {
   if (!intent.amount || !intent.to) throw new Error('Send command needs amount and recipient address, example: send 1 USDC to 0x...')
   const token = ARC_TOKENS[intent.token]
   if (!token) throw new Error(`Unsupported Arc token: ${intent.token}`)
@@ -692,7 +1009,7 @@ async function executeSend(intent, owner) {
   }
 }
 
-async function executeSwap(intent, owner) {
+export async function executeSwap(intent, owner) {
   const tokenIn = intent.tokenIn || 'USDC'
   const tokenOut = intent.tokenOut || ''
   if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Swap command needs amount, example: swap 10 USDC to EURC')
@@ -800,7 +1117,7 @@ function parseAgentId(logs, owner) {
   throw new Error('Agent Transfer event not found.')
 }
 
-function makeAgentResponse({ prompt = '', jobId = '', agentId = '', owner = '' }) {
+export function makeAgentResponse({ prompt = '', jobId = '', agentId = '', owner = '' }) {
   const normalizedPrompt = String(prompt || '').trim()
   const budgetMatch = normalizedPrompt.match(/(\d+(?:\.\d+)?)\s*(?:USDC|usd)/i)
   const suggestedBudget = budgetMatch?.[1] || '1'
@@ -834,7 +1151,7 @@ function makeAgentResponse({ prompt = '', jobId = '', agentId = '', owner = '' }
   }
 }
 
-async function readAgent(agentId) {
+export async function readAgent(agentId) {
   const id = BigInt(agentId)
   const [owner, metadataUri] = await Promise.all([
     publicClient.readContract({ address: IDENTITY_REGISTRY, abi: identityAbi, functionName: 'ownerOf', args: [id] }),
@@ -843,7 +1160,7 @@ async function readAgent(agentId) {
   return { agentId, owner, metadataUri }
 }
 
-async function readJob(jobId) {
+export async function readJob(jobId) {
   const job = await publicClient.readContract({
     address: AGENTIC_COMMERCE_CONTRACT,
     abi: agenticCommerceAbi,
@@ -862,6 +1179,249 @@ async function readJob(jobId) {
     status: JOB_STATUS[statusIndex] || `Status ${statusIndex}`,
     hook: String(job.hook ?? job[8] ?? ZERO_ADDRESS),
   }
+}
+
+export function agentAccount() {
+  return wallet().account
+}
+
+export async function agentStatus() {
+  const { account } = wallet()
+  const [nativeBalance, usdcBalance] = await Promise.all([
+    publicClient.getBalance({ address: account.address }),
+    publicClient.readContract({ address: ARC_USDC, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
+  ])
+  return { address: account.address, arcGasUsdc: formatUnits(nativeBalance, 18), usdc: formatUnits(usdcBalance, 6), rpc: ARC_RPC }
+}
+
+export async function quoteBridge(intent) {
+  const { account } = wallet()
+  const fromChain = normalizeChainName(intent.fromChain) || intent.fromChain
+  const toChain = normalizeChainName(intent.toChain) || intent.toChain
+  const token = String(intent.token || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.token || 'USDC').toUpperCase()
+  if (token !== 'USDC') throw new Error('MCP bridge currently supports USDC only.')
+  if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Bridge quote needs a positive amount.')
+  const fromInfo = cctpChains[fromChain]
+  const toInfo = cctpChains[toChain]
+  if (!fromInfo || !toInfo) throw new Error('Unsupported bridge route.')
+  if (fromInfo.id === toInfo.id) throw new Error('Bridge source and destination must be different.')
+  if (fromInfo.solana) {
+    const solana = solanaKeypair()
+    const balance = await solanaUsdcBalance(solana.publicKey)
+    return {
+      status: 'quote',
+      action: 'bridge',
+      owner: account.address,
+      solanaOwner: solana.publicKey.toBase58(),
+      solanaSourceAta: balance.ata,
+      from: fromInfo.id,
+      to: toInfo.id,
+      token: 'USDC',
+      amount: String(intent.amount),
+      balance: balance.amount,
+      platformFee: '0',
+      estimatedReceive: String(intent.amount),
+      supported: Number(balance.amount) >= Number(intent.amount),
+      terminalExecution: 'supported_with_local_solana_signer',
+      approvalRequired: true,
+      safeNextStep: 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true.',
+    }
+  }
+  const amount = parseUnits(String(intent.amount), 6)
+  const sourceClient = clientFor(fromInfo)
+  const router = routerFor(fromInfo.id)
+  const [balance, routerQuote] = await Promise.all([
+    sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
+    router
+      ? sourceClient.readContract({ address: router, abi: arcoxRouterAbi, functionName: 'quoteFee', args: [amount] }).catch(() => null)
+      : Promise.resolve(null),
+  ])
+  const fee = routerQuote ? BigInt(routerQuote[0] ?? 0) : 0n
+  const netAmount = routerQuote ? BigInt(routerQuote[1] ?? amount) : amount
+  return {
+    status: 'quote',
+    action: 'bridge',
+    owner: account.address,
+    from: fromInfo.id,
+    to: toInfo.id,
+    token: 'USDC',
+    amount: String(intent.amount),
+    balance: formatUnits(balance, 6),
+    router: router || null,
+    platformFee: formatUnits(fee, 6),
+    estimatedReceive: formatUnits(netAmount, 6),
+    supported: balance >= amount,
+    terminalExecution: toInfo.solana ? 'supported_with_local_solana_signer' : 'supported',
+    solanaRecipientRequired: Boolean(toInfo.solana),
+    approvalRequired: true,
+    safeNextStep: toInfo.solana
+      ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Mint will use SOLANA_PRIVATE_KEY local signer.'
+      : 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true.',
+  }
+}
+
+export async function quoteSend(intent) {
+  const { account } = wallet()
+  const tokenKey = String(intent.token || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.token || 'USDC').toUpperCase()
+  const token = ARC_TOKENS[tokenKey]
+  if (!token) throw new Error(`Unsupported Arc token: ${tokenKey}`)
+  if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Send quote needs a positive amount.')
+  if (!intent.to || !/^0x[0-9a-fA-F]{40}$/.test(intent.to)) throw new Error('Send quote needs a valid EVM recipient.')
+  const amount = parseUnits(String(intent.amount), token.decimals)
+  const router = routerFor('Arc_Testnet')
+  const [balance, routerQuote] = await Promise.all([
+    publicClient.readContract({ address: token.address, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
+    router
+      ? publicClient.readContract({ address: router, abi: arcoxRouterAbi, functionName: 'quoteFee', args: [amount] }).catch(() => null)
+      : Promise.resolve(null),
+  ])
+  const fee = routerQuote ? BigInt(routerQuote[0] ?? 0) : 0n
+  const netAmount = routerQuote ? BigInt(routerQuote[1] ?? amount) : amount
+  return {
+    status: 'quote',
+    action: 'send',
+    owner: account.address,
+    to: getAddress(intent.to),
+    token: tokenKey,
+    amount: String(intent.amount),
+    balance: formatUnits(balance, token.decimals),
+    router: router || null,
+    platformFee: formatUnits(fee, token.decimals),
+    recipientReceives: formatUnits(netAmount, token.decimals),
+    supported: balance >= amount,
+    approvalRequired: true,
+    safeNextStep: 'Ask the user to confirm before calling arcox_execute_send with confirmed=true.',
+  }
+}
+
+export async function quoteSwap(intent) {
+  const tokenIn = String(intent.tokenIn || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenIn || 'USDC').toUpperCase()
+  const tokenOut = String(intent.tokenOut || '').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenOut || '').toUpperCase()
+  const amountIn = String(intent.amountIn || intent.amount || '')
+  if (!amountIn) throw new Error('Swap quote needs amountIn.')
+  if (!ARC_TOKENS[tokenIn]) throw new Error(`Unsupported swap input token: ${tokenIn}`)
+  if (!ARC_TOKENS[tokenOut]) throw new Error(`Unsupported swap output token: ${tokenOut}`)
+  const { account } = wallet()
+  const token = await backendSession(account)
+  const quote = await postJson('/api/quote', { metamaskAddress: account.address, tokenIn, tokenOut, amountIn }, token)
+  return {
+    status: 'quote',
+    action: 'swap',
+    source: 'circle-wallet-proxy',
+    owner: account.address,
+    tokenIn,
+    tokenOut,
+    amountIn,
+    quote,
+    approvalRequired: true,
+    safeNextStep: 'Ask the user to confirm before calling arcox_execute_swap with confirmed=true.',
+  }
+}
+
+export async function executeConfirmedBridge(intent) {
+  if (intent.confirmed !== true) return quoteBridge(intent)
+  const fromChain = normalizeChainName(intent.fromChain) || intent.fromChain
+  const toChain = normalizeChainName(intent.toChain) || intent.toChain
+  const { account } = wallet()
+  return executeBridge({
+    ...intent,
+    token: String(intent.token || 'USDC').toUpperCase(),
+    fromChain,
+    toChain,
+  }, account.address)
+}
+
+export async function executeConfirmedSend(intent) {
+  if (intent.confirmed !== true) return quoteSend(intent)
+  const { account } = wallet()
+  return executeSend({
+    ...intent,
+    token: String(intent.token || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.token || 'USDC').toUpperCase(),
+    to: getAddress(intent.to),
+  }, account.address)
+}
+
+export async function executeConfirmedSwap(intent) {
+  if (intent.confirmed !== true) return quoteSwap(intent)
+  const { account } = wallet()
+  return executeSwap({
+    ...intent,
+    amount: String(intent.amountIn || intent.amount),
+    tokenIn: String(intent.tokenIn || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenIn || 'USDC').toUpperCase(),
+    tokenOut: String(intent.tokenOut || '').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenOut || '').toUpperCase(),
+  }, account.address)
+}
+
+export async function retryConfirmedBridge(intent) {
+  if (intent.confirmed !== true) {
+    return {
+      status: 'preview_only',
+      action: 'retry-bridge',
+      burnTx: intent.burnTx || '',
+      from: normalizeChainName(intent.fromChain) || intent.fromChain || '',
+      to: normalizeChainName(intent.toChain) || intent.toChain || '',
+      approvalRequired: true,
+      safeNextStep: 'Ask the user to confirm before calling arcox_retry_bridge with confirmed=true.',
+    }
+  }
+  const { account } = wallet()
+  return retryBridgeMint({
+    burnTx: intent.burnTx,
+    fromChain: normalizeChainName(intent.fromChain) || intent.fromChain,
+    toChain: normalizeChainName(intent.toChain) || intent.toChain,
+  }, account.address)
+}
+
+export async function registerAgentIdentity({ metadataUri }) {
+  const { account, walletClient } = wallet()
+  if (!metadataUri) throw new Error('Missing metadataUri.')
+  const hash = await walletClient.writeContract({ address: IDENTITY_REGISTRY, abi: identityAbi, functionName: 'register', args: [metadataUri] })
+  const receipt = await publicClient.waitForTransactionReceipt({ hash })
+  return { status: 'submitted', action: 'register-agent', tx: hash, explorer: EXPLORER_TX + hash, agentId: parseAgentId(receipt.logs, account.address), owner: account.address }
+}
+
+export async function createAgentJob({ provider, evaluator, description = 'ARCOX terminal agent job', hours = 24 }) {
+  const { walletClient } = wallet()
+  const normalizedProvider = getAddress(provider)
+  const normalizedEvaluator = getAddress(evaluator)
+  const expiredAt = BigInt(Math.floor(Date.now() / 1000) + (Number(hours) || 24) * 3600)
+  const hash = await walletClient.writeContract({ address: AGENTIC_COMMERCE_CONTRACT, abi: agenticCommerceAbi, functionName: 'createJob', args: [normalizedProvider, normalizedEvaluator, expiredAt, description, ZERO_ADDRESS] })
+  const receipt = await publicClient.waitForTransactionReceipt({ hash })
+  return { status: 'submitted', action: 'create-job', tx: hash, explorer: EXPLORER_TX + hash, jobId: parseJobId(receipt.logs), provider: normalizedProvider, evaluator: normalizedEvaluator }
+}
+
+export async function setAgentJobBudget({ jobId, amount }) {
+  const { walletClient } = wallet()
+  const hash = await walletClient.writeContract({ address: AGENTIC_COMMERCE_CONTRACT, abi: agenticCommerceAbi, functionName: 'setBudget', args: [BigInt(jobId), parseUnits(String(amount), 6), '0x'] })
+  await publicClient.waitForTransactionReceipt({ hash })
+  return { status: 'submitted', action: 'set-budget', jobId: String(jobId), amount: String(amount), tx: hash, explorer: EXPLORER_TX + hash }
+}
+
+export async function fundAgentJob({ jobId, amount }) {
+  const { walletClient } = wallet()
+  const parsedAmount = parseUnits(String(amount), 6)
+  const parsedJobId = BigInt(jobId)
+  const approveHash = await walletClient.writeContract({ address: ARC_USDC, abi: erc20Abi, functionName: 'approve', args: [AGENTIC_COMMERCE_CONTRACT, parsedAmount] })
+  await publicClient.waitForTransactionReceipt({ hash: approveHash })
+  const fundHash = await walletClient.writeContract({ address: AGENTIC_COMMERCE_CONTRACT, abi: agenticCommerceAbi, functionName: 'fund', args: [parsedJobId, '0x'] })
+  await publicClient.waitForTransactionReceipt({ hash: fundHash })
+  return { status: 'submitted', action: 'fund-job', jobId: String(jobId), amount: String(amount), approveTx: approveHash, fundTx: fundHash, explorer: EXPLORER_TX + fundHash }
+}
+
+export async function submitAgentJob({ jobId, deliverable = 'terminal-agent-deliverable' }) {
+  const { walletClient } = wallet()
+  const deliverableHash = hashTextBytes32(deliverable)
+  const hash = await walletClient.writeContract({ address: AGENTIC_COMMERCE_CONTRACT, abi: agenticCommerceAbi, functionName: 'submit', args: [BigInt(jobId), deliverableHash, '0x'] })
+  await publicClient.waitForTransactionReceipt({ hash })
+  return { status: 'submitted', action: 'submit-job', jobId: String(jobId), tx: hash, explorer: EXPLORER_TX + hash, deliverableHash }
+}
+
+export async function completeAgentJob({ jobId, reason = 'deliverable-approved' }) {
+  const { walletClient } = wallet()
+  const reasonHash = hashTextBytes32(reason)
+  const hash = await walletClient.writeContract({ address: AGENTIC_COMMERCE_CONTRACT, abi: agenticCommerceAbi, functionName: 'complete', args: [BigInt(jobId), reasonHash, '0x'] })
+  await publicClient.waitForTransactionReceipt({ hash })
+  return { status: 'submitted', action: 'complete-job', jobId: String(jobId), tx: hash, explorer: EXPLORER_TX + hash, reasonHash }
 }
 
 async function serve() {
@@ -1047,7 +1607,9 @@ ARC_AGENT_ID=
   throw new Error(`Unknown command: ${cmd}`)
 }
 
-main().catch(error => {
-  console.error(error.message)
-  process.exit(1)
-})
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch(error => {
+    console.error(error.message)
+    process.exit(1)
+  })
+}

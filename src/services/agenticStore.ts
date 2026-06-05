@@ -1,3 +1,5 @@
+import { getAddress, isAddress } from 'viem'
+
 export type StoredAgentProfile = {
   owner: string
   agentId: string
@@ -75,12 +77,32 @@ export function saveStoredJob(job: StoredAgenticJob) {
 
 export function getAgentLink(owner: string | null): StoredAgentLink | null {
   if (!owner) return null
+  if (!isAddress(owner)) return null
+  const normalizedOwner = getAddress(owner)
   const links = readJson<StoredAgentLink[]>(LINKS_KEY, [])
-  return links.find(item => item.owner.toLowerCase() === owner.toLowerCase()) ?? null
+  return links.find(item => isValidAgentLink(item) && getAddress(item.owner).toLowerCase() === normalizedOwner.toLowerCase()) ?? null
 }
 
 export function saveAgentLink(link: StoredAgentLink) {
+  if (!isValidAgentLink(link)) throw new Error('Invalid agent link data')
   const links = readJson<StoredAgentLink[]>(LINKS_KEY, [])
-  const next = [link, ...links.filter(item => item.agentId !== link.agentId && item.owner.toLowerCase() !== link.owner.toLowerCase())].slice(0, 20)
+  const next = [link, ...links.filter(item => isValidAgentLink(item) && item.agentId !== link.agentId && getAddress(item.owner).toLowerCase() !== getAddress(link.owner).toLowerCase())].slice(0, 20)
   writeJson(LINKS_KEY, next)
+}
+
+function isValidAgentLink(value: unknown): value is StoredAgentLink {
+  if (!value || typeof value !== 'object') return false
+  const item = value as StoredAgentLink
+  if (!item.agentId || !/^\d+$/.test(String(item.agentId))) return false
+  if (!isAddress(item.owner)) return false
+  if (!item.ownerSignature || !/^0x[0-9a-f]+$/i.test(item.ownerSignature)) return false
+  if (!item.handshakeMessage || !item.handshakeMessage.includes(`Agent ID: ${item.agentId}`)) return false
+  if (typeof item.endpoint !== 'string' || !item.endpoint.trim()) return false
+  try {
+    const url = new URL(item.endpoint, window.location.origin)
+    if (!['http:', 'https:'].includes(url.protocol)) return false
+  } catch {
+    return false
+  }
+  return true
 }

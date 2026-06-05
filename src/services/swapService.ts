@@ -3,14 +3,25 @@ import { estimateEoaSwapWithAppKit, swapEoaWithAppKit } from '../appKit'
 
 const API = ''
 
-let kitKeyCache = ''
+let kitKeyCache: { value: string; expiresAt: number } | null = null
+const KIT_KEY_CACHE_TTL_MS = 5 * 60 * 1000
 
 export async function getKitKey() {
-  if (kitKeyCache) return kitKeyCache
-  const r = await fetch(`${API}/api/config`)
+  if (kitKeyCache && Date.now() < kitKeyCache.expiresAt) return kitKeyCache.value
+  const r = await fetchWithTimeout(`${API}/api/config`)
   const d = await r.json()
-  kitKeyCache = d.kitKey || ''
-  return kitKeyCache
+  kitKeyCache = { value: d.kitKey || '', expiresAt: Date.now() + KIT_KEY_CACHE_TTL_MS }
+  return kitKeyCache.value
+}
+
+async function fetchWithTimeout(url: string, timeoutMs = 10000) {
+  const controller = new AbortController()
+  const id = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { signal: controller.signal })
+  } finally {
+    clearTimeout(id)
+  }
 }
 
 export async function quoteCircleSwap(args: {
