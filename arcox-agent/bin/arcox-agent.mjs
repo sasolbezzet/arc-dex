@@ -586,18 +586,23 @@ async function writeContractBuffered({ chainInfo, address, abi, functionName, ar
     const msg = error?.message || ''
     if (!/max fee per gas less than block base fee|underpriced|fee/i.test(msg)) throw error
     await sleep(1200)
-    const retryFees = await bufferedFees(sourceClient, 6n)
+    const retryFees = await bufferedFees(sourceClient, 4n)
     return walletClient.writeContract({ address, abi, functionName, args, ...retryFees })
   }
 }
 
-async function pollAttestation(domain, txHash, chainInfo) {
+async function pollAttestation(domain, txHash, chainInfo, options = {}) {
   const maxPolls = chainInfo.fast ? 90 : Number(process.env.BRIDGE_ATTESTATION_POLLS || '700')
+  const deadline = options.maxWaitMs ? Date.now() + Number(options.maxWaitMs) : 0
   const url = `${IRIS}/v2/messages/${domain}?transactionHash=${txHash}`
   let lastStatus = ''
   for (let i = 0; i < maxPolls; i++) {
+    if (deadline && Date.now() >= deadline) {
+      if (options.returnNullOnTimeout) return null
+      break
+    }
     const delay = chainInfo.fast ? 1000 : i < 20 ? 1000 : 3000
-    await sleep(delay)
+    await sleep(deadline ? Math.min(delay, Math.max(0, deadline - Date.now())) : delay)
     try {
       const response = await fetch(url, { headers: { Accept: 'application/json' } })
       if (!response.ok) continue
@@ -878,7 +883,30 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       args: [amount, toInfo.domain, mintRecipient, fromInfo.usdc, `0x${'0'.repeat(64)}`, 10n, 1000],
     })
   await sourceClient.waitForTransactionReceipt({ hash: burnHash })
-  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
+  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo, {
+    maxWaitMs: intent.maxAttestationWaitMs,
+    returnNullOnTimeout: Boolean(intent.maxAttestationWaitMs),
+  })
+  if (!attestation) {
+    return {
+      status: 'pending_mint',
+      action: 'bridge',
+      route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
+      router: router || null,
+      from: fromInfo.id,
+      to: toInfo.id,
+      owner,
+      solanaRecipient: solana.publicKey.toBase58(),
+      solanaRecipientAta: recipientAta.toBase58(),
+      amount: intent.amount,
+      token: 'USDC',
+      approveTx: approveHash,
+      burnTx: burnHash,
+      approveExplorer: fromInfo.explorer + approveHash,
+      burnExplorer: fromInfo.explorer + burnHash,
+      safeNextStep: `Attestation belum siap sebelum timeout MCP. Jalankan retry bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id}.`,
+    }
+  }
   const mintTx = await signSolanaReceiveMessage(attestation.attestation, attestation.message, solana)
   const solanaBalance = await conn.getBalance(solana.publicKey).catch(() => 0)
   return {
@@ -935,17 +963,34 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
 }
 
 export async function retryBridgeMint({ burnTx, fromChain, toChain }, owner) {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(burnTx || '')) throw new Error('Missing valid --burn-tx 0x...')
   const fromInfo = cctpChains[fromChain]
   const toInfo = cctpChains[toChain]
-  if (!fromInfo || !toInfo) throw new Error('Unsupported retry route. Use Arc, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, or HyperEVM Testnet.')
+  if (!fromInfo || !toInfo) throw new Error('Unsupported retry route. Use Arc, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, HyperEVM Testnet, or Solana Devnet.')
   if (fromInfo.id === toInfo.id) throw new Error('Retry source and destination must be different.')
+  if (fromInfo.solana && !/^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(burnTx || '')) throw new Error('Missing valid Solana burn tx signature.')
+  if (!fromInfo.solana && !/^0x[0-9a-fA-F]{64}$/.test(burnTx || '')) throw new Error('Missing valid EVM burn tx 0x...')
 
-  const destinationClient = clientFor(toInfo)
   console.error(`[retry-bridge] poll attestation for ${burnTx}`)
   const attestation = await pollAttestation(fromInfo.domain, burnTx, fromInfo)
 
+  if (toInfo.solana) {
+    const solana = solanaKeypair()
+    const mintTx = await signSolanaReceiveMessage(attestation.attestation, attestation.message, solana)
+    return {
+      status: 'submitted',
+      action: 'retry-bridge',
+      owner,
+      from: fromInfo.id,
+      to: toInfo.id,
+      solanaRecipient: solana.publicKey.toBase58(),
+      burnTx,
+      mintTx,
+      mintExplorer: `https://explorer.solana.com/tx/${mintTx}?cluster=devnet`,
+    }
+  }
+
   console.error(`[retry-bridge] mint on ${toInfo.id}`)
+  const destinationClient = clientFor(toInfo)
   const mintHash = await writeContractBuffered({
     chainInfo: toInfo,
     address: toInfo.messageTransmitter,
@@ -1230,6 +1275,7 @@ export async function quoteBridge(intent) {
   const amount = parseUnits(String(intent.amount), 6)
   const sourceClient = clientFor(fromInfo)
   const router = routerFor(fromInfo.id)
+  const solanaRecipient = toInfo.solana ? solanaKeypair().publicKey.toBase58() : null
   const [balance, routerQuote] = await Promise.all([
     sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
     router
@@ -1252,10 +1298,11 @@ export async function quoteBridge(intent) {
     estimatedReceive: formatUnits(netAmount, 6),
     supported: balance >= amount,
     terminalExecution: toInfo.solana ? 'supported_with_local_solana_signer' : 'supported',
-    solanaRecipientRequired: Boolean(toInfo.solana),
+    solanaRecipientRequired: false,
+    solanaRecipient,
     approvalRequired: true,
     safeNextStep: toInfo.solana
-      ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Mint will use SOLANA_PRIVATE_KEY local signer.'
+      ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Mint will use the displayed SOLANA_PRIVATE_KEY local signer recipient.'
       : 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true.',
   }
 }

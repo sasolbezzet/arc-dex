@@ -29,7 +29,7 @@ export const pages = [
     signing: {
       circle: 'Circle Wallet can first transfer assets to EOA for a single bridge flow.',
       eoa: 'User wallet signs approve, burn, and receive/mint where destination requires it.',
-      solana: 'User must use Solana Devnet wallet for Solana routes.',
+      solana: 'Web UI uses user Solana Devnet wallet. Terminal MCP uses the local SOLANA_PRIVATE_KEY signer as Solana recipient.',
     },
     knownCautions: [
       'Pending bridge is normal after burn; user must wait for attestation and mint.',
@@ -107,7 +107,7 @@ export const actions = [
     id: 'bridge_usdc',
     page: 'bridge',
     intentExamples: ['bridge 1 USDC dari Arc ke Base', 'bridge dari Arbitrum ke Arc'],
-    requiredSlots: ['source', 'fromChain', 'toChain', 'token', 'amount', 'recipient'],
+    requiredSlots: ['source', 'fromChain', 'toChain', 'token', 'amount'],
     safeExecution: 'requires_wallet_signature',
     backend: 'Web UI CCTP flow or terminal agent bridge adapter',
   },

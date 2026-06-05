@@ -386,7 +386,17 @@ async function rpcResponse(message) {
     if (name === 'arcox_route_status') return result(id, routeStatus(args))
     if (name === 'arcox_agent_status') return result(id, await agentStatus())
     if (name === 'arcox_quote_bridge') return result(id, await quoteBridge(args))
-    if (name === 'arcox_execute_bridge') return result(id, await executeConfirmedBridge(args))
+    if (name === 'arcox_execute_bridge') {
+      const fromChain = normalizeMcpChain(args.fromChain)
+      const toChain = normalizeMcpChain(args.toChain)
+      const solanaRoute = fromChain === 'Solana_Devnet' || toChain === 'Solana_Devnet'
+      return result(id, await executeConfirmedBridge({
+        ...args,
+        fromChain: fromChain || args.fromChain,
+        toChain: toChain || args.toChain,
+        maxAttestationWaitMs: args.maxAttestationWaitMs ?? (solanaRoute ? 55_000 : undefined),
+      }))
+    }
     if (name === 'arcox_retry_bridge') return result(id, await retryConfirmedBridge(args))
     if (name === 'arcox_quote_send') return result(id, await quoteSend(args))
     if (name === 'arcox_execute_send') return result(id, await executeConfirmedSend(args))
