@@ -813,6 +813,19 @@ export async function executeBridge(intent, owner) {
       args: [amount, toInfo.domain, bytes32Address(owner), fromInfo.usdc, `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
     })
   await sourceClient.waitForTransactionReceipt({ hash: burnHash })
+  if (intent.deferMint) {
+    return pendingBridgeMintResult({
+      route: router ? 'arcox-router' : 'direct-cctp-fallback',
+      router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: intent.amount,
+      approveHash,
+      burnHash,
+      safeNextStep: `Burn selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint setelah attestation siap.`,
+    })
+  }
 
   console.error(`[bridge] wait attestation from Circle Iris`)
   const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
@@ -956,6 +969,20 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
   const solana = solanaKeypair()
   const destinationClient = clientFor(toInfo)
   const burnHash = await burnSolanaUsdc(intent.amount, owner, solana)
+  if (intent.deferMint) {
+    return pendingBridgeMintResult({
+      route: 'direct-cctp-solana',
+      router: null,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: intent.amount,
+      burnHash,
+      burnExplorer: `https://explorer.solana.com/tx/${burnHash}?cluster=devnet`,
+      solanaRecipient: solana.publicKey.toBase58(),
+      safeNextStep: `Burn Solana selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint setelah attestation siap.`,
+    })
+  }
   const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
   const mintHash = await writeContractBuffered({
     chainInfo: toInfo,
@@ -979,6 +1006,26 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
     mintTx: mintHash,
     burnExplorer: `https://explorer.solana.com/tx/${burnHash}?cluster=devnet`,
     mintExplorer: toInfo.explorer + mintHash,
+  }
+}
+
+function pendingBridgeMintResult({ route, router, fromInfo, toInfo, owner, amount, approveHash, burnHash, burnExplorer, solanaRecipient, safeNextStep }) {
+  return {
+    status: 'pending_mint',
+    action: 'bridge',
+    route,
+    router: router || null,
+    from: fromInfo.id,
+    to: toInfo.id,
+    owner,
+    solanaRecipient,
+    amount,
+    token: 'USDC',
+    approveTx: approveHash,
+    burnTx: burnHash,
+    approveExplorer: approveHash ? fromInfo.explorer + approveHash : undefined,
+    burnExplorer: burnExplorer || fromInfo.explorer + burnHash,
+    safeNextStep,
   }
 }
 

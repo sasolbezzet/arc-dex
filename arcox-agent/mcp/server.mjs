@@ -389,13 +389,12 @@ async function rpcResponse(message) {
     if (name === 'arcox_execute_bridge') {
       const fromChain = normalizeMcpChain(args.fromChain)
       const toChain = normalizeMcpChain(args.toChain)
-      const solanaRoute = fromChain === 'Solana_Devnet' || toChain === 'Solana_Devnet'
       return result(id, await executeConfirmedBridge({
         ...args,
         fromChain: fromChain || args.fromChain,
         toChain: toChain || args.toChain,
-        deferMint: args.deferMint ?? solanaRoute,
-        maxAttestationWaitMs: args.maxAttestationWaitMs ?? (solanaRoute ? 55_000 : undefined),
+        deferMint: args.deferMint ?? true,
+        maxAttestationWaitMs: args.maxAttestationWaitMs,
       }))
     }
     if (name === 'arcox_retry_bridge') return result(id, await retryConfirmedBridge(args))
