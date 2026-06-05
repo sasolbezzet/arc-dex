@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from 'crypto'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs'
 import { createServer } from 'http'
+import { spawn } from 'child_process'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import {
@@ -59,6 +60,7 @@ const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired']
 const BRIDGE_RECEIPT_WAIT_MS = Number(process.env.BRIDGE_RECEIPT_WAIT_MS || '45000')
+const AUTO_MINT_DIR = join(AGENT_HOME, '.arcox-auto-mint')
 const ARC_TOKENS = {
   USDC: { address: ARC_USDC, decimals: 6 },
   EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
@@ -352,6 +354,46 @@ function hasFlag(name) {
 
 function command() {
   return process.argv[2] || 'help'
+}
+
+function writeAutoMintStatus(jobId, data) {
+  mkdirSync(AUTO_MINT_DIR, { recursive: true })
+  writeFileSync(join(AUTO_MINT_DIR, `${jobId}.json`), JSON.stringify({ updatedAt: new Date().toISOString(), ...data }, null, 2))
+}
+
+function autoMintJobId(burnTx) {
+  return String(burnTx || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 72)
+}
+
+function scheduleAutoMint({ burnTx, fromInfo, toInfo, owner }) {
+  if (!burnTx) return null
+  const jobId = autoMintJobId(burnTx)
+  writeAutoMintStatus(jobId, {
+    status: 'scheduled',
+    action: 'auto-mint-bridge',
+    owner,
+    burnTx,
+    from: fromInfo.id,
+    to: toInfo.id,
+  })
+  const child = spawn(process.execPath, [
+    fileURLToPath(import.meta.url),
+    'auto-mint-bridge',
+    '--burn-tx', burnTx,
+    '--from-chain', fromInfo.id,
+    '--to-chain', toInfo.id,
+    '--owner', owner,
+  ], {
+    cwd: AGENT_HOME,
+    env: process.env,
+    detached: true,
+    stdio: 'ignore',
+  })
+  child.unref()
+  return {
+    jobId,
+    statusFile: join(AUTO_MINT_DIR, `${jobId}.json`),
+  }
 }
 
 function privateKey() {
@@ -867,7 +909,7 @@ export async function executeBridge(intent, owner) {
       amount: intent.amount,
       approveHash: approval.approveHash,
       burnHash,
-      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Cek burn tx ${burnHash}, lalu jalankan arcox_retry_bridge setelah confirmed dan attestation siap.`,
+      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Agent auto-mint worker sudah dijadwalkan dan akan mint setelah burn confirmed serta attestation siap.`,
     })
   }
   if (intent.deferMint) {
@@ -880,7 +922,7 @@ export async function executeBridge(intent, owner) {
       amount: intent.amount,
       approveHash: approval.approveHash,
       burnHash,
-      safeNextStep: `Burn selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint setelah attestation siap.`,
+      safeNextStep: `Burn selesai. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis setelah attestation siap.`,
     })
   }
 
@@ -980,52 +1022,40 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       approveHash: approval.approveHash,
       burnHash,
       solanaRecipient: solana.publicKey.toBase58(),
-      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Cek burn tx ${burnHash}, lalu jalankan arcox_retry_bridge setelah confirmed dan attestation siap.`,
+      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Agent auto-mint worker sudah dijadwalkan dan akan mint setelah burn confirmed serta attestation siap.`,
     })
   }
   if (intent.deferMint) {
-    return {
-      status: 'pending_mint',
-      action: 'bridge',
+    return pendingBridgeMintResult({
       route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
-      router: router || null,
-      from: fromInfo.id,
-      to: toInfo.id,
+      router,
+      fromInfo,
+      toInfo,
       owner,
       solanaRecipient: solana.publicKey.toBase58(),
-      solanaRecipientAta: recipientAta.toBase58(),
       amount: intent.amount,
-      token: 'USDC',
-      approveTx: approval.approveHash,
-      burnTx: burnHash,
-      approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
-      burnExplorer: fromInfo.explorer + burnHash,
-      safeNextStep: `Burn selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint ke Solana setelah attestation siap.`,
-    }
+      approveHash: approval.approveHash,
+      burnHash,
+      safeNextStep: `Burn selesai. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis ke Solana setelah attestation siap.`,
+    })
   }
   const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo, {
     maxWaitMs: intent.maxAttestationWaitMs,
     returnNullOnTimeout: Boolean(intent.maxAttestationWaitMs),
   })
   if (!attestation) {
-    return {
-      status: 'pending_mint',
-      action: 'bridge',
+    return pendingBridgeMintResult({
       route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
-      router: router || null,
-      from: fromInfo.id,
-      to: toInfo.id,
+      router,
+      fromInfo,
+      toInfo,
       owner,
       solanaRecipient: solana.publicKey.toBase58(),
-      solanaRecipientAta: recipientAta.toBase58(),
       amount: intent.amount,
-      token: 'USDC',
-      approveTx: approval.approveHash,
-      burnTx: burnHash,
-      approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
-      burnExplorer: fromInfo.explorer + burnHash,
-      safeNextStep: `Attestation belum siap sebelum timeout MCP. Jalankan retry bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id}.`,
-    }
+      approveHash: approval.approveHash,
+      burnHash,
+      safeNextStep: `Attestation belum siap sebelum timeout MCP. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis setelah attestation siap.`,
+    })
   }
   const mintTx = await signSolanaReceiveMessage(attestation.attestation, attestation.message, solana)
   const solanaBalance = await conn.getBalance(solana.publicKey).catch(() => 0)
@@ -1067,7 +1097,7 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
       burnHash,
       burnExplorer: `https://explorer.solana.com/tx/${burnHash}?cluster=devnet`,
       solanaRecipient: solana.publicKey.toBase58(),
-      safeNextStep: `Burn Solana selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint setelah attestation siap.`,
+      safeNextStep: `Burn Solana selesai. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis setelah attestation siap.`,
     })
   }
   const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
@@ -1097,8 +1127,9 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
 }
 
 function pendingBridgeMintResult({ route, router, fromInfo, toInfo, owner, amount, approveHash, burnHash, burnExplorer, solanaRecipient, safeNextStep }) {
+  const autoMint = scheduleAutoMint({ burnTx: burnHash, fromInfo, toInfo, owner })
   return {
-    status: 'pending_mint',
+    status: 'auto_mint_scheduled',
     action: 'bridge',
     route,
     router: router || null,
@@ -1112,11 +1143,13 @@ function pendingBridgeMintResult({ route, router, fromInfo, toInfo, owner, amoun
     burnTx: burnHash,
     approveExplorer: approveHash ? fromInfo.explorer + approveHash : undefined,
     burnExplorer: burnExplorer || fromInfo.explorer + burnHash,
+    autoMint,
     safeNextStep,
   }
 }
 
 function pendingBridgeStepResult({ status, route, router, fromInfo, toInfo, owner, amount, approveHash, burnHash, solanaRecipient, safeNextStep }) {
+  const autoMint = burnHash ? scheduleAutoMint({ burnTx: burnHash, fromInfo, toInfo, owner }) : null
   return {
     status,
     action: 'bridge',
@@ -1132,6 +1165,7 @@ function pendingBridgeStepResult({ status, route, router, fromInfo, toInfo, owne
     burnTx: burnHash,
     approveExplorer: approveHash ? fromInfo.explorer + approveHash : undefined,
     burnExplorer: burnHash ? fromInfo.explorer + burnHash : undefined,
+    autoMint,
     safeNextStep,
   }
 }
@@ -1183,6 +1217,46 @@ export async function retryBridgeMint({ burnTx, fromChain, toChain }, owner) {
     burnTx,
     mintTx: mintHash,
     mintExplorer: toInfo.explorer + mintHash,
+  }
+}
+
+async function autoMintBridge() {
+  const burnTx = arg('burn-tx')
+  const fromChain = normalizeChainName(arg('from-chain')) || arg('from-chain')
+  const toChain = normalizeChainName(arg('to-chain')) || arg('to-chain')
+  const owner = arg('owner') || wallet().account.address
+  const jobId = autoMintJobId(burnTx)
+  writeAutoMintStatus(jobId, {
+    status: 'running',
+    action: 'auto-mint-bridge',
+    owner,
+    burnTx,
+    from: fromChain,
+    to: toChain,
+  })
+  try {
+    const result = await retryBridgeMint({ burnTx, fromChain, toChain }, owner)
+    writeAutoMintStatus(jobId, {
+      status: 'complete',
+      action: 'auto-mint-bridge',
+      owner,
+      burnTx,
+      from: fromChain,
+      to: toChain,
+      result,
+    })
+    console.log(JSON.stringify(result, null, 2))
+  } catch (error) {
+    writeAutoMintStatus(jobId, {
+      status: 'error',
+      action: 'auto-mint-bridge',
+      owner,
+      burnTx,
+      from: fromChain,
+      to: toChain,
+      error: error.message,
+    })
+    throw error
   }
 }
 
@@ -1740,6 +1814,7 @@ ARC_AGENT_ID=
   }
   if (cmd === 'run') return runPrompt()
   if (cmd === 'serve') return serve()
+  if (cmd === 'auto-mint-bridge') return autoMintBridge()
   if (cmd === 'ask') {
     const result = makeAgentResponse({ prompt: arg('prompt'), jobId: arg('job-id'), agentId: process.env.AGENT_ID, owner: process.env.AGENT_OWNER })
     console.log(JSON.stringify(result, null, 2))

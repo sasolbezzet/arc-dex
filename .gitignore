@@ -26,3 +26,4 @@ dist-ssr
 .vercel
 arcox-agent/solana-router/target/
 arcox-agent/solana-router/programs/*/target/
+arcox-agent/.arcox-auto-mint/

@@ -19,7 +19,6 @@ import {
   readAgent,
   readJob,
   registerAgentIdentity,
-  retryConfirmedBridge,
   setAgentJobBudget,
   submitAgentJob,
 } from '../bin/arcox-agent.mjs'
@@ -122,21 +121,6 @@ const tools = [
         confirmed: { type: 'boolean' },
       },
       required: ['fromChain', 'toChain', 'amount'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'arcox_retry_bridge',
-    description: 'Retry mint for a pending CCTP bridge burn transaction. If confirmed is not true, returns preview only.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        burnTx: { type: 'string' },
-        fromChain: { type: 'string' },
-        toChain: { type: 'string' },
-        confirmed: { type: 'boolean' },
-      },
-      required: ['burnTx', 'fromChain', 'toChain'],
       additionalProperties: false,
     },
   },
@@ -337,7 +321,7 @@ async function agentJob(args) {
   throw new Error(`Unsupported agent job operation: ${args.operation}`)
 }
 
-const valueMovingTools = new Set(['arcox_execute_bridge', 'arcox_retry_bridge', 'arcox_execute_send', 'arcox_execute_swap'])
+const valueMovingTools = new Set(['arcox_execute_bridge', 'arcox_execute_send', 'arcox_execute_swap'])
 const valueMovingJobOps = new Set(['register-agent', 'create-job', 'set-budget', 'fund', 'submit', 'complete'])
 const rateLimitBuckets = new Map()
 const RATE_LIMIT_WINDOW_MS = 60_000
@@ -397,7 +381,6 @@ async function rpcResponse(message) {
         maxAttestationWaitMs: args.maxAttestationWaitMs,
       }))
     }
-    if (name === 'arcox_retry_bridge') return result(id, await retryConfirmedBridge(args))
     if (name === 'arcox_quote_send') return result(id, await quoteSend(args))
     if (name === 'arcox_execute_send') return result(id, await executeConfirmedSend(args))
     if (name === 'arcox_quote_swap') return result(id, await quoteSwap(args))
