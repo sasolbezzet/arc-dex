@@ -305,7 +305,7 @@ function routeStatus(args) {
     normalized: { fromChain: fromChain || null, toChain: toChain || null },
     fromChain: from || null,
     toChain: to || null,
-    routerFeeApplies: Boolean(from?.router && action.includes('bridge') && String(args.token || 'USDC').toUpperCase() === 'USDC'),
+    routerFeeApplies: Boolean(from?.router && !solanaRoute && action.includes('bridge') && String(args.token || 'USDC').toUpperCase() === 'USDC'),
     solanaRoute,
     terminalExecution: solanaRoute ? 'supported_with_local_solana_signer' : 'supported',
     safeNextStep: issues.length

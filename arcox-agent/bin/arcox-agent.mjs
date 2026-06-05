@@ -809,7 +809,7 @@ export async function executeBridge(intent, owner) {
     throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
   }
 
-  const router = routerFor(fromInfo.id)
+  const router = toInfo.solana ? null : routerFor(fromInfo.id)
   const spender = router || fromInfo.tokenMessenger
 
   console.error(`[bridge] route ${fromInfo.id} -> ${toInfo.id}`)
@@ -925,7 +925,7 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
   const sourceClient = clientFor(fromInfo)
   const tokenBalance = await sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [owner] })
   if (tokenBalance < amount) throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
-  const router = routerFor(fromInfo.id)
+  const router = null
   const spender = router || fromInfo.tokenMessenger
   const mintRecipient = `0x${Buffer.from(recipientAta.toBuffer()).toString('hex')}`
 
@@ -1448,7 +1448,7 @@ export async function quoteBridge(intent) {
   }
   const amount = parseUnits(String(intent.amount), 6)
   const sourceClient = clientFor(fromInfo)
-  const router = routerFor(fromInfo.id)
+  const router = toInfo.solana ? null : routerFor(fromInfo.id)
   const solanaRecipient = toInfo.solana ? solanaKeypair().publicKey.toBase58() : null
   const [balance, routerQuote] = await Promise.all([
     sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
