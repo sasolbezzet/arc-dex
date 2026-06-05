@@ -373,11 +373,12 @@ async function rpcResponse(message) {
     if (name === 'arcox_execute_bridge') {
       const fromChain = normalizeMcpChain(args.fromChain)
       const toChain = normalizeMcpChain(args.toChain)
+      const fastSource = fromChain === 'Arc_Testnet' || fromChain === 'Solana_Devnet'
       return result(id, await executeConfirmedBridge({
         ...args,
         fromChain: fromChain || args.fromChain,
         toChain: toChain || args.toChain,
-        deferMint: args.deferMint ?? true,
+        deferMint: args.deferMint ?? !fastSource,
         maxAttestationWaitMs: args.maxAttestationWaitMs,
       }))
     }

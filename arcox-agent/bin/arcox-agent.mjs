@@ -1517,7 +1517,7 @@ export async function quoteBridge(intent) {
       supported: Number(balance.amount) >= Number(intent.amount),
       terminalExecution: 'supported_with_local_solana_signer',
       approvalRequired: true,
-      safeNextStep: 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true.',
+      safeNextStep: 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Solana source routes should complete burn, attestation, and mint in the same MCP call.',
     }
   }
   const amount = parseUnits(String(intent.amount), 6)
@@ -1550,8 +1550,10 @@ export async function quoteBridge(intent) {
     solanaRecipient,
     approvalRequired: true,
     safeNextStep: toInfo.solana
-      ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Mint will use the displayed SOLANA_PRIVATE_KEY local signer recipient.'
-      : 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true.',
+      ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Arc source routes should complete burn, attestation, and Solana mint in the same MCP call.'
+      : fromInfo.fast
+        ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Arc source routes should complete burn, attestation, and mint in the same MCP call.'
+        : 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Slow source routes may return auto_mint_scheduled while the background worker waits for attestation.',
   }
 }
 
