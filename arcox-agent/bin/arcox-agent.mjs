@@ -58,6 +58,7 @@ const ARCOX_BACKEND_URL = process.env.ARCOX_BACKEND_URL || 'https://43.163.98.12
 const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired']
+const BRIDGE_RECEIPT_WAIT_MS = Number(process.env.BRIDGE_RECEIPT_WAIT_MS || '45000')
 const ARC_TOKENS = {
   USDC: { address: ARC_USDC, decimals: 6 },
   EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
@@ -591,6 +592,34 @@ async function writeContractBuffered({ chainInfo, address, abi, functionName, ar
   }
 }
 
+async function waitForReceipt(client, hash, timeoutMs = 0) {
+  if (!timeoutMs) return client.waitForTransactionReceipt({ hash })
+  return Promise.race([
+    client.waitForTransactionReceipt({ hash }),
+    sleep(timeoutMs).then(() => null),
+  ])
+}
+
+async function ensureAllowance({ sourceClient, fromInfo, owner, tokenAddress, spender, amount, deferMint }) {
+  const allowance = await sourceClient.readContract({
+    address: tokenAddress,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [owner, spender],
+  }).catch(() => 0n)
+  if (allowance >= amount) return { approveHash: null, confirmed: true, skipped: true }
+
+  const approveHash = await writeContractBuffered({
+    chainInfo: fromInfo,
+    address: tokenAddress,
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [spender, amount],
+  })
+  const receipt = await waitForReceipt(sourceClient, approveHash, deferMint ? BRIDGE_RECEIPT_WAIT_MS : 0)
+  return { approveHash, confirmed: Boolean(receipt), skipped: false }
+}
+
 async function pollAttestation(domain, txHash, chainInfo, options = {}) {
   const maxPolls = chainInfo.fast ? 90 : Number(process.env.BRIDGE_ATTESTATION_POLLS || '700')
   const deadline = options.maxWaitMs ? Date.now() + Number(options.maxWaitMs) : 0
@@ -784,15 +813,29 @@ export async function executeBridge(intent, owner) {
   const spender = router || fromInfo.tokenMessenger
 
   console.error(`[bridge] route ${fromInfo.id} -> ${toInfo.id}`)
-  console.error(`[bridge] approve ${intent.amount} USDC to ${router ? 'ArcoxRouter' : 'CCTP TokenMessenger'}`)
-  const approveHash = await writeContractBuffered({
-    chainInfo: fromInfo,
-    address: fromInfo.usdc,
-    abi: erc20Abi,
-    functionName: 'approve',
-    args: [spender, amount],
+  console.error(`[bridge] check allowance for ${router ? 'ArcoxRouter' : 'CCTP TokenMessenger'}`)
+  const approval = await ensureAllowance({
+    sourceClient,
+    fromInfo,
+    owner,
+    tokenAddress: fromInfo.usdc,
+    spender,
+    amount,
+    deferMint: intent.deferMint,
   })
-  await sourceClient.waitForTransactionReceipt({ hash: approveHash })
+  if (!approval.confirmed) {
+    return pendingBridgeStepResult({
+      status: 'pending_approve',
+      route: router ? 'arcox-router' : 'direct-cctp-fallback',
+      router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: intent.amount,
+      approveHash: approval.approveHash,
+      safeNextStep: `Approve belum confirmed sebelum timeout MCP. Jalankan ulang bridge setelah approve tx ${approval.approveHash} confirmed.`,
+    })
+  }
 
   console.error(`[bridge] burn ${intent.amount} USDC ${router ? 'via ArcoxRouter fee route' : 'direct CCTP fallback'}`)
   const maxFee = 10n
@@ -812,7 +855,21 @@ export async function executeBridge(intent, owner) {
       functionName: 'depositForBurn',
       args: [amount, toInfo.domain, bytes32Address(owner), fromInfo.usdc, `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
     })
-  await sourceClient.waitForTransactionReceipt({ hash: burnHash })
+  const burnReceipt = await waitForReceipt(sourceClient, burnHash, intent.deferMint ? BRIDGE_RECEIPT_WAIT_MS : 0)
+  if (!burnReceipt) {
+    return pendingBridgeStepResult({
+      status: 'pending_burn',
+      route: router ? 'arcox-router' : 'direct-cctp-fallback',
+      router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: intent.amount,
+      approveHash: approval.approveHash,
+      burnHash,
+      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Cek burn tx ${burnHash}, lalu jalankan arcox_retry_bridge setelah confirmed dan attestation siap.`,
+    })
+  }
   if (intent.deferMint) {
     return pendingBridgeMintResult({
       route: router ? 'arcox-router' : 'direct-cctp-fallback',
@@ -821,7 +878,7 @@ export async function executeBridge(intent, owner) {
       toInfo,
       owner,
       amount: intent.amount,
-      approveHash,
+      approveHash: approval.approveHash,
       burnHash,
       safeNextStep: `Burn selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint setelah attestation siap.`,
     })
@@ -850,10 +907,10 @@ export async function executeBridge(intent, owner) {
     owner,
     amount: intent.amount,
     token: 'USDC',
-    approveTx: approveHash,
+    approveTx: approval.approveHash,
     burnTx: burnHash,
     mintTx: mintHash,
-    approveExplorer: fromInfo.explorer + approveHash,
+    approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
     burnExplorer: fromInfo.explorer + burnHash,
     mintExplorer: toInfo.explorer + mintHash,
   }
@@ -872,14 +929,29 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
   const spender = router || fromInfo.tokenMessenger
   const mintRecipient = `0x${Buffer.from(recipientAta.toBuffer()).toString('hex')}`
 
-  const approveHash = await writeContractBuffered({
-    chainInfo: fromInfo,
-    address: fromInfo.usdc,
-    abi: erc20Abi,
-    functionName: 'approve',
-    args: [spender, amount],
+  const approval = await ensureAllowance({
+    sourceClient,
+    fromInfo,
+    owner,
+    tokenAddress: fromInfo.usdc,
+    spender,
+    amount,
+    deferMint: intent.deferMint,
   })
-  await sourceClient.waitForTransactionReceipt({ hash: approveHash })
+  if (!approval.confirmed) {
+    return pendingBridgeStepResult({
+      status: 'pending_approve',
+      route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
+      router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: intent.amount,
+      approveHash: approval.approveHash,
+      solanaRecipient: solana.publicKey.toBase58(),
+      safeNextStep: `Approve belum confirmed sebelum timeout MCP. Jalankan ulang bridge setelah approve tx ${approval.approveHash} confirmed.`,
+    })
+  }
   const burnHash = router
     ? await writeContractBuffered({
       chainInfo: fromInfo,
@@ -895,7 +967,22 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       functionName: 'depositForBurn',
       args: [amount, toInfo.domain, mintRecipient, fromInfo.usdc, `0x${'0'.repeat(64)}`, 10n, 1000],
     })
-  await sourceClient.waitForTransactionReceipt({ hash: burnHash })
+  const burnReceipt = await waitForReceipt(sourceClient, burnHash, intent.deferMint ? BRIDGE_RECEIPT_WAIT_MS : 0)
+  if (!burnReceipt) {
+    return pendingBridgeStepResult({
+      status: 'pending_burn',
+      route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
+      router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: intent.amount,
+      approveHash: approval.approveHash,
+      burnHash,
+      solanaRecipient: solana.publicKey.toBase58(),
+      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Cek burn tx ${burnHash}, lalu jalankan arcox_retry_bridge setelah confirmed dan attestation siap.`,
+    })
+  }
   if (intent.deferMint) {
     return {
       status: 'pending_mint',
@@ -909,9 +996,9 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       solanaRecipientAta: recipientAta.toBase58(),
       amount: intent.amount,
       token: 'USDC',
-      approveTx: approveHash,
+      approveTx: approval.approveHash,
       burnTx: burnHash,
-      approveExplorer: fromInfo.explorer + approveHash,
+      approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
       burnExplorer: fromInfo.explorer + burnHash,
       safeNextStep: `Burn selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint ke Solana setelah attestation siap.`,
     }
@@ -933,9 +1020,9 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       solanaRecipientAta: recipientAta.toBase58(),
       amount: intent.amount,
       token: 'USDC',
-      approveTx: approveHash,
+      approveTx: approval.approveHash,
       burnTx: burnHash,
-      approveExplorer: fromInfo.explorer + approveHash,
+      approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
       burnExplorer: fromInfo.explorer + burnHash,
       safeNextStep: `Attestation belum siap sebelum timeout MCP. Jalankan retry bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id}.`,
     }
@@ -955,10 +1042,10 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
     solanaLamports: solanaBalance,
     amount: intent.amount,
     token: 'USDC',
-    approveTx: approveHash,
+    approveTx: approval.approveHash,
     burnTx: burnHash,
     mintTx,
-    approveExplorer: fromInfo.explorer + approveHash,
+    approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
     burnExplorer: fromInfo.explorer + burnHash,
     mintExplorer: `https://explorer.solana.com/tx/${mintTx}?cluster=devnet`,
   }
@@ -1025,6 +1112,26 @@ function pendingBridgeMintResult({ route, router, fromInfo, toInfo, owner, amoun
     burnTx: burnHash,
     approveExplorer: approveHash ? fromInfo.explorer + approveHash : undefined,
     burnExplorer: burnExplorer || fromInfo.explorer + burnHash,
+    safeNextStep,
+  }
+}
+
+function pendingBridgeStepResult({ status, route, router, fromInfo, toInfo, owner, amount, approveHash, burnHash, solanaRecipient, safeNextStep }) {
+  return {
+    status,
+    action: 'bridge',
+    route,
+    router: router || null,
+    from: fromInfo.id,
+    to: toInfo.id,
+    owner,
+    solanaRecipient,
+    amount,
+    token: 'USDC',
+    approveTx: approveHash,
+    burnTx: burnHash,
+    approveExplorer: approveHash ? fromInfo.explorer + approveHash : undefined,
+    burnExplorer: burnHash ? fromInfo.explorer + burnHash : undefined,
     safeNextStep,
   }
 }
