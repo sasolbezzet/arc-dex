@@ -394,6 +394,7 @@ async function rpcResponse(message) {
         ...args,
         fromChain: fromChain || args.fromChain,
         toChain: toChain || args.toChain,
+        deferMint: args.deferMint ?? solanaRoute,
         maxAttestationWaitMs: args.maxAttestationWaitMs ?? (solanaRoute ? 55_000 : undefined),
       }))
     }

@@ -883,6 +883,26 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       args: [amount, toInfo.domain, mintRecipient, fromInfo.usdc, `0x${'0'.repeat(64)}`, 10n, 1000],
     })
   await sourceClient.waitForTransactionReceipt({ hash: burnHash })
+  if (intent.deferMint) {
+    return {
+      status: 'pending_mint',
+      action: 'bridge',
+      route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
+      router: router || null,
+      from: fromInfo.id,
+      to: toInfo.id,
+      owner,
+      solanaRecipient: solana.publicKey.toBase58(),
+      solanaRecipientAta: recipientAta.toBase58(),
+      amount: intent.amount,
+      token: 'USDC',
+      approveTx: approveHash,
+      burnTx: burnHash,
+      approveExplorer: fromInfo.explorer + approveHash,
+      burnExplorer: fromInfo.explorer + burnHash,
+      safeNextStep: `Burn selesai. Jalankan arcox_retry_bridge dengan burn tx ${burnHash} dari ${fromInfo.id} ke ${toInfo.id} untuk mint ke Solana setelah attestation siap.`,
+    }
+  }
   const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo, {
     maxWaitMs: intent.maxAttestationWaitMs,
     returnNullOnTimeout: Boolean(intent.maxAttestationWaitMs),
