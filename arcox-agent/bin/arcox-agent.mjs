@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from 'crypto'
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync } from 'fs'
 import { createServer } from 'http'
 import { spawn } from 'child_process'
 import { dirname, join } from 'path'
@@ -34,6 +34,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
   getAssociatedTokenAddress,
 } from '@solana/spl-token'
 
@@ -60,7 +61,19 @@ const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired']
 const BRIDGE_RECEIPT_WAIT_MS = Number(process.env.BRIDGE_RECEIPT_WAIT_MS || '45000')
+const MCP_FAST_ATTESTATION_WAIT_MS = Number(process.env.MCP_FAST_ATTESTATION_WAIT_MS || '30000')
+const AUTO_MINT_GRACE_WAIT_MS = Number(process.env.AUTO_MINT_GRACE_WAIT_MS || '20000')
+const MCP_MINT_RECEIPT_WAIT_MS = Number(process.env.MCP_MINT_RECEIPT_WAIT_MS || '30000')
+const BACKEND_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_FETCH_TIMEOUT_MS || '8000')
+const SWAP_EXECUTION_TIMEOUT_MS = Number(process.env.SWAP_EXECUTION_TIMEOUT_MS || '45000')
+const SEND_EXECUTION_TIMEOUT_MS = Number(process.env.SEND_EXECUTION_TIMEOUT_MS || '60000')
+const SEND_ESTIMATE_TIMEOUT_MS = Number(process.env.SEND_ESTIMATE_TIMEOUT_MS || '15000')
+const RPC_TIMEOUT_MS = Number(process.env.RPC_TIMEOUT_MS || '8000')
+const SOLANA_CONFIRM_TIMEOUT_MS = Number(process.env.SOLANA_CONFIRM_TIMEOUT_MS || '45000')
+const PLATFORM_FEE_BPS = Number(process.env.ARCOX_ROUTER_FEE_BPS || '30')
+const SOLANA_FEE_TREASURY = process.env.SOLANA_FEE_TREASURY || '4kAf2Qxf9KnbnKo7ukPMMu8q1UButJYNik4yQtvWhExw'
 const AUTO_MINT_DIR = join(AGENT_HOME, '.arcox-auto-mint')
+const TX_HISTORY_FILE = join(AGENT_HOME, '.arcox-agent-history.json')
 const ARC_TOKENS = {
   USDC: { address: ARC_USDC, decimals: 6 },
   EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
@@ -76,8 +89,90 @@ const arcTestnet = defineChain({
   blockExplorers: { default: { name: 'ArcScan', url: 'https://testnet.arcscan.app' } },
 })
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) })
+function rpcTransport(rpcUrl) {
+  return http(rpcUrl, { timeout: RPC_TIMEOUT_MS })
+}
+
+const publicClient = createPublicClient({ chain: arcTestnet, transport: rpcTransport(ARC_RPC) })
 const routerDeployments = loadRouterDeployments()
+
+function readAgentHistory() {
+  try {
+    if (!existsSync(TX_HISTORY_FILE)) return []
+    const items = JSON.parse(readFileSync(TX_HISTORY_FILE, 'utf8'))
+    return Array.isArray(items) ? items : []
+  } catch { return [] }
+}
+
+function writeAgentHistory(items) {
+  writeFileSync(TX_HISTORY_FILE, JSON.stringify(items.slice(0, 100), null, 2))
+}
+
+function recordAgentHistory(record, owner = '') {
+  const rec = {
+    id: record.id || `${record.action || 'tx'}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    ts: record.ts || Date.now(),
+    owner,
+    source: 'agent-mcp',
+    status: record.status === 'error' ? 'error' : record.status === 'pending' ? 'pending' : 'success',
+    ...record,
+  }
+  writeAgentHistory([rec, ...readAgentHistory().filter(item => item.id !== rec.id)])
+  return rec
+}
+
+function normalizeArcTokenKey(value, fallback = 'USDC') {
+  const upper = String(value || fallback).trim().toUpperCase()
+  if (upper === 'CIRBTC' || upper === 'CIR-BTC' || upper === 'CIRCLEBTC') return 'CIRBTC'
+  return upper || fallback
+}
+
+function apiArcTokenKey(value, fallback = 'USDC') {
+  const tokenKey = normalizeArcTokenKey(value, fallback)
+  return tokenKey === 'CIRBTC' ? 'cirBTC' : tokenKey
+}
+
+function splitPlatformFeeUnits(amountUnits) {
+  const feeBps = Number.isFinite(PLATFORM_FEE_BPS) && PLATFORM_FEE_BPS > 0 ? Math.floor(PLATFORM_FEE_BPS) : 0
+  const feeUnits = (amountUnits * BigInt(feeBps)) / 10_000n
+  const netUnits = amountUnits - feeUnits
+  if (netUnits <= 0n) throw new Error('Amount too small after platform fee')
+  return { feeBps, feeUnits, netUnits }
+}
+
+function updateAgentHistoryByBurnTx(burnTx, patch, owner = '') {
+  const items = readAgentHistory()
+  let updated = null
+  const next = items.map(item => {
+    if (!burnTx || String(item.burnTx || '').toLowerCase() !== String(burnTx).toLowerCase()) return item
+    updated = { ...item, ...patch, owner: item.owner || owner, ts: item.ts || Date.now() }
+    return updated
+  })
+  if (!updated) {
+    updated = {
+      id: `bridge-${Date.now()}-${String(burnTx || '').slice(-6)}`,
+      ts: Date.now(),
+      owner,
+      source: 'agent-mcp',
+      action: 'bridge',
+      burnTx,
+      ...patch,
+    }
+    next.unshift(updated)
+  }
+  writeAgentHistory(next)
+  return updated
+}
+
+async function pushBackendHistory(owner, record) {
+  try {
+    const account = privateKeyToAccount(privateKey())
+    const token = await backendSession(account)
+    await postJson('/api/tx-history', { metamaskAddress: owner, record: { ...record, owner, source: 'agent-mcp' } }, token)
+  } catch (error) {
+    console.error('[history] backend sync skipped:', error.message)
+  }
+}
 
 const cctpChains = {
   Arc_Testnet: {
@@ -404,7 +499,7 @@ function privateKey() {
 
 function wallet() {
   const account = privateKeyToAccount(privateKey())
-  const walletClient = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_RPC) })
+  const walletClient = createWalletClient({ account, chain: arcTestnet, transport: rpcTransport(ARC_RPC) })
   return { account, walletClient }
 }
 
@@ -560,7 +655,7 @@ function authMessage(address, issuedAt) {
   ].join('\n')
 }
 
-async function postJson(path, body, token = '') {
+async function postJson(path, body, token = '', timeoutMs = BACKEND_FETCH_TIMEOUT_MS) {
   const response = await fetch(`${ARCOX_BACKEND_URL}${path}`, {
     method: 'POST',
     headers: {
@@ -568,6 +663,17 @@ async function postJson(path, body, token = '') {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+async function getJson(url) {
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(BACKEND_FETCH_TIMEOUT_MS),
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
@@ -589,13 +695,27 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+async function withTimeout(promise, timeoutMs, message) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function clientFor(chainInfo) {
-  return createPublicClient({ chain: chainInfo.chain, transport: http(chainInfo.rpc) })
+  return createPublicClient({ chain: chainInfo.chain, transport: rpcTransport(chainInfo.rpc) })
 }
 
 function walletFor(chainInfo) {
   const account = privateKeyToAccount(privateKey())
-  const walletClient = createWalletClient({ account, chain: chainInfo.chain, transport: http(chainInfo.rpc) })
+  const walletClient = createWalletClient({ account, chain: chainInfo.chain, transport: rpcTransport(chainInfo.rpc) })
   return { account, walletClient }
 }
 
@@ -638,6 +758,13 @@ async function waitForReceipt(client, hash, timeoutMs = 0) {
   if (!timeoutMs) return client.waitForTransactionReceipt({ hash })
   return Promise.race([
     client.waitForTransactionReceipt({ hash }),
+    sleep(timeoutMs).then(() => null),
+  ])
+}
+
+async function confirmSolanaTransaction(conn, params, commitment = 'confirmed', timeoutMs = SOLANA_CONFIRM_TIMEOUT_MS) {
+  return Promise.race([
+    conn.confirmTransaction(params, commitment),
     sleep(timeoutMs).then(() => null),
   ])
 }
@@ -694,6 +821,13 @@ async function pollAttestation(domain, txHash, chainInfo, options = {}) {
   throw new Error(`Attestation timeout for ${chainInfo.id}. Burn completed, retry mint later with burn tx ${txHash}.`)
 }
 
+async function waitAttestationBeforeAutoMint(fromInfo, burnHash) {
+  return pollAttestation(fromInfo.domain, burnHash, fromInfo, {
+    maxWaitMs: AUTO_MINT_GRACE_WAIT_MS,
+    returnNullOnTimeout: true,
+  })
+}
+
 async function signSolanaReceiveMessage(attestationHex, messageHex, payer) {
   const conn = solanaConnection()
   const payerKey = payer.publicKey
@@ -733,7 +867,9 @@ async function signSolanaReceiveMessage(attestationHex, messageHex, payer) {
     const ataTx = new VersionedTransaction(ataMsg)
     ataTx.sign([payer])
     const ataSig = await conn.sendRawTransaction(ataTx.serialize(), { skipPreflight: true, preflightCommitment: 'confirmed' })
-    await conn.confirmTransaction({ signature: ataSig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed')
+    const ataConf = await confirmSolanaTransaction(conn, { signature: ataSig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed')
+    if (!ataConf) throw new Error(`Solana ATA transaction submitted but not confirmed before timeout: ${ataSig}`)
+    if (ataConf.value.err) throw new Error('Solana ATA creation failed: ' + JSON.stringify(ataConf.value.err))
     latest = await conn.getLatestBlockhash('confirmed')
   }
 
@@ -767,7 +903,8 @@ async function signSolanaReceiveMessage(attestationHex, messageHex, payer) {
   const recvTx = new VersionedTransaction(recvMsg)
   recvTx.sign([payer])
   const sig = await conn.sendRawTransaction(recvTx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed' })
-  const conf = await conn.confirmTransaction({ signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed')
+  const conf = await confirmSolanaTransaction(conn, { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed')
+  if (!conf) return sig
   if (conf.value.err) throw new Error('Solana receiveMessage failed: ' + JSON.stringify(conf.value.err))
   return sig
 }
@@ -779,8 +916,11 @@ async function burnSolanaUsdc(amount, mintRecipientEvm, payer) {
   const senderAta = await getAssociatedTokenAddress(mint, owner)
   const mintRecipientBytes = hexToU8(mintRecipientEvm.slice(2).toLowerCase().padStart(64, '0'))
   const amountLamports = parseUnits(String(amount), 6)
+  const platformFee = splitPlatformFeeUnits(amountLamports)
+  const treasury = new PublicKey(SOLANA_FEE_TREASURY)
+  const treasuryAta = await getAssociatedTokenAddress(mint, treasury)
   const discriminator = new Uint8Array([215, 60, 61, 46, 114, 55, 128, 176])
-  const data = concatU8(discriminator, u64LE(amountLamports), u32LE(26), mintRecipientBytes, new Uint8Array(32), u64LE(10n), u32LE(2000))
+  const data = concatU8(discriminator, u64LE(platformFee.netUnits), u32LE(26), mintRecipientBytes, new Uint8Array(32), u64LE(10n), u32LE(2000))
   const tmProgram = new PublicKey(SOLANA_TOKEN_MESSENGER_PROGRAM)
   const mtProgram = new PublicKey(SOLANA_MESSAGE_TRANSMITTER_PROGRAM)
   const [tokenMessengerPda] = PublicKey.findProgramAddressSync([enc('token_messenger')], tmProgram)
@@ -818,11 +958,26 @@ async function burnSolanaUsdc(amount, mintRecipientEvm, payer) {
   })
   const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
   const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: owner })
+  const treasuryAtaExists = await conn.getAccountInfo(treasuryAta).catch(() => null)
+  if (!treasuryAtaExists) {
+    tx.add(createAssociatedTokenAccountInstruction(owner, treasuryAta, treasury, mint))
+  }
+  if (platformFee.feeUnits > 0n) {
+    tx.add(createTransferInstruction(senderAta, treasuryAta, owner, platformFee.feeUnits))
+  }
   tx.add(ix)
   tx.partialSign(messageSentEventData, payer)
   const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed' })
-  await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
-  return sig
+  const conf = await confirmSolanaTransaction(conn, { signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+  if (!conf) throw new Error(`Solana burn submitted but not confirmed before timeout: ${sig}`)
+  if (conf.value.err) throw new Error('Solana burn failed: ' + JSON.stringify(conf.value.err))
+  return {
+    sig,
+    platformFee: formatUnits(platformFee.feeUnits, 6),
+    netAmount: formatUnits(platformFee.netUnits, 6),
+    feeBps: platformFee.feeBps,
+    treasury: treasury.toBase58(),
+  }
 }
 
 async function solanaUsdcBalance(owner = solanaKeypair().publicKey) {
@@ -851,7 +1006,8 @@ export async function executeBridge(intent, owner) {
     throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
   }
 
-  const router = toInfo.solana ? null : routerFor(fromInfo.id)
+  const router = routerFor(fromInfo.id)
+  if (!router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
   const spender = router || fromInfo.tokenMessenger
 
   console.error(`[bridge] route ${fromInfo.id} -> ${toInfo.id}`)
@@ -909,10 +1065,40 @@ export async function executeBridge(intent, owner) {
       amount: intent.amount,
       approveHash: approval.approveHash,
       burnHash,
-      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Agent auto-mint worker sudah dijadwalkan dan akan mint setelah burn confirmed serta attestation siap.`,
+      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Jalankan ulang status/retry setelah burn confirmed; auto-mint worker belum dijadwalkan.`,
     })
   }
   if (intent.deferMint) {
+    const attestation = await waitAttestationBeforeAutoMint(fromInfo, burnHash)
+    if (attestation) {
+      console.error(`[bridge] attestation ready during grace wait, mint on ${toInfo.id}`)
+      const mintHash = await writeContractBuffered({
+        chainInfo: toInfo,
+        address: toInfo.messageTransmitter,
+        abi: messageTransmitterAbi,
+        functionName: 'receiveMessage',
+        args: [attestation.message, attestation.attestation],
+      })
+      const mintReceipt = await waitForReceipt(destinationClient, mintHash, MCP_MINT_RECEIPT_WAIT_MS)
+      return {
+        status: mintReceipt ? 'submitted' : 'pending_mint_receipt',
+        action: 'bridge',
+        route: router ? 'arcox-router' : 'direct-cctp-fallback',
+        router: router || null,
+        from: fromInfo.id,
+        to: toInfo.id,
+        owner,
+        amount: intent.amount,
+        token: 'USDC',
+        approveTx: approval.approveHash,
+        burnTx: burnHash,
+        mintTx: mintHash,
+        approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
+        burnExplorer: fromInfo.explorer + burnHash,
+        mintExplorer: toInfo.explorer + mintHash,
+        safeNextStep: mintReceipt ? 'Attestation siap dalam 20 detik; mint selesai tanpa auto-mint worker.' : 'Mint submitted after 20s grace wait, but receipt not confirmed before MCP timeout.',
+      }
+    }
     return pendingBridgeMintResult({
       route: router ? 'arcox-router' : 'direct-cctp-fallback',
       router,
@@ -922,12 +1108,28 @@ export async function executeBridge(intent, owner) {
       amount: intent.amount,
       approveHash: approval.approveHash,
       burnHash,
-      safeNextStep: `Burn selesai. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis setelah attestation siap.`,
+      safeNextStep: `Burn selesai. Attestation belum siap setelah ${Math.round(AUTO_MINT_GRACE_WAIT_MS / 1000)} detik; agent auto-mint worker baru dijadwalkan.`,
     })
   }
 
   console.error(`[bridge] wait attestation from Circle Iris`)
-  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
+  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo, {
+    maxWaitMs: intent.maxAttestationWaitMs,
+    returnNullOnTimeout: Boolean(intent.maxAttestationWaitMs),
+  })
+  if (!attestation) {
+    return pendingBridgeMintResult({
+      route: router ? 'arcox-router' : 'direct-cctp-fallback',
+      router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: intent.amount,
+      approveHash: approval.approveHash,
+      burnHash,
+      safeNextStep: `Attestation belum siap sebelum batas waktu MCP. Agent auto-mint worker dijadwalkan setelah grace wait attestation.`,
+    })
+  }
 
   console.error(`[bridge] mint on ${toInfo.id}`)
   const mintHash = await writeContractBuffered({
@@ -937,7 +1139,27 @@ export async function executeBridge(intent, owner) {
     functionName: 'receiveMessage',
     args: [attestation.message, attestation.attestation],
   })
-  await destinationClient.waitForTransactionReceipt({ hash: mintHash })
+  const mintReceipt = await waitForReceipt(destinationClient, mintHash, MCP_MINT_RECEIPT_WAIT_MS)
+  if (!mintReceipt) {
+    return {
+      status: 'pending_mint_receipt',
+      action: 'bridge',
+      route: router ? 'arcox-router' : 'direct-cctp-fallback',
+      router: router || null,
+      from: fromInfo.id,
+      to: toInfo.id,
+      owner,
+      amount: intent.amount,
+      token: 'USDC',
+      approveTx: approval.approveHash,
+      burnTx: burnHash,
+      mintTx: mintHash,
+      approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
+      burnExplorer: fromInfo.explorer + burnHash,
+      mintExplorer: toInfo.explorer + mintHash,
+      safeNextStep: 'Mint transaction submitted, but receipt was not confirmed before MCP timeout. Check explorer/history before retrying.',
+    }
+  }
 
   return {
     status: 'submitted',
@@ -967,7 +1189,8 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
   const sourceClient = clientFor(fromInfo)
   const tokenBalance = await sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [owner] })
   if (tokenBalance < amount) throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
-  const router = null
+  const router = routerFor(fromInfo.id)
+  if (!router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
   const spender = router || fromInfo.tokenMessenger
   const mintRecipient = `0x${Buffer.from(recipientAta.toBuffer()).toString('hex')}`
 
@@ -1022,10 +1245,36 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       approveHash: approval.approveHash,
       burnHash,
       solanaRecipient: solana.publicKey.toBase58(),
-      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Agent auto-mint worker sudah dijadwalkan dan akan mint setelah burn confirmed serta attestation siap.`,
+      safeNextStep: `Burn belum confirmed sebelum timeout MCP. Jalankan ulang status/retry setelah burn confirmed; auto-mint worker belum dijadwalkan.`,
     })
   }
   if (intent.deferMint) {
+    const attestation = await waitAttestationBeforeAutoMint(fromInfo, burnHash)
+    if (attestation) {
+      const mintTx = await signSolanaReceiveMessage(attestation.attestation, attestation.message, solana)
+      const solanaBalance = await conn.getBalance(solana.publicKey).catch(() => 0)
+      return {
+        status: 'submitted',
+        action: 'bridge',
+        route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
+        router: router || null,
+        from: fromInfo.id,
+        to: toInfo.id,
+        owner,
+        solanaRecipient: solana.publicKey.toBase58(),
+        solanaRecipientAta: recipientAta.toBase58(),
+        solanaLamports: solanaBalance,
+        amount: intent.amount,
+        token: 'USDC',
+        approveTx: approval.approveHash,
+        burnTx: burnHash,
+        mintTx,
+        approveExplorer: approval.approveHash ? fromInfo.explorer + approval.approveHash : undefined,
+        burnExplorer: fromInfo.explorer + burnHash,
+        mintExplorer: `https://explorer.solana.com/tx/${mintTx}?cluster=devnet`,
+        safeNextStep: 'Attestation siap dalam 20 detik; Solana mint selesai tanpa auto-mint worker.',
+      }
+    }
     return pendingBridgeMintResult({
       route: router ? 'arcox-router-solana' : 'direct-cctp-solana',
       router,
@@ -1036,7 +1285,7 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       amount: intent.amount,
       approveHash: approval.approveHash,
       burnHash,
-      safeNextStep: `Burn selesai. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis ke Solana setelah attestation siap.`,
+      safeNextStep: `Burn selesai. Attestation belum siap setelah ${Math.round(AUTO_MINT_GRACE_WAIT_MS / 1000)} detik; agent auto-mint worker baru dijadwalkan untuk mint ke Solana.`,
     })
   }
   const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo, {
@@ -1054,7 +1303,7 @@ async function executeEvmToSolana(intent, owner, fromInfo, toInfo) {
       amount: intent.amount,
       approveHash: approval.approveHash,
       burnHash,
-      safeNextStep: `Attestation belum siap sebelum timeout MCP. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis setelah attestation siap.`,
+      safeNextStep: `Attestation belum siap sebelum timeout MCP. Agent auto-mint worker dijadwalkan setelah grace wait attestation.`,
     })
   }
   const mintTx = await signSolanaReceiveMessage(attestation.attestation, attestation.message, solana)
@@ -1085,8 +1334,40 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
   if (toInfo.solana) throw new Error('Solana to Solana bridge is not supported.')
   const solana = solanaKeypair()
   const destinationClient = clientFor(toInfo)
-  const burnHash = await burnSolanaUsdc(intent.amount, owner, solana)
+  const burn = await burnSolanaUsdc(intent.amount, owner, solana)
+  const burnHash = burn.sig
   if (intent.deferMint) {
+    const attestation = await waitAttestationBeforeAutoMint(fromInfo, burnHash)
+    if (attestation) {
+      const mintHash = await writeContractBuffered({
+        chainInfo: toInfo,
+        address: toInfo.messageTransmitter,
+        abi: messageTransmitterAbi,
+        functionName: 'receiveMessage',
+        args: [attestation.message, attestation.attestation],
+      })
+      await destinationClient.waitForTransactionReceipt({ hash: mintHash })
+      return {
+        status: 'submitted',
+        action: 'bridge',
+        route: 'solana-cctp',
+        from: fromInfo.id,
+        to: toInfo.id,
+        owner,
+        solanaSender: solana.publicKey.toBase58(),
+        amount: intent.amount,
+        token: 'USDC',
+        platformFee: burn.platformFee,
+        estimatedReceive: burn.netAmount,
+        feeBps: burn.feeBps,
+        feeTreasury: burn.treasury,
+        burnTx: burnHash,
+        mintTx: mintHash,
+        burnExplorer: `https://explorer.solana.com/tx/${burnHash}?cluster=devnet`,
+        mintExplorer: toInfo.explorer + mintHash,
+        safeNextStep: 'Attestation siap dalam 20 detik; mint selesai tanpa auto-mint worker.',
+      }
+    }
     return pendingBridgeMintResult({
       route: 'direct-cctp-solana',
       router: null,
@@ -1097,7 +1378,7 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
       burnHash,
       burnExplorer: `https://explorer.solana.com/tx/${burnHash}?cluster=devnet`,
       solanaRecipient: solana.publicKey.toBase58(),
-      safeNextStep: `Burn Solana selesai. Agent auto-mint worker sudah dijadwalkan dan akan mint otomatis setelah attestation siap.`,
+      safeNextStep: `Burn Solana selesai dengan platform fee ${burn.platformFee} USDC. Attestation belum siap setelah ${Math.round(AUTO_MINT_GRACE_WAIT_MS / 1000)} detik; agent auto-mint worker baru dijadwalkan.`,
     })
   }
   const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo)
@@ -1119,6 +1400,10 @@ async function executeSolanaToEvm(intent, owner, fromInfo, toInfo) {
     solanaSender: solana.publicKey.toBase58(),
     amount: intent.amount,
     token: 'USDC',
+    platformFee: burn.platformFee,
+    estimatedReceive: burn.netAmount,
+    feeBps: burn.feeBps,
+    feeTreasury: burn.treasury,
     burnTx: burnHash,
     mintTx: mintHash,
     burnExplorer: `https://explorer.solana.com/tx/${burnHash}?cluster=devnet`,
@@ -1149,7 +1434,6 @@ function pendingBridgeMintResult({ route, router, fromInfo, toInfo, owner, amoun
 }
 
 function pendingBridgeStepResult({ status, route, router, fromInfo, toInfo, owner, amount, approveHash, burnHash, solanaRecipient, safeNextStep }) {
-  const autoMint = burnHash ? scheduleAutoMint({ burnTx: burnHash, fromInfo, toInfo, owner }) : null
   return {
     status,
     action: 'bridge',
@@ -1165,7 +1449,7 @@ function pendingBridgeStepResult({ status, route, router, fromInfo, toInfo, owne
     burnTx: burnHash,
     approveExplorer: approveHash ? fromInfo.explorer + approveHash : undefined,
     burnExplorer: burnHash ? fromInfo.explorer + burnHash : undefined,
-    autoMint,
+    autoMint: null,
     safeNextStep,
   }
 }
@@ -1236,6 +1520,17 @@ async function autoMintBridge() {
   })
   try {
     const result = await retryBridgeMint({ burnTx, fromChain, toChain }, owner)
+    const rec = updateAgentHistoryByBurnTx(burnTx, {
+      status: 'success',
+      action: 'bridge',
+      source: 'agent-mcp',
+      from: fromChain,
+      to: toChain,
+      mintTx: result.mintTx,
+      mintExplorerUrl: result.mintExplorer,
+      note: 'Auto-mint completed by agent worker.',
+    }, owner)
+    await pushBackendHistory(owner, rec)
     writeAutoMintStatus(jobId, {
       status: 'complete',
       action: 'auto-mint-bridge',
@@ -1324,7 +1619,25 @@ export async function executeSwap(intent, owner) {
       quote,
     }
   }
-  const swap = await postJson('/api/swap', { metamaskAddress: owner, tokenIn, tokenOut, amountIn: intent.amount }, token)
+  let swap
+  try {
+    swap = await withTimeout(
+      postJson('/api/swap', { metamaskAddress: owner, tokenIn, tokenOut, amountIn: intent.amount }, token, SWAP_EXECUTION_TIMEOUT_MS),
+      SWAP_EXECUTION_TIMEOUT_MS,
+      `Circle swap backend did not respond within ${SWAP_EXECUTION_TIMEOUT_MS}ms. Check balances/history before retrying.`,
+    )
+  } catch (error) {
+    return {
+      status: 'pending_backend',
+      action: 'swap',
+      source: 'circle-wallet-proxy',
+      owner,
+      wallet: walletData.wallet,
+      quote,
+      error: error.message,
+      safeNextStep: 'Do not repeat the swap immediately. Check wallet balances and transaction history first; backend/Circle may still be processing.',
+    }
+  }
   return {
     status: 'submitted',
     action: 'swap',
@@ -1487,23 +1800,69 @@ export async function agentStatus() {
   return { address: account.address, arcGasUsdc: formatUnits(nativeBalance, 18), usdc: formatUnits(usdcBalance, 6), rpc: ARC_RPC }
 }
 
+async function arcTokenBalances(address) {
+  const out = {}
+  for (const [sym, token] of Object.entries(ARC_TOKENS)) {
+    const bal = await publicClient.readContract({ address: token.address, abi: erc20Abi, functionName: 'balanceOf', args: [address] }).catch(() => 0n)
+    out[sym] = formatUnits(bal, token.decimals)
+  }
+  return out
+}
+
+export async function walletBalances() {
+  const { account } = wallet()
+  const solana = (() => {
+    try { return solanaKeypair() } catch { return null }
+  })()
+  let circleWallet = null
+  let circleBalances = {}
+  try {
+    const token = await backendSession(account)
+    const walletData = await postJson('/api/wallet', { metamaskAddress: account.address }, token)
+    circleWallet = walletData.wallet || null
+    if (circleWallet?.address) {
+      circleBalances = await getJson(`${ARCOX_BACKEND_URL}/api/balance/${circleWallet.address}`)
+    }
+  } catch (error) {
+    circleBalances = { error: error.message }
+  }
+  const [nativeBalance, eoaBalances, solanaUsdc] = await Promise.all([
+    publicClient.getBalance({ address: account.address }).catch(() => 0n),
+    arcTokenBalances(account.address),
+    solana ? solanaUsdcBalance(solana.publicKey).catch(error => ({ error: error.message })) : Promise.resolve(null),
+  ])
+  return {
+    status: 'balances',
+    owner: account.address,
+    eoa: { address: account.address, arcGasUsdc: formatUnits(nativeBalance, 18), balances: eoaBalances },
+    circle: { wallet: circleWallet, balances: circleBalances },
+    solana: solana ? { address: solana.publicKey.toBase58(), usdc: solanaUsdc } : null,
+  }
+}
+
 export async function quoteBridge(intent) {
   const { account } = wallet()
   const fromChain = normalizeChainName(intent.fromChain) || intent.fromChain
   const toChain = normalizeChainName(intent.toChain) || intent.toChain
-  const token = String(intent.token || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.token || 'USDC').toUpperCase()
+  const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
+  const token = normalizeArcTokenKey(intent.token)
   if (token !== 'USDC') throw new Error('MCP bridge currently supports USDC only.')
   if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Bridge quote needs a positive amount.')
   const fromInfo = cctpChains[fromChain]
   const toInfo = cctpChains[toChain]
   if (!fromInfo || !toInfo) throw new Error('Unsupported bridge route.')
   if (fromInfo.id === toInfo.id) throw new Error('Bridge source and destination must be different.')
+  if (source === 'circle' && fromInfo.id !== 'Arc_Testnet') throw new Error('Circle Wallet bridge source is only supported from Arc Testnet. Use source="eoa" for other source chains.')
   if (fromInfo.solana) {
+    if (source === 'circle') throw new Error('Circle Wallet source is not available for Solana source routes.')
     const solana = solanaKeypair()
     const balance = await solanaUsdcBalance(solana.publicKey)
+    const amountUnits = parseUnits(String(intent.amount), 6)
+    const platformFee = splitPlatformFeeUnits(amountUnits)
     return {
       status: 'quote',
       action: 'bridge',
+      source: 'solana-agent-wallet',
       owner: account.address,
       solanaOwner: solana.publicKey.toBase58(),
       solanaSourceAta: balance.ata,
@@ -1512,8 +1871,10 @@ export async function quoteBridge(intent) {
       token: 'USDC',
       amount: String(intent.amount),
       balance: balance.amount,
-      platformFee: '0',
-      estimatedReceive: String(intent.amount),
+      platformFee: formatUnits(platformFee.feeUnits, 6),
+      estimatedReceive: formatUnits(platformFee.netUnits, 6),
+      feeBps: platformFee.feeBps,
+      feeTreasury: SOLANA_FEE_TREASURY,
       supported: Number(balance.amount) >= Number(intent.amount),
       terminalExecution: 'supported_with_local_solana_signer',
       approvalRequired: true,
@@ -1522,20 +1883,34 @@ export async function quoteBridge(intent) {
   }
   const amount = parseUnits(String(intent.amount), 6)
   const sourceClient = clientFor(fromInfo)
-  const router = toInfo.solana ? null : routerFor(fromInfo.id)
+  const router = routerFor(fromInfo.id)
+  if (!router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
   const solanaRecipient = toInfo.solana ? solanaKeypair().publicKey.toBase58() : null
-  const [balance, routerQuote] = await Promise.all([
+  const [eoaBalance, routerQuote] = await Promise.all([
     sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
     router
       ? sourceClient.readContract({ address: router, abi: arcoxRouterAbi, functionName: 'quoteFee', args: [amount] }).catch(() => null)
       : Promise.resolve(null),
   ])
+  let balance = eoaBalance
+  let circleWallet = null
+  if (source === 'circle') {
+    const authToken = await backendSession(account)
+    const walletData = await postJson('/api/wallet', { metamaskAddress: account.address }, authToken)
+    circleWallet = walletData.wallet || null
+    if (circleWallet?.address) {
+      const balances = await getJson(`${ARCOX_BACKEND_URL}/api/balance/${circleWallet.address}`).catch(() => ({}))
+      balance = parseUnits(String(balances.USDC || '0'), 6)
+    }
+  }
   const fee = routerQuote ? BigInt(routerQuote[0] ?? 0) : 0n
   const netAmount = routerQuote ? BigInt(routerQuote[1] ?? amount) : amount
   return {
     status: 'quote',
     action: 'bridge',
+    source: source === 'circle' ? 'circle-wallet-proxy' : 'eoa-agent-wallet',
     owner: account.address,
+    circleWallet,
     from: fromInfo.id,
     to: toInfo.id,
     token: 'USDC',
@@ -1549,21 +1924,52 @@ export async function quoteBridge(intent) {
     solanaRecipientRequired: false,
     solanaRecipient,
     approvalRequired: true,
-    safeNextStep: toInfo.solana
-      ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Arc source routes should complete burn, attestation, and Solana mint in the same MCP call.'
-      : fromInfo.fast
-        ? 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Arc source routes should complete burn, attestation, and mint in the same MCP call.'
-        : 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. Slow source routes may return auto_mint_scheduled while the background worker waits for attestation.',
+    safeNextStep: source === 'circle'
+      ? 'Ask the user to confirm before calling arcox_execute_bridge with source="circle" and confirmed=true. Agent will first send USDC from Circle Wallet to EOA, then bridge from EOA.'
+      : toInfo.solana
+        ? 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Arc source routes should complete burn, attestation, and Solana mint in the same MCP call.'
+        : fromInfo.fast
+          ? 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Arc source routes should complete burn, attestation, and mint in the same MCP call.'
+          : 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Slow source routes may return auto_mint_scheduled while the background worker waits for attestation.',
   }
 }
 
 export async function quoteSend(intent) {
   const { account } = wallet()
-  const tokenKey = String(intent.token || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.token || 'USDC').toUpperCase()
+  const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
+  const tokenKey = normalizeArcTokenKey(intent.token)
+  const apiTokenKey = apiArcTokenKey(intent.token)
   const token = ARC_TOKENS[tokenKey]
   if (!token) throw new Error(`Unsupported Arc token: ${tokenKey}`)
   if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Send quote needs a positive amount.')
   if (!intent.to || !/^0x[0-9a-fA-F]{40}$/.test(intent.to)) throw new Error('Send quote needs a valid EVM recipient.')
+  if (source === 'circle') {
+    const authToken = await backendSession(account)
+    const walletData = await postJson('/api/wallet', { metamaskAddress: account.address }, authToken)
+    const [circleBalances, estimate] = await Promise.all([
+      getJson(`${ARCOX_BACKEND_URL}/api/balance/${walletData.wallet.address}`).catch(() => ({})),
+      postJson('/api/send-estimate', { metamaskAddress: account.address, toAddress: getAddress(intent.to), amount: String(intent.amount), token: apiTokenKey, source: 'circle' }, authToken, SEND_ESTIMATE_TIMEOUT_MS).catch(error => ({ error: error.message })),
+    ])
+    const balance = circleBalances?.[apiTokenKey] || circleBalances?.[tokenKey] || '0'
+    return {
+      status: 'quote',
+      action: 'send',
+      source: 'circle-wallet-proxy',
+      owner: account.address,
+      from: walletData.wallet,
+      to: getAddress(intent.to),
+      token: tokenKey,
+      amount: String(intent.amount),
+      balance,
+      platformFee: estimate?.platformFee?.amount || '0',
+      recipientReceives: estimate?.recipientReceives || String(intent.amount),
+      networkFee: estimate?.fee || estimate?.estimatedFee || '0',
+      supported: Number(balance) >= Number(intent.amount),
+      approvalRequired: true,
+      estimate,
+      safeNextStep: 'Ask the user to confirm before calling arcox_execute_send with source="circle" and confirmed=true.',
+    }
+  }
   const amount = parseUnits(String(intent.amount), token.decimals)
   const router = routerFor('Arc_Testnet')
   const [balance, routerQuote] = await Promise.all([
@@ -1577,6 +1983,7 @@ export async function quoteSend(intent) {
   return {
     status: 'quote',
     action: 'send',
+    source: 'eoa-agent-wallet',
     owner: account.address,
     to: getAddress(intent.to),
     token: tokenKey,
@@ -1587,7 +1994,7 @@ export async function quoteSend(intent) {
     recipientReceives: formatUnits(netAmount, token.decimals),
     supported: balance >= amount,
     approvalRequired: true,
-    safeNextStep: 'Ask the user to confirm before calling arcox_execute_send with confirmed=true.',
+    safeNextStep: 'Ask the user to confirm before calling arcox_execute_send with source="eoa" and confirmed=true.',
   }
 }
 
@@ -1620,33 +2027,167 @@ export async function executeConfirmedBridge(intent) {
   const fromChain = normalizeChainName(intent.fromChain) || intent.fromChain
   const toChain = normalizeChainName(intent.toChain) || intent.toChain
   const { account } = wallet()
-  return executeBridge({
+  const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
+  let prepareTx = ''
+  let prepareExplorer = ''
+  if (source === 'circle') {
+    if (fromChain !== 'Arc_Testnet') throw new Error('Circle Wallet bridge source is only supported from Arc Testnet.')
+    const authToken = await backendSession(account)
+    const prepared = await postJson('/api/prepare-bridge', {
+      metamaskAddress: account.address,
+      amount: String(intent.amount),
+      token: 'USDC',
+    }, authToken)
+    prepareTx = prepared.txHash || ''
+    prepareExplorer = prepared.explorerUrl || (prepareTx ? EXPLORER_TX + prepareTx : '')
+    if (prepareTx) await publicClient.waitForTransactionReceipt({ hash: prepareTx })
+  }
+  const result = await executeBridge({
     ...intent,
-    token: String(intent.token || 'USDC').toUpperCase(),
+    token: normalizeArcTokenKey(intent.token),
     fromChain,
     toChain,
+    maxAttestationWaitMs: intent.maxAttestationWaitMs || MCP_FAST_ATTESTATION_WAIT_MS,
   }, account.address)
+  const rec = recordAgentHistory({
+    action: 'bridge',
+    from: result.from || fromChain,
+    to: result.to || toChain,
+    amount: String(intent.amount),
+    token: result.token || 'USDC',
+    status: result.status === 'submitted' ? 'success' : 'pending',
+    walletSource: source,
+    tx: prepareTx,
+    explorer: prepareExplorer,
+    approveTx: result.approveTx,
+    burnTx: result.burnTx,
+    burnExplorerUrl: result.burnExplorer,
+    mintTx: result.mintTx,
+    mintExplorerUrl: result.mintExplorer,
+    note: source === 'circle'
+      ? `Circle Wallet prepared to EOA before bridge. ${result.safeNextStep || result.route || ''}`
+      : result.safeNextStep || result.route || '',
+  }, account.address)
+  await pushBackendHistory(account.address, rec)
+  return result
 }
 
 export async function executeConfirmedSend(intent) {
   if (intent.confirmed !== true) return quoteSend(intent)
   const { account } = wallet()
-  return executeSend({
+  const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
+  let result
+  if (source === 'circle') {
+    const tokenKey = normalizeArcTokenKey(intent.token)
+    const apiTokenKey = apiArcTokenKey(intent.token)
+    const authToken = await backendSession(account)
+    const send = await postJson('/api/send', { metamaskAddress: account.address, toAddress: getAddress(intent.to), amount: String(intent.amount), token: apiTokenKey, source: 'circle' }, authToken, SEND_EXECUTION_TIMEOUT_MS)
+    result = {
+      status: 'submitted',
+      action: 'send',
+      source: 'circle-wallet-proxy',
+      from: account.address,
+      to: getAddress(intent.to),
+      amount: String(intent.amount),
+      token: tokenKey,
+      result: send.result,
+      platformFee: send.result?.platformFee,
+      recipientReceives: send.result?.amount,
+      tx: send.result?.txHash || send.result?.transactionHash,
+      explorer: send.result?.explorerUrl,
+    }
+  } else {
+    result = await executeSend({
     ...intent,
-    token: String(intent.token || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.token || 'USDC').toUpperCase(),
+    token: normalizeArcTokenKey(intent.token),
     to: getAddress(intent.to),
   }, account.address)
+  }
+  const rec = recordAgentHistory({
+    action: 'send',
+    from: result.from || account.address,
+    to: getAddress(intent.to),
+    amount: String(intent.amount),
+    token: result.token || intent.token || 'USDC',
+    status: 'success',
+    walletSource: source,
+    approveTx: result.approveTx,
+    tx: result.tx,
+    explorer: result.explorer,
+    note: source === 'circle' ? 'Send executed from Circle Wallet proxy by MCP agent.' : 'Send executed from EOA agent wallet by MCP agent.',
+  }, account.address)
+  await pushBackendHistory(account.address, rec)
+  return result
 }
 
 export async function executeConfirmedSwap(intent) {
   if (intent.confirmed !== true) return quoteSwap(intent)
   const { account } = wallet()
-  return executeSwap({
+  const result = await executeSwap({
     ...intent,
     amount: String(intent.amountIn || intent.amount),
     tokenIn: String(intent.tokenIn || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenIn || 'USDC').toUpperCase(),
     tokenOut: String(intent.tokenOut || '').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenOut || '').toUpperCase(),
   }, account.address)
+  const rec = recordAgentHistory({
+    action: 'swap',
+    from: result.result?.tokenIn || intent.tokenIn || 'USDC',
+    to: result.result?.tokenOut || intent.tokenOut || '',
+    amount: String(intent.amountIn || intent.amount),
+    token: result.result?.tokenIn || intent.tokenIn || 'USDC',
+    status: result.status === 'submitted' ? 'success' : 'pending',
+    walletSource: 'circle',
+    tx: result.result?.txHash || result.result?.transactionHash,
+    explorer: result.result?.explorerUrl,
+    note: result.status === 'submitted'
+      ? 'Swap executed from Circle Wallet proxy by MCP agent.'
+      : result.safeNextStep || result.error || 'Swap backend did not return a final transaction.',
+  }, account.address)
+  await pushBackendHistory(account.address, rec)
+  return result
+}
+
+function readAutoMintStatuses() {
+  const autoMint = []
+  try {
+    if (existsSync(AUTO_MINT_DIR)) {
+      for (const file of readdirSync(AUTO_MINT_DIR)) {
+        if (!file.endsWith('.json')) continue
+        try {
+          const item = JSON.parse(readFileSync(join(AUTO_MINT_DIR, file), 'utf8'))
+          autoMint.push(item)
+        } catch {}
+      }
+    }
+  } catch {}
+  return autoMint
+}
+
+function syncAutoMintHistory() {
+  const history = readAgentHistory()
+  const autoMint = readAutoMintStatuses()
+  let changed = false
+  const merged = history.map(item => {
+    const status = autoMint.find(job => String(job.burnTx || '').toLowerCase() === String(item.burnTx || '').toLowerCase())
+    if (!status?.result?.mintTx || item.status === 'success') return item
+    changed = true
+    const updated = {
+      ...item,
+      status: 'success',
+      mintTx: status.result.mintTx,
+      mintExplorerUrl: status.result.mintExplorer,
+      note: `${item.note || ''}\nAuto-mint completed by agent worker.`,
+    }
+    pushBackendHistory(updated.owner || status.owner || '', updated)
+    return updated
+  })
+  if (changed) writeAgentHistory(merged)
+  return { history: merged, autoMint }
+}
+
+export function transactionHistory() {
+  const { history, autoMint } = syncAutoMintHistory()
+  return { status: 'history', source: 'agent-local', history, autoMint }
 }
 
 export async function retryConfirmedBridge(intent) {
@@ -1744,6 +2285,20 @@ async function serve() {
     if (req.method === 'GET' && req.url === '/metadata') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       return res.end(JSON.stringify(metadataFor(owner), null, 2))
+    }
+    if (req.method === 'GET' && req.url === '/history') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify(transactionHistory(), null, 2))
+    }
+    if (req.method === 'GET' && req.url === '/balances') {
+      try {
+        const balances = await walletBalances()
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify(balances, null, 2))
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify({ error: e.message }))
+      }
     }
     if (req.method === 'POST' && req.url === '/agent') {
       let body = ''

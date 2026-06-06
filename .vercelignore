@@ -1,0 +1,11 @@
+node_modules
+arcox-agent/node_modules
+dist
+coverage
+.git
+.env
+*.log
+arcox-agent/.arcox-auto-mint
+arcox-agent/.arcox-agent-history.json
+arcox-agent/solana-router/target
+arcox-agent/solana-router/programs/*/target

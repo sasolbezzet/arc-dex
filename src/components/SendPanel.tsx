@@ -4,9 +4,10 @@ import { CompactTokenPicker } from './CompactPickers'
 import { SEND_TOKENS } from '../domain/tokens'
 import { estimateSendTokenFromEoa, sendTokenFromEoa } from '../services/eoaTransactions'
 import { useI18n } from '../i18n'
+import { txHistory } from '../txHistory'
 const API = ''
 type Status = { type:'success'|'error'; msg:string; link?:string }
-type FeeQuote = { fee:string; token:string; detail?:string }
+type FeeQuote = { fee:string; token:string; detail?:string; platformFee?:{amount:string;token:string;bps:number}; recipientReceives?:string }
 interface Props { address:string|null; circleWallet:{id:string;address:string}|null; balances:Record<string,string>; eoaBalances:Record<string,string>; onRefresh:()=>void }
 export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefresh }: Props) {
   const { t } = useI18n()
@@ -42,7 +43,13 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
           setFeeQuote({ fee: q.fee, token: q.token, detail: `${q.gas} gas` })
         } else if (circleWallet) {
           const q = await safePost(API, '/api/send-estimate', { metamaskAddress: address, toAddress, amount, token, source })
-          setFeeQuote({ fee: q.fee || q.estimatedFee || '-', token: q.token || 'USDC', detail: q.detail || q.gas || 'App Kit estimate' })
+          setFeeQuote({
+            fee: q.fee || q.estimatedFee || '-',
+            token: q.token || 'USDC',
+            detail: q.detail || q.gas || 'App Kit estimate',
+            platformFee: q.platformFee,
+            recipientReceives: q.recipientReceives,
+          })
         }
       } catch(e) {
         setFeeQuote({ fee: '-', token: 'USDC', detail: e instanceof Error ? e.message : 'Estimate failed' })
@@ -60,6 +67,23 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
       const result = source === 'eoa'
         ? await sendTokenFromEoa({ from: address, to: toAddress, amount, token })
         : (await safePost(API, '/api/send', {metamaskAddress:address,toAddress,amount,token,source})).result
+      txHistory.add({
+        id: `send-${Date.now()}-${(result?.txHash || result?.transactionHash || toAddress).slice(-6)}`,
+        ts: Date.now(),
+        action: 'send',
+        source: 'web-ui',
+        walletSource: source,
+        from: source === 'circle' ? (circleWallet?.address || 'Circle Wallet') : address,
+        to: toAddress,
+        amount,
+        token,
+        status: 'success',
+        tx: result?.txHash || result?.transactionHash,
+        explorer: result?.explorerUrl,
+        note: source === 'circle'
+          ? `Send from Circle Wallet proxy via web UI. Platform fee ${result?.platformFee?.amount || '0'} ${token}; recipient receives ${result?.amount || amount} ${token}.`
+          : 'Send from EOA wallet via web UI.',
+      })
       setStatus({ type:'success', msg:t('send.success', { amount, token, to: toAddress.slice(0,8) }), link:result?.explorerUrl })
       setAmount(''); setToAddress('')
       setTimeout(onRefresh,3000)
@@ -105,6 +129,8 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Testnet</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.from')}</span><span style={{color:source==='circle'?'#818cf8':'#f59e0b',fontFamily:'monospace',fontSize:11}}>{source==='circle'?circleWallet?.address.slice(0,8):address?.slice(0,8)}...{source==='circle'?circleWallet?.address.slice(-6):address?.slice(-4)}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('send.estimateFee')}</span><span style={{color:'#10b981'}}>{feeLoading ? t('send.calculating') : feeQuote ? `${feeQuote.fee} ${feeQuote.token}` : '-'}</span></div>
+        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:'#f59e0b'}}>{feeQuote?.platformFee ? `${feeQuote.platformFee.amount} ${feeQuote.platformFee.token}` : '-'}</span></div>}
+        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Recipient receives</span><span>{feeQuote?.recipientReceives ? `${feeQuote.recipientReceives} ${token}` : '-'}</span></div>}
         {feeQuote?.detail && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('send.detail')}</span><span style={{fontSize:11,color:'#94a3b8',textAlign:'right'}}>{feeQuote.detail}</span></div>}
       </div>
       {status&&<div style={{padding:10,borderRadius:10,fontSize:13,background:status.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&<div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}</div>}

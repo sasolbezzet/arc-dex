@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync, appendFileSync, mkdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve, relative } from 'node:path'
 import { homedir } from 'node:os'
@@ -21,6 +22,8 @@ import {
   registerAgentIdentity,
   setAgentJobBudget,
   submitAgentJob,
+  transactionHistory,
+  walletBalances,
 } from '../bin/arcox-agent.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -94,8 +97,13 @@ const tools = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'arcox_wallet_balances',
+    description: 'Return all retail balances visible to the agent: EOA Arc tokens, Circle proxy wallet balances, and Solana Devnet USDC.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'arcox_quote_bridge',
-    description: 'Quote a USDC bridge route, platform fee, estimated receive, and balance before execution.',
+    description: 'Quote a USDC bridge route, platform fee, estimated receive, and balance before execution. If the user says "circle arc ke solana" or "Circle Wallet Arc to Solana", use source="circle", fromChain="Arc_Testnet", toChain="Solana_Devnet". Circle Wallet bridge source is only valid from Arc Testnet.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -103,6 +111,7 @@ const tools = [
         toChain: { type: 'string' },
         amount: { type: 'string' },
         token: { type: 'string', default: 'USDC' },
+        source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
       },
       required: ['fromChain', 'toChain', 'amount'],
       additionalProperties: false,
@@ -110,7 +119,7 @@ const tools = [
   },
   {
     name: 'arcox_execute_bridge',
-    description: 'Execute a confirmed USDC bridge with the local AGENT_PRIVATE_KEY signer. If confirmed is not true, returns quote only.',
+    description: 'Execute a confirmed USDC bridge with the local AGENT_PRIVATE_KEY signer. Requires previewId from arcox_quote_bridge when confirmed=true. If the user says "circle arc ke solana" or "Circle Wallet Arc to Solana", use source="circle", fromChain="Arc_Testnet", toChain="Solana_Devnet". Circle Wallet bridge source is only valid from Arc Testnet.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -118,6 +127,8 @@ const tools = [
         toChain: { type: 'string' },
         amount: { type: 'string' },
         token: { type: 'string', default: 'USDC' },
+        source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
+        previewId: { type: 'string' },
         confirmed: { type: 'boolean' },
       },
       required: ['fromChain', 'toChain', 'amount'],
@@ -133,6 +144,7 @@ const tools = [
         to: { type: 'string' },
         amount: { type: 'string' },
         token: { type: 'string', default: 'USDC' },
+        source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
       },
       required: ['to', 'amount'],
       additionalProperties: false,
@@ -140,18 +152,25 @@ const tools = [
   },
   {
     name: 'arcox_execute_send',
-    description: 'Execute a confirmed Arc token send with the local AGENT_PRIVATE_KEY signer. If confirmed is not true, returns quote only.',
+    description: 'Execute a confirmed Arc token send with the local AGENT_PRIVATE_KEY signer. Requires previewId from arcox_quote_send when confirmed=true.',
     inputSchema: {
       type: 'object',
       properties: {
         to: { type: 'string' },
         amount: { type: 'string' },
         token: { type: 'string', default: 'USDC' },
+        source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
+        previewId: { type: 'string' },
         confirmed: { type: 'boolean' },
       },
       required: ['to', 'amount'],
       additionalProperties: false,
     },
+  },
+  {
+    name: 'arcox_transaction_history',
+    description: 'Return ARCOX transaction history recorded by the MCP/terminal agent for bridge, swap, and send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'arcox_quote_swap',
@@ -169,13 +188,14 @@ const tools = [
   },
   {
     name: 'arcox_execute_swap',
-    description: 'Execute a confirmed Circle proxy wallet swap through the ARCOX backend. If confirmed is not true, returns quote only.',
+    description: 'Execute a confirmed Circle proxy wallet swap through the ARCOX backend. Requires previewId from arcox_quote_swap when confirmed=true.',
     inputSchema: {
       type: 'object',
       properties: {
         tokenIn: { type: 'string' },
         tokenOut: { type: 'string' },
         amountIn: { type: 'string' },
+        previewId: { type: 'string' },
         confirmed: { type: 'boolean' },
       },
       required: ['tokenIn', 'tokenOut', 'amountIn'],
@@ -283,13 +303,15 @@ function routeStatus(args) {
   if (action.includes('bridge') && fromChain && toChain && fromChain === toChain) issues.push('Bridge source and destination must differ.')
   if (args.source === 'circle' && fromChain && !from?.circleWallet) issues.push('Circle Wallet source is only available on Arc Testnet.')
   const solanaRoute = fromChain === 'Solana_Devnet' || toChain === 'Solana_Devnet'
+  const usdcBridge = action.includes('bridge') && String(args.token || 'USDC').toUpperCase() === 'USDC'
   return {
     supported: issues.length === 0,
     issues,
     normalized: { fromChain: fromChain || null, toChain: toChain || null },
     fromChain: from || null,
     toChain: to || null,
-    routerFeeApplies: Boolean(from?.router && !solanaRoute && action.includes('bridge') && String(args.token || 'USDC').toUpperCase() === 'USDC'),
+    routerFeeApplies: Boolean(usdcBridge && from?.router && fromChain !== 'Solana_Devnet'),
+    solanaPlatformFeeApplies: Boolean(usdcBridge && fromChain === 'Solana_Devnet'),
     solanaRoute,
     terminalExecution: solanaRoute ? 'supported_with_local_solana_signer' : 'supported',
     safeNextStep: issues.length
@@ -326,6 +348,12 @@ const valueMovingJobOps = new Set(['register-agent', 'create-job', 'set-budget',
 const rateLimitBuckets = new Map()
 const RATE_LIMIT_WINDOW_MS = 60_000
 const RATE_LIMIT_MAX = 10
+const previewApprovals = new Map()
+const dailySpendBuckets = new Map()
+const PREVIEW_TTL_MS = Number(process.env.ARCOX_PREVIEW_TTL_MS || 10 * 60 * 1000)
+const MAX_TX_USDC = Number(process.env.ARCOX_MAX_TX_USDC || '10')
+const DAILY_LIMIT_USDC = Number(process.env.ARCOX_DAILY_LIMIT_USDC || '50')
+let activeValueMovingExecution = null
 
 function isValueMovingCall(name, args) {
   if (valueMovingTools.has(name)) return args.confirmed === true
@@ -341,6 +369,161 @@ function enforceRateLimit(key) {
   }
   recent.push(now)
   rateLimitBuckets.set(key, recent)
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function spendAmountFor(name, args) {
+  if (name.includes('swap')) return Number(args.amountIn || args.amount || 0)
+  if (name.includes('send') || name.includes('bridge')) return Number(args.amount || 0)
+  if (name === 'arcox_agent_job') return Number(args.amount || 0)
+  return 0
+}
+
+function canonicalAmount(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  if (!/^\d+(\.\d+)?$/.test(raw)) return raw
+  const [whole, frac = ''] = raw.split('.')
+  const normalizedWhole = whole.replace(/^0+(?=\d)/, '') || '0'
+  const normalizedFrac = frac.replace(/0+$/, '')
+  return normalizedFrac ? `${normalizedWhole}.${normalizedFrac}` : normalizedWhole
+}
+
+function canonicalToken(value, fallback = 'USDC') {
+  const raw = String(value || fallback).trim()
+  const upper = raw.toUpperCase()
+  if (upper === 'CIRBTC' || upper === 'CIR-BTC' || upper === 'CIRCLEBTC') return 'CIRBTC'
+  if (upper.includes('USDC')) return 'USDC'
+  if (upper.includes('EURC')) return 'EURC'
+  if (upper.includes('USYC')) return 'USYC'
+  return upper || fallback
+}
+
+function canonicalSource(value, fallback = 'eoa') {
+  const raw = String(value || fallback).trim().toLowerCase()
+  if (raw.includes('circle') || raw.includes('proxy')) return 'circle'
+  return 'eoa'
+}
+
+function canonicalPreviewAction(name) {
+  return name.replace('quote', 'execute')
+}
+
+function canonicalPreviewArgs(name, args) {
+  const action = canonicalPreviewAction(name)
+  if (action === 'arcox_execute_bridge') {
+    return {
+      action,
+      fromChain: normalizeMcpChain(args.fromChain) || args.fromChain,
+      toChain: normalizeMcpChain(args.toChain) || args.toChain,
+      amount: canonicalAmount(args.amount),
+      token: canonicalToken(args.token),
+      source: canonicalSource(args.source),
+    }
+  }
+  if (action === 'arcox_execute_send') {
+    return {
+      action,
+      to: String(args.to || '').toLowerCase(),
+      amount: canonicalAmount(args.amount),
+      token: canonicalToken(args.token),
+      source: canonicalSource(args.source),
+    }
+  }
+  if (action === 'arcox_execute_swap') {
+    return {
+      action,
+      tokenIn: canonicalToken(args.tokenIn),
+      tokenOut: canonicalToken(args.tokenOut, ''),
+      amountIn: canonicalAmount(args.amountIn || args.amount),
+    }
+  }
+  return { action, ...args }
+}
+
+function previewHash(name, args) {
+  return createHash('sha256').update(stableJson(canonicalPreviewArgs(name, args))).digest('hex')
+}
+
+function attachPreview(name, args, quote) {
+  const canonical = canonicalPreviewArgs(name, args)
+  const hash = createHash('sha256').update(stableJson(canonical)).digest('hex')
+  const previewId = `arcox-preview-${hash.slice(0, 16)}`
+  previewApprovals.set(previewId, { hash, canonical, action: canonicalPreviewAction(name), createdAt: Date.now(), expiresAt: Date.now() + PREVIEW_TTL_MS })
+  return {
+    ...quote,
+    previewId,
+    previewExpiresAt: new Date(Date.now() + PREVIEW_TTL_MS).toISOString(),
+    dryRunRequired: true,
+    safetyLimits: {
+      maxTxUsdc: MAX_TX_USDC,
+      dailyLimitUsdc: DAILY_LIMIT_USDC,
+    },
+    riskChecks: quoteRiskChecks(name, quote),
+    executeInstruction: `After explicit user confirmation for this single operation only, call ${canonicalPreviewAction(name)} with confirmed=true and this exact previewId. For bulk requests, execute one chain at a time and ask for confirmation before each chain.`,
+  }
+}
+
+function quoteRiskChecks(name, quote) {
+  const checks = []
+  if (quote?.supported === false) checks.push({ level: 'error', item: 'balance', message: 'Source balance is lower than requested amount.' })
+  if (quote?.supported === true) checks.push({ level: 'ok', item: 'balance', message: 'Source balance appears sufficient.' })
+  if (quote?.platformFee !== undefined) checks.push({ level: 'info', item: 'platformFee', value: quote.platformFee })
+  if (quote?.estimatedReceive !== undefined) checks.push({ level: 'info', item: 'estimatedReceive', value: quote.estimatedReceive })
+  if (quote?.recipientReceives !== undefined) checks.push({ level: 'info', item: 'recipientReceives', value: quote.recipientReceives })
+  if (quote?.router) checks.push({ level: 'info', item: 'router', value: quote.router })
+  if (quote?.terminalExecution) checks.push({ level: 'info', item: 'execution', value: quote.terminalExecution })
+  const amount = spendAmountFor(canonicalPreviewAction(name), { amount: quote?.amount, amountIn: quote?.amountIn })
+  if (MAX_TX_USDC > 0 && amount > MAX_TX_USDC) checks.push({ level: 'error', item: 'maxTx', message: `Amount exceeds ARCOX_MAX_TX_USDC=${MAX_TX_USDC}.` })
+  return checks
+}
+
+function enforcePreview(name, args) {
+  if (!valueMovingTools.has(name) || args.confirmed !== true) return
+  const previewId = String(args.previewId || '')
+  const preview = previewApprovals.get(previewId)
+  if (!preview) throw new Error('Dry-run required. Call the matching quote tool first and pass its previewId to execute.')
+  if (preview.action !== name || Date.now() > preview.expiresAt) {
+    previewApprovals.delete(previewId)
+    throw new Error('Preview expired or mismatched. Re-quote before executing.')
+  }
+  const canonical = canonicalPreviewArgs(name, args)
+  const expected = createHash('sha256').update(stableJson(canonical)).digest('hex')
+  if (expected !== preview.hash) {
+    throw new Error(`Execution parameters differ from quote preview. Re-quote before executing. expected=${stableJson(preview.canonical)} received=${stableJson(canonical)}`)
+  }
+  previewApprovals.delete(previewId)
+}
+
+async function runValueMovingTool(name, args, fn) {
+  if (activeValueMovingExecution) {
+    throw new Error(`Another value-moving ARCOX action is still running (${activeValueMovingExecution}). Wait for it to finish before starting a new transaction.`)
+  }
+  activeValueMovingExecution = name
+  try {
+    return await fn()
+  } finally {
+    activeValueMovingExecution = null
+  }
+}
+
+function enforceSpendLimits(name, args) {
+  if (!isValueMovingCall(name, args)) return
+  const amount = spendAmountFor(name, args)
+  if (!Number.isFinite(amount) || amount <= 0) return
+  if (MAX_TX_USDC > 0 && amount > MAX_TX_USDC) throw new Error(`Transaction exceeds ARCOX_MAX_TX_USDC=${MAX_TX_USDC}. Reduce amount or raise local env limit.`)
+  const day = new Date().toISOString().slice(0, 10)
+  const key = `local-mcp-client:${day}`
+  const used = dailySpendBuckets.get(key) || 0
+  if (DAILY_LIMIT_USDC > 0 && used + amount > DAILY_LIMIT_USDC) throw new Error(`Daily limit exceeded. Used ${used} USDC, requested ${amount}, limit ${DAILY_LIMIT_USDC}.`)
+  dailySpendBuckets.set(key, used + amount)
 }
 
 async function rpcResponse(message) {
@@ -369,24 +552,45 @@ async function rpcResponse(message) {
     if (name === 'arcox_action_plan') return result(id, actionPlan(args))
     if (name === 'arcox_route_status') return result(id, routeStatus(args))
     if (name === 'arcox_agent_status') return result(id, await agentStatus())
-    if (name === 'arcox_quote_bridge') return result(id, await quoteBridge(args))
+    if (name === 'arcox_wallet_balances') return result(id, await walletBalances())
+    if (name === 'arcox_quote_bridge') return result(id, attachPreview(name, args, await quoteBridge(args)))
     if (name === 'arcox_execute_bridge') {
       const fromChain = normalizeMcpChain(args.fromChain)
       const toChain = normalizeMcpChain(args.toChain)
       const fastSource = fromChain === 'Arc_Testnet' || fromChain === 'Solana_Devnet'
-      return result(id, await executeConfirmedBridge({
-        ...args,
-        fromChain: fromChain || args.fromChain,
-        toChain: toChain || args.toChain,
-        deferMint: args.deferMint ?? !fastSource,
-        maxAttestationWaitMs: args.maxAttestationWaitMs,
-      }))
+      if (args.confirmed !== true) {
+        const quoteArgs = { ...args, fromChain: fromChain || args.fromChain, toChain: toChain || args.toChain }
+        return result(id, attachPreview('arcox_quote_bridge', quoteArgs, await quoteBridge(quoteArgs)))
+      }
+      enforcePreview(name, args)
+      enforceSpendLimits(name, args)
+      return result(id, await runValueMovingTool(name, args, () => executeConfirmedBridge({
+          ...args,
+          fromChain: fromChain || args.fromChain,
+          toChain: toChain || args.toChain,
+          deferMint: args.deferMint ?? !fastSource,
+          maxAttestationWaitMs: args.maxAttestationWaitMs,
+        })))
     }
-    if (name === 'arcox_quote_send') return result(id, await quoteSend(args))
-    if (name === 'arcox_execute_send') return result(id, await executeConfirmedSend(args))
-    if (name === 'arcox_quote_swap') return result(id, await quoteSwap(args))
-    if (name === 'arcox_execute_swap') return result(id, await executeConfirmedSwap(args))
-    if (name === 'arcox_agent_job') return result(id, await agentJob(args))
+    if (name === 'arcox_quote_send') return result(id, attachPreview(name, args, await quoteSend(args)))
+    if (name === 'arcox_execute_send' && args.confirmed !== true) return result(id, attachPreview('arcox_quote_send', args, await quoteSend(args)))
+    if (name === 'arcox_execute_send') {
+      enforcePreview(name, args)
+      enforceSpendLimits(name, args)
+      return result(id, await runValueMovingTool(name, args, () => executeConfirmedSend(args)))
+    }
+    if (name === 'arcox_quote_swap') return result(id, attachPreview(name, args, await quoteSwap(args)))
+    if (name === 'arcox_execute_swap' && args.confirmed !== true) return result(id, attachPreview('arcox_quote_swap', args, await quoteSwap(args)))
+    if (name === 'arcox_execute_swap') {
+      enforcePreview(name, args)
+      enforceSpendLimits(name, args)
+      return result(id, await runValueMovingTool(name, args, () => executeConfirmedSwap(args)))
+    }
+    if (name === 'arcox_transaction_history') return result(id, transactionHistory())
+    if (name === 'arcox_agent_job') {
+      if (isValueMovingCall(name, args)) enforceSpendLimits(name, args)
+      return result(id, await agentJob(args))
+    }
     throw new Error(`Unknown tool: ${name}`)
   }
   if (method === 'resources/list') return { jsonrpc: '2.0', id, result: { resources } }
@@ -417,13 +621,14 @@ process.stdin.on('data', async (chunk) => {
       const line = buffer.slice(0, lineEnd).trim()
       buffer = buffer.slice(lineEnd + 1)
       if (!line) continue
+      let message = null
       try {
-        const message = JSON.parse(line)
+        message = JSON.parse(line)
         debug('request', { framing: 'ndjson', method: message.method, id: message.id })
         const response = await rpcResponse(message)
         if (response) writeMessage(response, 'ndjson')
       } catch (error) {
-        writeMessage({ jsonrpc: '2.0', id: null, error: { code: -32000, message: error.message } }, 'ndjson')
+        writeErrorMessage(message?.id, error, 'ndjson')
       }
       continue
     }
@@ -437,16 +642,29 @@ process.stdin.on('data', async (chunk) => {
     if (buffer.length < bodyStart + length) return
     const body = buffer.slice(bodyStart, bodyStart + length)
     buffer = buffer.slice(bodyStart + length)
+    let message = null
     try {
-      const message = JSON.parse(body)
+      message = JSON.parse(body)
       debug('request', { framing: 'content-length', method: message.method, id: message.id })
       const response = await rpcResponse(message)
       if (response) writeMessage(response, 'content-length')
     } catch (error) {
-      writeMessage({ jsonrpc: '2.0', id: null, error: { code: -32000, message: error.message } }, 'content-length')
+      writeErrorMessage(message?.id, error, 'content-length')
     }
   }
 })
+
+function safeResponseId(id) {
+  return typeof id === 'number' || typeof id === 'string' ? id : 'arcox-error'
+}
+
+function writeErrorMessage(id, error, framing) {
+  writeMessage({
+    jsonrpc: '2.0',
+    id: safeResponseId(id),
+    error: { code: -32000, message: error?.message || String(error) },
+  }, framing)
+}
 
 function writeMessage(payload, framing = 'content-length') {
   const body = JSON.stringify(payload)

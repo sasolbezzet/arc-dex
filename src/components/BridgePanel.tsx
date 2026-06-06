@@ -63,6 +63,9 @@ const SOLANA_MINT_CLIENT_VERSION = 'cctp-v2-solana-mint-20260601-09'
 const CCTP_FAST_FINALITY_THRESHOLD = 1000n
 const INITIAL_FEE_MULTIPLIER = 3n
 const MAX_FEE_MULTIPLIER = 4n
+const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 30)
+const EVM_FEE_TREASURY = import.meta.env.VITE_ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
+const SOLANA_FEE_TREASURY = import.meta.env.VITE_SOLANA_FEE_TREASURY || '4kAf2Qxf9KnbnKo7ukPMMu8q1UButJYNik4yQtvWhExw'
 
 function enc256(n: bigint) { return n.toString(16).padStart(64,'0') }
 function encAddr(a: string) { return a.slice(2).toLowerCase().padStart(64,'0') }
@@ -112,7 +115,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const customFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const cctpFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const forwardingFee = isFromSolana || isToSolana ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
-  const routerFee = token === 'USDC' && !isFromSolana && !isToSolana && ARCOX_ROUTER[fromChain] ? (amount ? (parseFloat(amount)*0.003).toFixed(6) : '-') : '-'
+  const platformFee = amount
+    ? (parseFloat(amount) * (PLATFORM_FEE_BPS / 10000)).toFixed(6)
+    : '-'
+  const routerFee = !isFromSolana && (ARCOX_ROUTER[fromChain] || token !== 'USDC') ? platformFee : isFromSolana && token === 'USDC' ? platformFee : '-'
   const platformFeeLabel = routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
   const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
   const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)-parseFloat(routerFee==='-'?'0':routerFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
@@ -181,7 +187,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     let historyId: string|null = null
     const srcInfo = CCTP_SRC[fromChain]
     const burnToken = token === 'cirBTC' && srcInfo?.cirbtc ? srcInfo.cirbtc : srcInfo?.usdc || ''
-    const routerAddr = token === 'USDC' && !isFromSolana && !isToSolana ? ARCOX_ROUTER[fromChain] : ''
+    const routerAddr = token === 'USDC' && !isFromSolana ? ARCOX_ROUTER[fromChain] : ''
+    if (token === 'USDC' && !isFromSolana && !routerAddr) {
+      throw new Error(`ArcoxRouter belum tersedia untuk source ${fromChain}; bridge USDC direct ditolak agar platform fee tidak terlewati.`)
+    }
 
     if (source === 'circle' && fromChain !== 'Arc_Testnet') {
       throw new Error('Circle Wallet hanya tersedia untuk source Arc Testnet.')
@@ -227,17 +236,29 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         throw new Error(`Saldo gas ${fromInfo?.label || fromChain} kosong. Isi ETH testnet di ${fromInfo?.label || fromChain} untuk membayar gas.`)
       }
     }
+    const feeMicro = (amtMicro * BigInt(Math.max(0, Math.floor(PLATFORM_FEE_BPS)))) / 10000n
+    const burnMicro = routerAddr ? amtMicro : amtMicro - feeMicro
+    if (burnMicro <= 0n) throw new Error('Amount terlalu kecil setelah platform fee.')
     const srcBal = await evmTokenBalance(burnToken, address)
     if (srcBal < amtMicro) {
       const have = Number(srcBal) / 10 ** tokenDec
       throw new Error(`Saldo ${token} di ${fromInfo?.label || fromChain} tidak cukup. Terdeteksi ${have.toFixed(6)} ${token}, butuh ${amount}.`)
+    }
+    if (!routerAddr && feeMicro > 0n) {
+      setStep(`MetaMask: Platform fee ${token}...`)
+      setStatus({ type:'info', msg:`⏳ MetaMask popup: transfer platform fee ${token}...`, steps:[...localSteps] })
+      const feeTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0xa9059cbb'+encAddr(EVM_FEE_TREASURY)+enc256(feeMicro) })
+      localSteps.push({ name:'platform-fee', state:'pending', txHash:feeTx })
+      await waitEvmTx(feeTx)
+      localSteps[localSteps.length-1].state='success'
+      localSteps[localSteps.length-1].explorerUrl=explorerFor(fromChain, feeTx)
     }
 
     // Approve
     setStep(`MetaMask: Approve ${token} (1/2)...`)
     setStatus({ type:'info', msg:`⏳ MetaMask popup 1/2: Approve ${token}${routerAddr ? ' ke ArcoxRouter' : ''}...`, steps:[...localSteps] })
     const approveSpender = routerAddr || srcInfo.tokenMessenger
-    const approveTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0x095ea7b3'+encAddr(approveSpender)+enc256(amtMicro) })
+    const approveTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0x095ea7b3'+encAddr(approveSpender)+enc256(routerAddr ? amtMicro : burnMicro) })
     localSteps.push({ name:'approve', state:'pending', txHash:approveTx })
     setStatus({ type:'info', msg:'⏳ Menunggu approve...', steps:[...localSteps] })
     await waitEvmTx(approveTx)
@@ -250,11 +271,20 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     let burnData: string
     const maxFeeMicro = 10n
+    let routerMintRecipient = `0x${encAddr(address)}`
+    if (isToSolana && sw) {
+      const { PublicKey } = await import('@solana/web3.js')
+      const { getAssociatedTokenAddress } = await import('@solana/spl-token')
+      const solPubkey = new PublicKey(sw.address)
+      const solUsdcAta = await getAssociatedTokenAddress(new PublicKey(SOLANA_CCTP.usdcMint), solPubkey)
+      const solBytes = solUsdcAta.toBytes()
+      routerMintRecipient = `0x${Array.from(solBytes).map(b=>b.toString(16).padStart(2,'0')).join('').padStart(64,'0')}`
+    }
     if (routerAddr) {
       burnData = encodeFunctionData({
         abi: ARCOX_ROUTER_ABI,
         functionName: 'bridgeUsdcWithFee',
-        args: [amtMicro, Number(dstDomain), `0x${encAddr(address)}`, `0x${'0'.repeat(64)}`, maxFeeMicro, Number(CCTP_FAST_FINALITY_THRESHOLD)],
+        args: [amtMicro, Number(dstDomain), routerMintRecipient as `0x${string}`, `0x${'0'.repeat(64)}`, maxFeeMicro, Number(CCTP_FAST_FINALITY_THRESHOLD)],
       })
     } else if (isToSolana && sw) {
       // CCTP v2 Solana requires the destination USDC token account, not the wallet address.
@@ -264,9 +294,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const solUsdcAta = await getAssociatedTokenAddress(new PublicKey(SOLANA_CCTP.usdcMint), solPubkey)
       const solBytes = solUsdcAta.toBytes()
       const mintRecipient = Array.from(solBytes).map(b=>b.toString(16).padStart(2,'0')).join('').padStart(64,'0')
-      burnData = '0x8e0250ee'+enc256(amtMicro)+enc256(BigInt(dstDomain))+mintRecipient+encAddr(burnToken)+enc256(0n)+enc256(maxFeeMicro)+enc256(CCTP_FAST_FINALITY_THRESHOLD)
+      burnData = '0x8e0250ee'+enc256(burnMicro)+enc256(BigInt(dstDomain))+mintRecipient+encAddr(burnToken)+enc256(0n)+enc256(maxFeeMicro)+enc256(CCTP_FAST_FINALITY_THRESHOLD)
     } else {
-      burnData = '0x8e0250ee'+enc256(amtMicro)+enc256(BigInt(dstDomain))+encAddr(address)+encAddr(burnToken)+enc256(0n)+enc256(maxFeeMicro)+enc256(CCTP_FAST_FINALITY_THRESHOLD)
+      burnData = '0x8e0250ee'+enc256(burnMicro)+enc256(BigInt(dstDomain))+encAddr(address)+encAddr(burnToken)+enc256(0n)+enc256(maxFeeMicro)+enc256(CCTP_FAST_FINALITY_THRESHOLD)
     }
 
     const burnTx = await sendEvmTxBuffered({ from:address, to:routerAddr || srcInfo.tokenMessenger, data:burnData })
@@ -279,6 +309,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     txHistory.add({
       id: historyId,
       ts: Date.now(),
+      action: 'bridge',
+      source: 'web-ui',
+      walletSource: source,
       from: fromChain,
       to: toChain,
       amount,
@@ -436,6 +469,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       txHistory.add({
         id: historyId,
         ts: Date.now(),
+        action: 'bridge',
+        source: 'web-ui',
+        walletSource: 'solana',
         from: 'Solana_Devnet',
         to: 'Arc_Testnet',
         amount,
@@ -611,7 +647,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   // ── Solana burn helper ──
   const burnSolanaUsdc = async (amountInput: string, mintRecipientEvm: string, providerParam?: any, ownerAddress?: string): Promise<string> => {
     const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair } = await import('@solana/web3.js')
-    const { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
+    const { createAssociatedTokenAccountInstruction, createTransferInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = await import('@solana/spl-token')
 
     const provider = providerParam ?? solanaWallet?.provider
     if (!provider) throw new Error('Solana wallet tidak terhubung')
@@ -622,12 +658,17 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const owner = new PublicKey(ownerAddr)
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
     const senderAta = await getAssociatedTokenAddress(mint, owner)
+    const treasury = new PublicKey(SOLANA_FEE_TREASURY)
+    const treasuryAta = await getAssociatedTokenAddress(mint, treasury)
 
     // EVM address sebagai bytes32 mintRecipient
     const evmHex = (mintRecipientEvm.startsWith('0x') ? mintRecipientEvm.slice(2) : mintRecipientEvm).toLowerCase().padStart(64, '0')
     const mintRecipientBytes = hexToU8(evmHex)
 
     const amountLamports = parseUnits(amountInput, 6)
+    const feeLamports = (amountLamports * BigInt(Math.max(0, Math.floor(PLATFORM_FEE_BPS)))) / 10000n
+    const burnLamports = amountLamports - feeLamports
+    if (burnLamports <= 0n) throw new Error('Amount terlalu kecil setelah platform fee')
 
     // deposit_for_burn Anchor discriminator: sha256("global:deposit_for_burn")[0..8]
     const discriminator = new Uint8Array([215, 60, 61, 46, 114, 55, 128, 176])
@@ -636,7 +677,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const minFinalityThreshold = 2000
     const data = concatU8(
       discriminator,
-      u64LE(amountLamports),
+      u64LE(burnLamports),
       u32LE(26),
       mintRecipientBytes,
       destCallerBytes,
@@ -684,6 +725,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash()
     const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: owner })
+    const treasuryAtaExists = await conn.getAccountInfo(treasuryAta).catch(() => null)
+    if (!treasuryAtaExists) {
+      tx.add(createAssociatedTokenAccountInstruction(owner, treasuryAta, treasury, mint))
+    }
+    if (feeLamports > 0n) {
+      tx.add(createTransferInstruction(senderAta, treasuryAta, owner, feeLamports))
+    }
     tx.add(ix)
     tx.partialSign(messageSentEventData)
     const signed = await provider.signTransaction(tx)

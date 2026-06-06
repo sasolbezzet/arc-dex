@@ -3,6 +3,7 @@ import { CompactTokenPicker } from './CompactPickers'
 import { SWAP_TOKENS } from '../domain/tokens'
 import { quoteCircleSwap, quoteEoaSwap, swapFromCircleWallet, swapFromEoa } from '../services/swapService'
 import { useI18n } from '../i18n'
+import { txHistory } from '../txHistory'
 
 type Status = { type:'success'|'error'|'warning'; msg:string; link?:string }
 interface Props { address:string|null; circleWallet:{id:string;address:string}|null; balances:Record<string,string>; eoaBalances:Record<string,string>; onRefresh:()=>void }
@@ -55,6 +56,21 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       if (source === 'eoa') {
         setStatus({ type:'warning', msg:'MetaMask akan meminta approval/swap signature dari wallet EOA Anda.' })
         const result = await swapFromEoa({ tokenIn, tokenOut, amountIn })
+        txHistory.add({
+          id: `swap-${Date.now()}-${(result?.txHash || result?.transactionHash || tokenOut).slice(-6)}`,
+          ts: Date.now(),
+          action: 'swap',
+          source: 'web-ui',
+          walletSource: 'eoa',
+          from: tokenIn,
+          to: tokenOut,
+          amount: result?.amountIn || amountIn,
+          token: tokenIn,
+          status: 'success',
+          tx: result?.txHash || result?.transactionHash,
+          explorer: result?.explorerUrl,
+          note: `EOA swap to ${result?.amountOut || result?.estimatedOutput?.amount || ''} ${tokenOut}. Platform fee ${result?.platformFee?.amount || '0'} ${tokenIn}.`,
+        })
         setStatus({ type:'success', msg:`✓ ${result?.amountIn || amountIn} ${tokenIn} → ${result?.amountOut || result?.estimatedOutput?.amount || ''} ${tokenOut}`, link:result?.explorerUrl })
       } else {
         if (!circleWallet) return
@@ -64,6 +80,21 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
           return
         }
         const feeText = d.result?.platformFee?.amount ? ` • fee ${d.result.platformFee.amount} ${d.result.platformFee.token}` : ''
+        txHistory.add({
+          id: `swap-${Date.now()}-${(d.result?.txHash || d.result?.transactionHash || tokenOut).slice(-6)}`,
+          ts: Date.now(),
+          action: 'swap',
+          source: 'web-ui',
+          walletSource: 'circle',
+          from: tokenIn,
+          to: tokenOut,
+          amount: d.result?.amountIn || amountIn,
+          token: tokenIn,
+          status: 'success',
+          tx: d.result?.txHash || d.result?.transactionHash,
+          explorer: d.result?.explorerUrl,
+          note: `Circle Wallet swap to ${d.result?.amountOut || ''} ${tokenOut}${feeText}.`,
+        })
         setStatus({ type:'success', msg:`✓ ${d.result?.amountIn} ${d.result?.tokenIn} → ${d.result?.amountOut} ${d.result?.tokenOut}${feeText}`, link:d.result?.explorerUrl })
       }
       setAmountIn(''); setQuote(null)
@@ -106,8 +137,8 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       </div>
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Testnet</span></div>
-        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span>{quote?.platformFee ? `${quote.platformFee.amount} ${quote.platformFee.token}` : '-'}</span></div>}
-        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Swap input</span><span>{quote?.platformFee ? `${quote.platformFee.swapAmountIn} ${tokenIn}` : '-'}</span></div>}
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span>{quote?.platformFee ? `${quote.platformFee.amount} ${quote.platformFee.token}` : '-'}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Swap input</span><span>{quote?.platformFee ? `${quote.platformFee.swapAmountIn} ${tokenIn}` : '-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.fee')}</span><span>{quote?quote.fee+' USDC':'-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.rate')}</span><span>{quote?`1 ${tokenIn} = ${quote.rate} ${tokenOut}`:'-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.source')}</span><span>{walletLabel}</span></div>

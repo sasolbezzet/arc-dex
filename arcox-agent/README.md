@@ -1,5 +1,15 @@
 # ARCOX Agent
 
+> Legacy copy. Source utama agent/MCP sekarang ada di `/home/ubuntu/arcox-mcp`.
+> Jalankan dan maintenance agent dari repo baru:
+>
+> ```bash
+> cd /home/ubuntu/arcox-mcp
+> npm run mcp
+> npm run agent -- status
+> npm run codex-agent -- "send 1 USDC from circle wallet to 0x..."
+> ```
+
 Standalone local-first agent profile for ARCOX DEX.
 
 Agent env file:
@@ -50,7 +60,7 @@ Or with natural prompt:
 npm run codex-agent -- "retry bridge 0xBURN_TX from Arc to Arbitrum Sepolia" --yes
 ```
 
-When a router exists in `deployments/arcox-router.testnet.json`, `send` and `bridge` use `ArcoxRouter` so platform fees are enforced onchain. If a source chain has no router deployment, bridge falls back to direct CCTP and prints `direct-cctp-fallback`.
+When a router exists in `deployments/arcox-router.testnet.json`, `send` and EVM-source `bridge` routes use `ArcoxRouter` so platform fees are enforced onchain. If a source chain has no router deployment, the agent refuses direct bridge execution instead of bypassing platform fees. Solana-source bridge routes split the USDC platform fee before the CCTP burn.
 
 Current router deployments:
 

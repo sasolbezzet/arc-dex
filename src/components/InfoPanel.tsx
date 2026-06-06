@@ -28,10 +28,21 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   const [expanded, setExpanded] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string|null>(null)
+  const [copiedReceipt, setCopiedReceipt] = useState(false)
   const color = rec.status === 'success' ? '#10b981' : rec.status === 'error' ? '#f87171' : '#f59e0b'
   const icon = rec.status === 'success' ? '✓' : rec.status === 'error' ? '✗' : '⏳'
-  const canRetry = Boolean(rec.burnTx && rec.to !== 'Solana_Devnet' && rec.status !== 'success')
+  const canRetry = Boolean((rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana_Devnet' && rec.status !== 'success')
   const short = (value?: string) => value ? `${value.slice(0, 10)}...${value.slice(-6)}` : '-'
+  const action = rec.action || 'bridge'
+  const copyReceipt = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(rec, null, 2))
+      setCopiedReceipt(true)
+      setTimeout(() => setCopiedReceipt(false), 1600)
+    } catch {
+      setRetryError('Copy receipt gagal.')
+    }
+  }
   const waitEvmTx = async (txHash: string) => {
     for (let i = 0; i < 90; i++) {
       const r = await (window as any).ethereum.request({ method:'eth_getTransactionReceipt', params:[txHash] })
@@ -145,18 +156,30 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
         <div>
           <div style={{ color: '#e2e8f0', fontWeight: 600, display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
             <TokenLogo token={rec.token || 'USDC'} size={16} />
-            <span>{rec.amount} {rec.token || 'USDC'} ·</span>
+            <span>{action.toUpperCase()} · {rec.amount} {rec.token || 'USDC'} ·</span>
             <ChainLogo chain={rec.from} size={16} />
             <span>{rec.from} →</span>
             <ChainLogo chain={rec.to} size={16} />
             <span>{rec.to}</span>
           </div>
-          <div style={{ color: '#64748b', fontSize: 11 }}>{fmtTime(rec.ts)}</div>
+          <div style={{ color: '#64748b', fontSize: 11 }}>{fmtTime(rec.ts)} · {rec.source || 'web-ui'}{rec.walletSource ? ` · ${rec.walletSource}` : ''}</div>
         </div>
         <div style={{ color, fontWeight: 700, fontSize: 14 }}>{icon}</div>
       </div>
       {expanded && (
         <div style={{ marginTop: 6, paddingLeft: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {rec.tx && (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#64748b' }}>Tx</span>
+              <a href={rec.explorer || '#'} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.tx)} →</a>
+            </div>
+          )}
+          {rec.approveTx && (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#64748b' }}>Approve</span>
+              <span style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.approveTx)}</span>
+            </div>
+          )}
           {rec.burnTx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: '#64748b' }}>Burn</span>
@@ -169,13 +192,16 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
               <a href={rec.mintExplorerUrl || '#'} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.mintTx)} →</a>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          {(rec.srcDomain !== undefined || rec.dstDomain !== undefined) && <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: '#64748b' }}>Domain</span>
             <span style={{ fontFamily: 'monospace' }}>{rec.srcDomain} → {rec.dstDomain}</span>
-          </div>
+          </div>}
           {rec.error && <div style={{ color: '#f87171', fontSize: 11 }}>{rec.error}</div>}
           {retryError && <div style={{ color: '#f87171', fontSize: 11 }}>{retryError}</div>}
           {rec.note && <div style={{ color: '#94a3b8', fontSize: 11, whiteSpace: 'pre-wrap' }}>{rec.note}</div>}
+          <button onClick={copyReceipt} style={{marginTop:4,background:'rgba(16,185,129,0.1)',color:'#10b981',border:'1px solid rgba(16,185,129,0.25)',padding:'6px 8px',borderRadius:8,cursor:'pointer',fontSize:11}}>
+            {copiedReceipt ? 'Receipt copied' : 'Copy receipt JSON'}
+          </button>
           {canRetry && (
             <button onClick={retryMint} disabled={retrying} style={{marginTop:4,background:'rgba(99,102,241,0.14)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.35)',padding:'6px 8px',borderRadius:8,cursor:retrying?'not-allowed':'pointer',fontSize:11}}>
               {retrying ? 'Retry mint...' : 'Retry mint'}
@@ -191,10 +217,12 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const { t } = useI18n()
   const [copied, setCopied] = useState<string|null>(null)
   const [history, setHistory] = useState<TxRecord[]>(() => txHistory.list())
+  const [historyFilter, setHistoryFilter] = useState<'all'|'pending'|'bridge'|'swap'|'send'|'agent'>('all')
   const [solanaAddress, setSolanaAddress] = useState<string|null>(null)
   const [solanaUsdc, setSolanaUsdc] = useState('0')
   useEffect(() => {
     const unsub = txHistory.subscribe(() => setHistory(txHistory.list()))
+    txHistory.syncRemote()
     return unsub
   }, [])
   const refreshSolana = async () => {
@@ -232,7 +260,14 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
     { sym:'USYC', name:'US Yield Coin', circleBal:balances.USYC||'0', eoaBal:eoaBalances.USYC||'0', dec:6 },
     { sym:'cirBTC', name:'Circle Wrapped BTC', circleBal:balances.cirBTC||'0', eoaBal:eoaBalances.cirBTC||'0', dec:8 },
   ]
-  const retryable = history.filter(rec => rec.burnTx && rec.to !== 'Solana_Devnet' && rec.status !== 'success')
+  const pending = history.filter(rec => rec.status !== 'success')
+  const retryable = history.filter(rec => (rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana_Devnet' && rec.status !== 'success')
+  const filteredHistory = history.filter(rec => {
+    if (historyFilter === 'all') return true
+    if (historyFilter === 'pending') return rec.status !== 'success'
+    if (historyFilter === 'agent') return rec.source === 'agent-mcp'
+    return (rec.action || 'bridge') === historyFilter
+  })
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       {circleWallet&&(
@@ -295,25 +330,31 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div style={{fontWeight:600,fontSize:14,color:'#e2e8f0'}}>{t('info.retryCenter')}</div>
+          <div style={{fontWeight:600,fontSize:14,color:'#e2e8f0'}}>Pending Transaction Center</div>
           {history.length>0&&<button onClick={()=>{ if(confirm('Hapus semua riwayat?')) txHistory.clear() }} style={{fontSize:11,background:'rgba(239,68,68,0.1)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)',padding:'3px 8px',borderRadius:6,cursor:'pointer'}}>{t('common.delete')}</button>}
         </div>
-        {retryable.length > 0 ? (
+        {pending.length > 0 ? (
           <>
-            <div style={{color:'#f59e0b',fontSize:12,marginBottom:8}}>{t('info.retryNeeded', { count: retryable.length })}</div>
-            {retryable.slice(0,5).map(rec=><HistoryRow key={`retry-${rec.id}`} rec={rec} />)}
+            <div style={{color:'#f59e0b',fontSize:12,marginBottom:8}}>{pending.length} transaksi perlu dicek. Bridge pending bisa retry mint jika attestation sudah siap.</div>
+            {pending.slice(0,6).map(rec=><HistoryRow key={`pending-${rec.id}`} rec={rec} />)}
           </>
         ) : (
           <div style={{color:'#10b981',fontSize:12,marginBottom:8}}>{t('info.retryClear')}</div>
         )}
+        {retryable.length > 0 && <div style={{color:'#94a3b8',fontSize:11,marginTop:8}}>{retryable.length} bridge bisa dicoba retry mint dari detail transaksi.</div>}
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
           <div style={{fontWeight:600,fontSize:14,color:'#e2e8f0'}}>📜 {t('info.history')}</div>
         </div>
-        {history.length===0?(
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+          {(['all','pending','bridge','swap','send','agent'] as const).map(filter=>(
+            <button key={filter} onClick={()=>setHistoryFilter(filter)} style={{fontSize:11,textTransform:'capitalize',background:historyFilter===filter?'rgba(99,102,241,0.22)':'rgba(18,18,26,0.8)',color:historyFilter===filter?'#c7d2fe':'#94a3b8',border:historyFilter===filter?'1px solid rgba(99,102,241,0.55)':'1px solid #1e1e2e',padding:'5px 8px',borderRadius:8,cursor:'pointer'}}>{filter}</button>
+          ))}
+        </div>
+        {filteredHistory.length===0?(
           <div style={{color:'#64748b',fontSize:12,textAlign:'center',padding:'12px 0'}}>{t('info.noHistory')}</div>
-        ):history.slice(0,20).map(rec=><HistoryRow key={rec.id} rec={rec} />)}
+        ):filteredHistory.slice(0,30).map(rec=><HistoryRow key={rec.id} rec={rec} />)}
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🌐 Arc Testnet</div>

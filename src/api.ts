@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function safePost(baseUrl: string, path: string, body: object): Promise<any> {
   const token = localStorage.getItem('arc-dex-auth')
   let authToken = ''
