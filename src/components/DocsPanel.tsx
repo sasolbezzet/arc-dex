@@ -4,9 +4,10 @@ type DocSection = {
   title: string
   body: string
   steps?: string[]
+  code?: string
 }
 
-const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSection[] }> = {
+const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSection[]; agentMcp: { intro: string; sections: DocSection[] } }> = {
   id: {
     intro: 'Panduan singkat ARCOX DEX untuk wallet, swap, bridge, send, receive, agent jobs, dan recovery transaksi bridge.',
     warning: {
@@ -59,6 +60,50 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
         body: 'Menu Info menampilkan address, Wallet ID, semua saldo, riwayat bridge, dan Bridge Retry Center. Ini halaman utama untuk diagnosis transaksi pending.',
       },
     ],
+    agentMcp: {
+      intro: 'ARCOX MCP membuat agent lokal seperti Codex atau Hermes bisa memahami dan menjalankan fitur ARCOX DEX dari terminal, dengan private key tetap berada di komputer user.',
+      sections: [
+        {
+          title: 'Instalasi sekali pakai',
+          body: 'Install package npm publik lalu jalankan server MCP lokal. Setelah terpasang, agent bisa memanggil tools ARCOX tanpa mencari file repo.',
+          code: 'npm install -g arcox-mcp\narcox-mcp',
+        },
+        {
+          title: 'File env user',
+          body: 'Simpan private key dan RPC di komputer user. Jangan taruh private key di browser, chat, atau repository.',
+          code: 'mkdir -p ~/.arcox\nnano ~/.arcox/.env\n\nAGENT_PRIVATE_KEY=0x...\nARC_RPC=https://rpc.testnet.arc.network/\nARCOX_API_URL=https://arc-dex-bice.vercel.app\nSOLANA_PRIVATE_KEY=[1,2,3,...]\nSOLANA_DEVNET_RPC=https://api.devnet.solana.com',
+        },
+        {
+          title: 'Koneksi ke Hermes',
+          body: 'Tambahkan MCP server ke Hermes. Pastikan args berbentuk array kosong, bukan string.',
+          code: 'hermes mcp add arcox -- arcox-mcp\n\nmcp_servers:\n  arcox:\n    command: arcox-mcp\n    args: []',
+        },
+        {
+          title: 'Koneksi ke Codex',
+          body: 'Tambahkan MCP server bernama arcox dengan command arcox-mcp. Setelah itu restart Codex session agar tool muncul.',
+          code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-mcp",\n      "args": []\n    }\n  }\n}',
+        },
+        {
+          title: 'Aturan keamanan transaksi',
+          body: 'Semua aksi yang memindahkan dana wajib quote/preview dulu. User cukup jawab yes, ya, confirm, konfirmasi, lanjut, atau ok setelah membaca preview. Agent tidak boleh langsung execute hanya dengan confirmed=true.',
+          steps: ['Agent memanggil quote.', 'Agent menampilkan detail route, fee, saldo, wallet sumber, estimasi diterima, dan risiko.', 'User memberi konfirmasi sederhana.', 'Agent execute dengan previewId dan confirmationText.'],
+        },
+        {
+          title: 'Fitur MCP',
+          body: 'Tools MCP mencakup balances, history, route status, UI map, swap, bridge, send, retry bridge, agent status, dan Agentic Economy jobs.',
+          steps: ['arcox_wallet_balances', 'arcox_transaction_history', 'arcox_quote_swap / arcox_execute_swap', 'arcox_quote_bridge / arcox_execute_bridge', 'arcox_quote_send / arcox_execute_send', 'arcox_retry_bridge', 'arcox_agent_job'],
+        },
+        {
+          title: 'Contoh prompt',
+          body: 'Prompt harus tetap natural, tapi untuk transaksi agent wajib menampilkan preview dulu.',
+          code: 'show all wallet balances\nquote bridge 1 usdc from arc to base\nsend 1 eurc from eoa to 0x...\nretry bridge 0xBURN_TX from arbitrum sepolia to arc\nswap 1 eurc to usdc\ncreate agent job review github repo with budget 1 usdc',
+        },
+        {
+          title: 'Batasan penting',
+          body: 'EOA execution memakai AGENT_PRIVATE_KEY lokal. Circle Wallet proxy memakai backend ARCOX dan wallet id dari database ARCOX DEX. Solana wajib Devnet. Untuk Web UI, EOA tetap sign lewat wallet browser user.',
+        },
+      ],
+    },
   },
   en: {
     intro: 'A short ARCOX DEX guide for wallets, swap, bridge, send, receive, agent jobs, and bridge recovery.',
@@ -83,6 +128,19 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       { title: 'Agent Jobs', body: 'Agent Jobs simulates agentic economy flows: register agent, link AI endpoint, create job, fund USDC escrow, submit deliverable, then verifier/evaluator completes the job.' },
       { title: 'Info and history', body: 'Info shows address, Wallet ID, all balances, bridge history, and Bridge Retry Center. This is the main page for diagnosing pending transactions.' },
     ],
+    agentMcp: {
+      intro: 'ARCOX MCP lets a local agent such as Codex or Hermes understand and run ARCOX DEX features from the terminal while private keys stay on the user computer.',
+      sections: [
+        { title: 'One-time install', body: 'Install the public npm package and run the local MCP server. After installation, the agent can call ARCOX tools without searching repository files.', code: 'npm install -g arcox-mcp\narcox-mcp' },
+        { title: 'User env file', body: 'Store private keys and RPC settings on the user computer. Do not put private keys in the browser, chat, or repository.', code: 'mkdir -p ~/.arcox\nnano ~/.arcox/.env\n\nAGENT_PRIVATE_KEY=0x...\nARC_RPC=https://rpc.testnet.arc.network/\nARCOX_API_URL=https://arc-dex-bice.vercel.app\nSOLANA_PRIVATE_KEY=[1,2,3,...]\nSOLANA_DEVNET_RPC=https://api.devnet.solana.com' },
+        { title: 'Connect Hermes', body: 'Add the MCP server to Hermes. Make sure args is an empty array, not a string.', code: 'hermes mcp add arcox -- arcox-mcp\n\nmcp_servers:\n  arcox:\n    command: arcox-mcp\n    args: []' },
+        { title: 'Connect Codex', body: 'Add an MCP server named arcox with command arcox-mcp. Restart the Codex session so the tool appears.', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-mcp",\n      "args": []\n    }\n  }\n}' },
+        { title: 'Transaction safety rule', body: 'Every value-moving action must quote/preview first. The user can simply reply yes, ya, confirm, konfirmasi, lanjut, or ok after reading the preview. The agent must not execute directly with confirmed=true only.', steps: ['Agent calls quote.', 'Agent shows route, fee, balances, source wallet, estimated receive, and risks.', 'User gives a simple confirmation.', 'Agent executes with previewId and confirmationText.'] },
+        { title: 'MCP features', body: 'MCP tools cover balances, history, route status, UI map, swap, bridge, send, retry bridge, agent status, and Agentic Economy jobs.', steps: ['arcox_wallet_balances', 'arcox_transaction_history', 'arcox_quote_swap / arcox_execute_swap', 'arcox_quote_bridge / arcox_execute_bridge', 'arcox_quote_send / arcox_execute_send', 'arcox_retry_bridge', 'arcox_agent_job'] },
+        { title: 'Prompt examples', body: 'Prompts can stay natural, but for transactions the agent must show a preview first.', code: 'show all wallet balances\nquote bridge 1 usdc from arc to base\nsend 1 eurc from eoa to 0x...\nretry bridge 0xBURN_TX from arbitrum sepolia to arc\nswap 1 eurc to usdc\ncreate agent job review github repo with budget 1 usdc' },
+        { title: 'Important limits', body: 'EOA execution uses the local AGENT_PRIVATE_KEY. Circle Wallet proxy uses ARCOX backend and the wallet id from the ARCOX DEX database. Solana must use Devnet. In the Web UI, EOA still signs through the user browser wallet.' },
+      ],
+    },
   },
   zh: {
     intro: 'ARCOX DEX 简短指南：钱包、兑换、跨链、发送、收款、Agent Jobs 和桥接恢复。',
@@ -107,6 +165,19 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       { title: 'Agent Jobs', body: 'Agent Jobs 模拟 agentic economy：注册 agent、连接 AI endpoint、创建 job、注入 USDC escrow、提交 deliverable，然后 verifier/evaluator 完成 job。' },
       { title: 'Info and history', body: 'Info 显示 address、Wallet ID、全部余额、bridge history 和 Bridge Retry Center。这里是排查 pending bridge 的主要页面。' },
     ],
+    agentMcp: {
+      intro: 'ARCOX MCP 让 Codex 或 Hermes 等本地 agent 可以从终端理解并执行 ARCOX DEX 功能，私钥仍保存在用户电脑。',
+      sections: [
+        { title: '一次安装', body: '安装公开 npm package 并运行本地 MCP server。安装后 agent 可以直接调用 ARCOX tools。', code: 'npm install -g arcox-mcp\narcox-mcp' },
+        { title: '用户 env 文件', body: '把 private key 和 RPC 保存在用户电脑。不要把 private key 放进浏览器、聊天或仓库。', code: 'mkdir -p ~/.arcox\nnano ~/.arcox/.env\n\nAGENT_PRIVATE_KEY=0x...\nARC_RPC=https://rpc.testnet.arc.network/\nARCOX_API_URL=https://arc-dex-bice.vercel.app\nSOLANA_PRIVATE_KEY=[1,2,3,...]\nSOLANA_DEVNET_RPC=https://api.devnet.solana.com' },
+        { title: '连接 Hermes', body: '把 MCP server 添加到 Hermes。确认 args 是空数组，不是字符串。', code: 'hermes mcp add arcox -- arcox-mcp\n\nmcp_servers:\n  arcox:\n    command: arcox-mcp\n    args: []' },
+        { title: '连接 Codex', body: '添加名为 arcox 的 MCP server，command 使用 arcox-mcp。重启 Codex session 后 tool 会出现。', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-mcp",\n      "args": []\n    }\n  }\n}' },
+        { title: '交易安全规则', body: '所有会移动资金的动作必须先 quote/preview。用户阅读 preview 后只需回复 yes、ya、confirm、konfirmasi、lanjut 或 ok。agent 不允许只用 confirmed=true 直接执行。', steps: ['Agent 调用 quote。', 'Agent 显示 route、fee、余额、来源钱包、预计到账和风险。', '用户给出简单确认。', 'Agent 使用 previewId 和 confirmationText 执行。'] },
+        { title: 'MCP 功能', body: 'MCP tools 包含 balances、history、route status、UI map、swap、bridge、send、retry bridge、agent status 和 Agentic Economy jobs。', steps: ['arcox_wallet_balances', 'arcox_transaction_history', 'arcox_quote_swap / arcox_execute_swap', 'arcox_quote_bridge / arcox_execute_bridge', 'arcox_quote_send / arcox_execute_send', 'arcox_retry_bridge', 'arcox_agent_job'] },
+        { title: 'Prompt 示例', body: 'Prompt 可以保持自然语言，但交易必须先显示 preview。', code: 'show all wallet balances\nquote bridge 1 usdc from arc to base\nsend 1 eurc from eoa to 0x...\nretry bridge 0xBURN_TX from arbitrum sepolia to arc\nswap 1 eurc to usdc\ncreate agent job review github repo with budget 1 usdc' },
+        { title: '重要限制', body: 'EOA execution 使用本地 AGENT_PRIVATE_KEY。Circle Wallet proxy 使用 ARCOX backend 和 ARCOX DEX 数据库里的 wallet id。Solana 必须使用 Devnet。Web UI 中 EOA 仍由用户浏览器钱包签名。' },
+      ],
+    },
   },
 }
 
@@ -147,6 +218,26 @@ export function DocsPanel() {
           </section>
         ))}
       </div>
+
+      <section className='docs-agent-section'>
+        <div className='docs-kicker'>Agent MCP</div>
+        <h2>Terminal Agent Setup</h2>
+        <p>{content.agentMcp.intro}</p>
+        <div className='docs-grid docs-agent-grid'>
+          {content.agentMcp.sections.map(section => (
+            <section className='docs-card' key={section.title}>
+              <h3>{section.title}</h3>
+              <p>{section.body}</p>
+              {section.steps && (
+                <ol>
+                  {section.steps.map(step => <li key={step}>{step}</li>)}
+                </ol>
+              )}
+              {section.code && <pre className='docs-code'><code>{section.code}</code></pre>}
+            </section>
+          ))}
+        </div>
+      </section>
     </div>
   )
 }
