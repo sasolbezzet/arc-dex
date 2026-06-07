@@ -94,7 +94,7 @@ export const txHistory = {
   },
   merge(items: TxRecord[]) {
     const byId = new Map<string, TxRecord>()
-    for (const item of [...items, ...read()]) {
+    for (const item of [...read(), ...items]) {
       if (!item?.id) continue
       byId.set(item.id, item)
     }
