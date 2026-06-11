@@ -49,10 +49,10 @@ export async function swapFromCircleWallet(args: {
 export async function swapFromEoa(args: { tokenIn: string; tokenOut: string; amountIn: string }) {
   const split = splitEoaPlatformFee(args.tokenIn, args.amountIn)
   let feeTxHash = ''
+  const result = await swapEoaWithAppKit({ ...args, amountIn: split.netAmount, kitKey: await getKitKey() })
   if (split.feeUnits > 0n) {
     feeTxHash = await sendEoaTokenFee(args.tokenIn, split.feeUnits)
   }
-  const result = await swapEoaWithAppKit({ ...args, amountIn: split.netAmount, kitKey: await getKitKey() })
   return {
     ...result,
     grossAmountIn: args.amountIn,

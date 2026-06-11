@@ -15,6 +15,7 @@ import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-k
 import { createSolanaRpc } from '@solana/kit'
 import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
+import { getArcToken } from './domain/tokens'
 
 declare global {
   interface Window {
@@ -236,10 +237,13 @@ export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: strin
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
+  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
+  const address = accounts?.[0]
+  if (!address) throw new Error('Wallet EOA belum terhubung.')
   return await kit.swap({
-    from: { adapter, chain: SwapChain.Arc_Testnet },
-    tokenIn: args.tokenIn,
-    tokenOut: args.tokenOut,
+    from: { adapter, chain: SwapChain.Arc_Testnet, address },
+    tokenIn: swapTokenParam(args.tokenIn),
+    tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
     config: { kitKey: args.kitKey, allowanceStrategy: 'approve' },
   } as any)
@@ -250,13 +254,22 @@ export async function estimateEoaSwapWithAppKit(args: { tokenIn: string; tokenOu
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
+  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
+  const address = accounts?.[0]
+  if (!address) throw new Error('Wallet EOA belum terhubung.')
   return await kit.estimateSwap({
-    from: { adapter, chain: SwapChain.Arc_Testnet },
-    tokenIn: args.tokenIn,
-    tokenOut: args.tokenOut,
+    from: { adapter, chain: SwapChain.Arc_Testnet, address },
+    tokenIn: swapTokenParam(args.tokenIn),
+    tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
     config: { kitKey: args.kitKey, allowanceStrategy: 'approve' },
   } as any)
 }
 
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
+
+function swapTokenParam(symbol: string) {
+  const token = getArcToken(symbol)
+  if (symbol === 'cirBTC' || symbol === 'USYC') return token?.address || symbol
+  return symbol
+}
