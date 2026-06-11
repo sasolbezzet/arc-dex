@@ -49,9 +49,14 @@ export async function swapFromCircleWallet(args: {
 export async function swapFromEoa(args: { tokenIn: string; tokenOut: string; amountIn: string }) {
   const split = splitEoaPlatformFee(args.tokenIn, args.amountIn)
   let feeTxHash = ''
+  let feeError = ''
   const result = await swapEoaWithAppKit({ ...args, amountIn: split.netAmount, kitKey: await getKitKey() })
   if (split.feeUnits > 0n) {
-    feeTxHash = await sendEoaTokenFee(args.tokenIn, split.feeUnits)
+    try {
+      feeTxHash = await sendEoaTokenFee(args.tokenIn, split.feeUnits)
+    } catch (error) {
+      feeError = error instanceof Error ? error.message : 'Platform fee transaction failed.'
+    }
   }
   return {
     ...result,
@@ -63,6 +68,7 @@ export async function swapFromEoa(args: { tokenIn: string; tokenOut: string; amo
       token: args.tokenIn,
       treasury: EVM_FEE_TREASURY,
       txHash: feeTxHash,
+      error: feeError,
     },
   }
 }
