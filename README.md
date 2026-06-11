@@ -14,6 +14,8 @@ npm install
 npm run dev
 ```
 
+Repo ini bukan monorepo frontend/backend. Source frontend ada langsung di `src/`, jadi tidak ada langkah `cd frontend`.
+
 Backend:
 
 ```bash
@@ -68,6 +70,12 @@ vercel
 ```
 
 If the backend moves, update `vercel.json` rewrite destination.
+
+Runtime check:
+
+- Header app menampilkan `API online/offline`.
+- Jika halaman terlihat kosong, cek asset JS di DevTools Network. Vercel harus serve `/assets/*.js` sebagai `application/javascript`, bukan fallback `index.html`.
+- Jika API offline, swap/bridge/send tidak akan berjalan walaupun frontend berhasil load.
 
 ## Security Notes
 

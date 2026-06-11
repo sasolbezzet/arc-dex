@@ -35,6 +35,7 @@ export default function App() {
   const [eoaBalances, setEoaBalances] = useState<Record<string,string>>({...EMPTY_BAL})
   const [loadingWallet, setLoadingWallet] = useState(false)
   const [walletSetupError, setWalletSetupError] = useState('')
+  const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const connectInFlightRef = useRef('')
   const fetchCircleBal = async (addr:string) => {
     try {
@@ -148,6 +149,29 @@ export default function App() {
     if (params.get('to')) setTab('send')
   }, [])
   useEffect(() => {
+    let cancelled = false
+    const checkApi = async () => {
+      setApiStatus('checking')
+      for (let i = 0; i < 3; i++) {
+        try {
+          const response = await fetch(`${API}/api/config`, { cache: 'no-store' })
+          if (response.ok) {
+            if (!cancelled) setApiStatus('online')
+            return
+          }
+        } catch {}
+        await new Promise(resolve => setTimeout(resolve, 700 * (i + 1)))
+      }
+      if (!cancelled) setApiStatus('offline')
+    }
+    checkApi()
+    const timer = setInterval(checkApi, 45000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [])
+  useEffect(() => {
     const url = new URL(window.location.href)
     if (page === 'docs') url.searchParams.set('page', 'docs')
     else url.searchParams.delete('page')
@@ -185,6 +209,7 @@ export default function App() {
             <ArcoxLogo />
             <span className='brand-title'>ARCOX DEX</span>
             <span className='env-pill'>{t('app.testnet')}</span>
+            <span className={`api-health ${apiStatus}`}>API {apiStatus}</span>
           </div>
           <div className='header-actions'>
             <div className='language-switcher' role='group' aria-label='Language'>
