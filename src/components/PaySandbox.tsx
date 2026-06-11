@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { createInvoice, getInvoiceStatus, quoteEcoRoute, simulateCircleWebhook } from '../payApi'
+import { createInvoice, getInvoiceStatus, getNanopaymentsCapabilities, quoteEcoRoute, simulateCircleWebhook } from '../payApi'
 import type { ArcoxInvoice } from '../payApi'
 
 const EXAMPLES = [
@@ -9,6 +9,7 @@ const EXAMPLES = [
   ['GET /api/invoices/:invoiceId/status', { invoiceId: 'inv_123' }],
   ['POST /api/webhooks/circle-gateway', { notificationId: 'evt_123', eventType: 'gateway.mint.finalized', data: { invoiceId: 'inv_123', txHash: '0x...' } }],
   ['POST /api/dev/simulate-webhook', { invoiceId: 'inv_123', eventType: 'gateway.mint.finalized', txHash: '0x...' }],
+  ['GET /api/nanopayments/capabilities', { protocol: 'x402', paymentRail: 'circle-gateway-nanopayments', live: false }],
 ]
 
 export function PaySandbox() {
@@ -27,6 +28,7 @@ export function PaySandbox() {
   const [webhookResult, setWebhookResult] = useState<any>(null)
   const [eco, setEco] = useState({ sourceChain: 'base-sepolia', destinationChain: 'arc-testnet', sourceToken: 'USDC', destinationToken: 'USDC', amount: '10', invoiceId: '' })
   const [ecoResult, setEcoResult] = useState<any>(null)
+  const [nanopaymentsResult, setNanopaymentsResult] = useState<any>(null)
   const [error, setError] = useState('')
 
   const updateForm = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }))
@@ -70,6 +72,15 @@ export function PaySandbox() {
       setEcoResult(await quoteEcoRoute({ ...eco, recipient: form.merchantAddress }))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Eco preview failed.')
+    }
+  }
+
+  const loadNanopayments = async () => {
+    try {
+      setError('')
+      setNanopaymentsResult(await getNanopaymentsCapabilities())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nanopayments readiness check failed.')
     }
   }
 
@@ -128,6 +139,13 @@ export function PaySandbox() {
           <button className='btn btn-primary' onClick={previewEco}>Preview Eco Route</button>
           {ecoResult && <pre className='json-box'>{JSON.stringify(ecoResult, null, 2)}</pre>}
         </div>
+
+        <div className='glass sandbox-card'>
+          <h3>Circle Nanopayments Readiness</h3>
+          <p>Preview ARCOX x402 readiness for future Circle Gateway Nanopayments. This does not make gas-free nanopayments live.</p>
+          <button className='btn btn-primary' onClick={loadNanopayments}>Check Readiness</button>
+          {nanopaymentsResult && <pre className='json-box'>{JSON.stringify(nanopaymentsResult, null, 2)}</pre>}
+        </div>
       </section>
 
       <section className='sandbox-grid'>
@@ -145,12 +163,12 @@ export function PaySandbox() {
 
         <div className='glass sandbox-card'>
           <h3>Docs / Links</h3>
-          {['ARCOX Pay docs', 'ARCOX MCP docs', 'ARCOX API docs', 'Circle Gateway docs', 'Eco docs', 'x402 docs', 'Privacy roadmap'].map(item => <p key={item}>{item}</p>)}
+          {['ARCOX Pay docs', 'ARCOX MCP docs', 'ARCOX API docs', 'Circle Gateway docs', 'Circle Gateway Nanopayments docs', 'Eco docs', 'x402 docs', 'Privacy roadmap'].map(item => <p key={item}>{item}</p>)}
         </div>
 
         <div className='glass sandbox-card'>
           <h3>Glossary</h3>
-          <p><strong>Merchant</strong> receives payment. <strong>Buyer</strong> pays invoice. <strong>Invoice</strong> is a payment request. <strong>Payment link</strong> opens checkout. <strong>USDC</strong> is the token. <strong>Arc</strong> is the testnet network. <strong>Webhook</strong> updates status. <strong>Circle Gateway</strong> lifecycle events are supported. <strong>Eco Routes</strong> are mock mode. <strong>x402</strong> is disabled by default. <strong>MCP agent</strong> uses quote-before-execute. <strong>Privacy roadmap</strong> is future only.</p>
+          <p><strong>Merchant</strong> receives payment. <strong>Buyer</strong> pays invoice. <strong>Invoice</strong> is a payment request. <strong>Payment link</strong> opens checkout. <strong>USDC</strong> is the token. <strong>Arc</strong> is the testnet network. <strong>Webhook</strong> updates status. <strong>Circle Gateway</strong> lifecycle events are supported. <strong>Nanopayments</strong> are x402 readiness only. <strong>Eco Routes</strong> are mock mode. <strong>x402</strong> is disabled by default. <strong>MCP agent</strong> uses quote-before-execute. <strong>Privacy roadmap</strong> is future only.</p>
         </div>
       </section>
     </div>

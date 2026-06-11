@@ -67,3 +67,7 @@ export function simulateCircleWebhook(input: Record<string, unknown>) {
 export function quoteEcoRoute(input: Record<string, unknown>) {
   return request('/api/eco/route-preview', { method: 'POST', body: JSON.stringify(input) })
 }
+
+export function getNanopaymentsCapabilities() {
+  return request('/api/nanopayments/capabilities')
+}
