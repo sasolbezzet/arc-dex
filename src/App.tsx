@@ -7,6 +7,8 @@ import { ReceivePanel } from './components/ReceivePanel'
 import { AgenticPanel } from './components/AgenticPanel'
 import { InfoPanel } from './components/InfoPanel'
 import { DocsPanel } from './components/DocsPanel'
+import { PayCheckout } from './components/PayCheckout'
+import { PaySandbox } from './components/PaySandbox'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 const API = ''
@@ -23,6 +25,8 @@ function ArcoxLogo() {
 }
 export default function App() {
   const { lang, setLang, t } = useI18n()
+  const routePath = window.location.pathname
+  const routeMode = routePath === '/pay/sandbox' ? 'pay-sandbox' : routePath === '/pay' ? 'pay-checkout' : 'normal'
   const [tab, setTab] = useState('swap')
   const [page, setPage] = useState<'app'|'docs'>('app')
   const [address, setAddress] = useState<string|null>(null)
@@ -203,7 +207,7 @@ export default function App() {
             <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
           </div>
         </div>
-        {address && page === 'app' && (
+        {address && page === 'app' && routeMode === 'normal' && (
           <div className='balance-strip'>
             <div className='glass chip'><span style={{color:'#64748b'}}>MetaMask: </span><span style={{color:'#f59e0b',fontFamily:'monospace'}}>{address.slice(0,6)}...{address.slice(-4)}</span></div>
             <div className='glass chip'>
@@ -228,7 +232,17 @@ export default function App() {
         )}
       </header>
       <div className='hero-copy'>
-        {page === 'docs' ? (
+        {routeMode === 'pay-sandbox' ? (
+          <>
+            <h1>ARCOX <span style={{color:'#818cf8'}}>Pay</span></h1>
+            <p>Invoice, webhook, and API sandbox on Arc Testnet</p>
+          </>
+        ) : routeMode === 'pay-checkout' ? (
+          <>
+            <h1>ARCOX <span style={{color:'#818cf8'}}>Pay</span></h1>
+            <p>Public USDC payment request on Arc Testnet</p>
+          </>
+        ) : page === 'docs' ? (
           <>
             <h1>ARCOX DEX <span style={{color:'#818cf8'}}>Docs</span></h1>
             <p>User guide, bridge retry, and feature tutorial</p>
@@ -240,8 +254,12 @@ export default function App() {
           </>
         )}
       </div>
-      <div className={page === 'docs' ? 'docs-page-wrap' : 'app-panel-wrap'}>
-        {page === 'docs' ? (
+      <div className={page === 'docs' || routeMode !== 'normal' ? 'docs-page-wrap' : 'app-panel-wrap'}>
+        {routeMode === 'pay-sandbox' ? (
+          <PaySandbox />
+        ) : routeMode === 'pay-checkout' ? (
+          <PayCheckout address={address} onConnect={handleConnect} onRefresh={refresh} />
+        ) : page === 'docs' ? (
           <div className='glass docs-page-shell'>
             <button type='button' className='docs-back-button' onClick={() => setPage('app')}>Back to app</button>
             <DocsPanel />

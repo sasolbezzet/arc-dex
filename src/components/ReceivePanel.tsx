@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { CompactTokenPicker } from './CompactPickers'
 import { SEND_TOKENS } from '../domain/tokens'
 import { useI18n } from '../i18n'
+import { createInvoice } from '../payApi'
 
 interface Props {
   address:string|null
@@ -15,6 +16,8 @@ export function ReceivePanel({ address, circleWallet }: Props) {
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [copied, setCopied] = useState<string|null>(null)
+  const [invoiceLink, setInvoiceLink] = useState('')
+  const [invoiceError, setInvoiceError] = useState('')
   const receiveAddress = target === 'circle' ? circleWallet?.address : address
   const requestLink = useMemo(() => {
     if (!receiveAddress) return ''
@@ -32,6 +35,23 @@ export function ReceivePanel({ address, circleWallet }: Props) {
     try { await navigator.clipboard.writeText(text) } catch {}
     setCopied(key)
     setTimeout(()=>setCopied(null), 1800)
+  }
+  const createPayInvoice = async () => {
+    if (!receiveAddress) return
+    setInvoiceError('')
+    try {
+      const invoice = await createInvoice({
+        amount,
+        token: 'USDC',
+        network: 'arc-testnet',
+        merchantAddress: receiveAddress,
+        memo,
+        expiresInMinutes: 15,
+      })
+      setInvoiceLink(invoice.paymentUrl)
+    } catch (e) {
+      setInvoiceError(e instanceof Error ? e.message : 'Failed to create invoice.')
+    }
   }
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
@@ -59,6 +79,9 @@ export function ReceivePanel({ address, circleWallet }: Props) {
         <div className='glass' style={{padding:12,borderRadius:10,textAlign:'center'}}>
           <img src={qrUrl} alt='Payment request QR' width={176} height={176} style={{borderRadius:8,background:'#fff',padding:8,maxWidth:'100%',height:'auto'}} />
           <button onClick={()=>copy(requestLink,'link')} style={{marginTop:10,width:'100%',background:'#4f46e5',color:'white',border:'none',padding:'10px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:600}}>{copied==='link'?t('receive.linkCopied'):t('common.copyLink')}</button>
+          <button onClick={createPayInvoice} disabled={!amount || token !== 'USDC'} style={{marginTop:8,width:'100%',background:'rgba(8,145,178,0.18)',color:'#67e8f9',border:'1px solid rgba(8,145,178,0.32)',padding:'10px',borderRadius:10,cursor:amount && token === 'USDC'?'pointer':'not-allowed',fontSize:13,fontWeight:600}}>Create ARCOX Pay Invoice</button>
+          {invoiceLink && <button onClick={()=>copy(invoiceLink,'invoice')} style={{marginTop:8,width:'100%',background:'rgba(34,197,94,0.14)',color:'#86efac',border:'1px solid rgba(34,197,94,0.3)',padding:'10px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:600}}>{copied==='invoice'?'Copied':'Copy Invoice Link'}</button>}
+          {invoiceError && <div className='inline-error'>{invoiceError}</div>}
         </div>
       )}
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>{t('receive.help')}</div>

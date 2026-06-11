@@ -52,6 +52,11 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
         body: 'Menu Receive menampilkan alamat penerima dan bisa membuat request link berisi token, nominal, dan memo. Link akan membuka app ke flow Send.',
       },
       {
+        title: 'ARCOX Pay',
+        body: 'ARCOX Pay membuat invoice/payment link USDC publik di Arc Testnet. Buka /pay/sandbox untuk membuat invoice demo, cek status, simulasi Circle Gateway webhook, dan preview Eco mock route.',
+        steps: ['Invoice payment tidak menyimpan private key user.', 'Pembayaran invoice EOA sign lewat wallet user.', 'Privacy/private payment masih roadmap, bukan fitur live.'],
+      },
+      {
         title: 'Agent Jobs',
         body: 'Menu Agent Jobs adalah simulasi agentic economy: register agent, hubungkan AI endpoint, create job, fund escrow USDC, submit deliverable, lalu verifier/evaluator menyelesaikan job.',
       },
@@ -125,6 +130,7 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       { title: 'Solana bridge', body: 'Solana users must use Solana Devnet. Use Solflare or Phantom Devnet. Bridge from or to Solana requires Solana wallet signatures for burn/mint.' },
       { title: 'Send', body: 'Send transfers tokens from Circle Wallet proxy or EOA. For EOA, the transaction must be signed by the user wallet.' },
       { title: 'Receive', body: 'Receive shows the receiving address and can create a request link with token, amount, and memo. The link opens the app into the Send flow.' },
+      { title: 'ARCOX Pay', body: 'ARCOX Pay creates public USDC invoices/payment links on Arc Testnet. Open /pay/sandbox to create demo invoices, check status, simulate Circle Gateway webhooks, and preview Eco mock routes.', steps: ['Invoice payment never stores user private keys.', 'EOA invoice payment is signed by the user wallet.', 'Privacy/private payment is roadmap only, not live.'] },
       { title: 'Agent Jobs', body: 'Agent Jobs simulates agentic economy flows: register agent, link AI endpoint, create job, fund USDC escrow, submit deliverable, then verifier/evaluator completes the job.' },
       { title: 'Info and history', body: 'Info shows address, Wallet ID, all balances, bridge history, and Bridge Retry Center. This is the main page for diagnosing pending transactions.' },
     ],
@@ -162,6 +168,7 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       { title: 'Solana bridge', body: 'Solana 用户必须使用 Solana Devnet。请使用 Solflare 或 Phantom Devnet。Solana 方向的 bridge 需要 Solana 钱包签名 burn/mint。' },
       { title: 'Send', body: 'Send 用于从 Circle Wallet proxy 或 EOA 发送 token。EOA 发送必须由用户钱包签名。' },
       { title: 'Receive', body: 'Receive 显示收款地址，也可以创建包含 token、金额、memo 的 request link。链接会打开 Send flow。' },
+      { title: 'ARCOX Pay', body: 'ARCOX Pay 在 Arc Testnet 创建公开 USDC invoice/payment link。打开 /pay/sandbox 可创建 demo invoice、检查状态、模拟 Circle Gateway webhook，并预览 Eco mock route。', steps: ['Invoice payment 不保存用户 private key。', 'EOA invoice payment 由用户钱包签名。', 'Privacy/private payment 只是 roadmap，不是 live 功能。'] },
       { title: 'Agent Jobs', body: 'Agent Jobs 模拟 agentic economy：注册 agent、连接 AI endpoint、创建 job、注入 USDC escrow、提交 deliverable，然后 verifier/evaluator 完成 job。' },
       { title: 'Info and history', body: 'Info 显示 address、Wallet ID、全部余额、bridge history 和 Bridge Retry Center。这里是排查 pending bridge 的主要页面。' },
     ],
