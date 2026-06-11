@@ -114,7 +114,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const sourceBalance = source === 'circle' && fromChain === 'Arc_Testnet' ? circleB : isFromSolana ? parseFloat(solanaUsdcBal || '0') : eoaB
   const customFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const cctpFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
-  const forwardingFee = isFromSolana || isToSolana ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
+  const gatewayForwardingEnabled = false
+  const forwardingFee = gatewayForwardingEnabled && (isFromSolana || isToSolana) ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
   const platformFee = amount
     ? (parseFloat(amount) * (PLATFORM_FEE_BPS / 10000)).toFixed(6)
     : '-'
@@ -1076,7 +1077,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{customFee} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{cctpFee} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.forwardingFee')}</span><span>{forwardingFee} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${token}` : 'Belum aktif'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:'#10b981'}}>{est} {token}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span style={{color:'#10b981'}}>3x (approve + burn + mint)</span></div>}

@@ -279,8 +279,7 @@ export default function App() {
               {routeMode === 'normal' && <button type='button' className='menu-button' onClick={() => setDrawerOpen(true)} aria-label='Open navigation'>☰</button>}
               <ArcoxLogo />
               <span className='brand-title'>{pageTitle}</span>
-              <span className='env-pill'>{t('app.testnet')}</span>
-              <span className={`api-health ${apiStatus}`}>API {apiStatus}</span>
+              <span className={`env-pill ${apiStatus}`} title={`API ${apiStatus}`}>{t('app.testnet')}</span>
             </div>
             <div className='header-actions'>
               <div className={`language-menu ${languageOpen ? 'open' : ''}`}>
@@ -397,6 +396,13 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
   retryCircleWallet: () => void
   refresh: () => void
 }) {
+  const renderBalance = (label: string, value: string | undefined, color: string, decimals = 6) => (
+    <div className='glass portfolio-card' key={label}>
+      <span>{label}</span>
+      <strong style={{color}}>{Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: decimals })}</strong>
+    </div>
+  )
+
   return (
     <div className='portfolio-page'>
       <section className='glass portfolio-card wallet-card'>
@@ -410,22 +416,35 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
         </div>
         {walletSetupError && <div className='inline-error'>{walletSetupError}</div>}
       </section>
-      <section className='portfolio-grid'>
-        {[
-          ['E-USDC', eoaBalances.USDC, '#e2e8f0'],
-          ['E-EURC', eoaBalances.EURC, '#e2e8f0'],
-          ['E-USYC', eoaBalances.USYC, '#10b981'],
-          ['E-cirBTC', eoaBalances.cirBTC, '#f7931a'],
-          ['C-USDC', balances.USDC, '#c7d2fe'],
-          ['C-EURC', balances.EURC, '#c7d2fe'],
-          ['C-USYC', balances.USYC, '#10b981'],
-          ['C-cirBTC', balances.cirBTC, '#f7931a'],
-        ].map(([label, value, color]) => (
-          <div className='glass portfolio-card' key={label}>
-            <span>{label}</span>
-            <strong style={{color}}>{Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: String(label).includes('BTC') ? 8 : 6 })}</strong>
+      <section className='portfolio-section'>
+        <div className='portfolio-section-head'>
+          <div>
+            <h3>EOA Wallet</h3>
+            <p>Saldo langsung di MetaMask/user wallet untuk sign transaksi sendiri.</p>
           </div>
-        ))}
+          <span>MetaMask</span>
+        </div>
+        <div className='portfolio-grid'>
+          {renderBalance('USDC', eoaBalances.USDC, '#e2e8f0')}
+          {renderBalance('EURC', eoaBalances.EURC, '#e2e8f0')}
+          {renderBalance('USYC', eoaBalances.USYC, '#10b981')}
+          {renderBalance('cirBTC', eoaBalances.cirBTC, '#f7931a', 8)}
+        </div>
+      </section>
+      <section className='portfolio-section'>
+        <div className='portfolio-section-head'>
+          <div>
+            <h3>Circle Wallet Proxy</h3>
+            <p>Saldo proxy wallet ARCOX untuk flow Circle Wallet dan pembayaran terotomasi.</p>
+          </div>
+          <span>Circle</span>
+        </div>
+        <div className='portfolio-grid'>
+          {renderBalance('USDC', balances.USDC, '#c7d2fe')}
+          {renderBalance('EURC', balances.EURC, '#c7d2fe')}
+          {renderBalance('USYC', balances.USYC, '#10b981')}
+          {renderBalance('cirBTC', balances.cirBTC, '#f7931a', 8)}
+        </div>
       </section>
       <button type='button' className='btn btn-primary' onClick={refresh}>Refresh Balances</button>
     </div>

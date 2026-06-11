@@ -65,6 +65,11 @@ select.input { cursor:pointer; }
 .portfolio-card strong { display: block; font-size: 18px; color: #e2e8f0; overflow-wrap: anywhere; line-height: 1.2; }
 .wallet-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .wallet-card button { border: 1px solid rgba(248,113,113,0.3); background: rgba(248,113,113,0.1); color: #fca5a5; border-radius: 8px; min-height: 32px; padding: 0 10px; cursor: pointer; font-size: 12px; font-weight: 700; }
+.portfolio-section { border: 1px solid var(--border); background: rgba(15,18,28,0.58); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.portfolio-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.portfolio-section-head h3 { color: #e2e8f0; font-size: 14px; line-height: 1.2; margin-bottom: 3px; }
+.portfolio-section-head p { color: var(--muted-2); font-size: 11px; line-height: 1.45; }
+.portfolio-section-head > span { flex: 0 0 auto; border: 1px solid rgba(99,102,241,0.28); background: rgba(99,102,241,0.11); color: #c7d2fe; border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 800; }
 .page-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(240px, 0.8fr); gap: 14px; }
 .action-board { border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 .action-board h3 { color: #e2e8f0; font-size: 15px; margin-bottom: 4px; }
@@ -75,15 +80,15 @@ select.input { cursor:pointer; }
 .brand-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .arcox-logo { box-shadow: 0 10px 26px rgba(8,145,178,0.18) !important; }
 .brand-title { font-weight: 800; color: var(--text); font-size: 15px; letter-spacing: 0; }
-.env-pill { font-size: 10px; color: #c7d2fe; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(99,102,241,0.34); background: rgba(99,102,241,0.13); font-weight: 700; }
-.api-health { font-size: 10px; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(71,85,105,0.38); color: #94a3b8; background: rgba(15,18,28,0.58); font-weight: 800; text-transform: uppercase; white-space: nowrap; }
-.api-health.online { color: #86efac; border-color: rgba(34,197,94,0.34); background: rgba(34,197,94,0.1); }
-.api-health.offline { color: #fecaca; border-color: rgba(248,113,113,0.38); background: rgba(248,113,113,0.1); }
+.env-pill { font-size: 10px; color: #c7d2fe; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(99,102,241,0.34); background: rgba(99,102,241,0.13); font-weight: 700; white-space: nowrap; }
+.env-pill.online { color: #86efac; border-color: rgba(34,197,94,0.38); background: rgba(34,197,94,0.11); }
+.env-pill.offline { color: #fecaca; border-color: rgba(248,113,113,0.42); background: rgba(248,113,113,0.11); }
+.env-pill.checking { color: #fde68a; border-color: rgba(245,158,11,0.34); background: rgba(245,158,11,0.1); }
 .header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .language-select { width: auto; background: rgba(10,10,15,0.86); color: #cbd5e1; border: 1px solid #1e1e2e; border-radius: 10px; padding: 7px 10px; font-size: 12px; outline: none; cursor: pointer; }
 .language-menu { position: relative; flex: 0 0 auto; }
-.language-trigger { min-height: 36px; min-width: 74px; border: 1px solid var(--border); border-radius: 10px; background: rgba(8,10,15,0.78); color: #cbd5e1; padding: 0 10px; font-size: 11px; font-weight: 800; cursor: pointer; }
-.language-menu-list { position: absolute; right: 0; top: calc(100% + 6px); width: 150px; display: none; flex-direction: column; gap: 3px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: rgba(8,10,15,0.96); box-shadow: 0 18px 40px rgba(0,0,0,0.28); z-index: 70; }
+.language-trigger { min-height: 36px; min-width: 58px; border: 1px solid var(--border); border-radius: 10px; background: rgba(8,10,15,0.78); color: #cbd5e1; padding: 0 8px; font-size: 11px; font-weight: 800; cursor: pointer; }
+.language-menu-list { position: absolute; right: 0; top: calc(100% + 6px); width: 136px; display: none; flex-direction: column; gap: 3px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: rgba(8,10,15,0.96); box-shadow: 0 18px 40px rgba(0,0,0,0.28); z-index: 70; }
 .language-menu.open .language-menu-list { display: flex; }
 .language-menu-list button { min-height: 40px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #94a3b8; padding: 6px 8px; cursor: pointer; text-align: left; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
 .language-menu-list button span { color: #e2e8f0; font-size: 12px; font-weight: 800; }
@@ -189,7 +194,8 @@ select.input { cursor:pointer; }
   .header-actions { width: 100%; justify-content: space-between; }
   .language-select { flex: 0 0 auto; max-width: 42%; }
   .language-menu { order: 1; }
-  .language-trigger { min-height: 38px; }
+  .language-trigger { min-height: 38px; min-width: 52px; padding: 0 7px; }
+  .language-menu-list { left: 0; right: auto; width: 126px; max-width: calc(100vw - 24px); }
   .header-link-button { order: 2; min-height: 38px; }
   .header-actions > .wallet-connected, .header-actions > div:not(.language-menu) { order: 3; }
   .brand-row > span:first-of-type { font-size: 15px !important; }
