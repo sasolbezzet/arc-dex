@@ -241,7 +241,7 @@ export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: strin
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
   return await kit.swap({
-    from: { adapter, chain: SwapChain.Arc_Testnet, address },
+    from: { adapter, chain: SwapChain.Arc_Testnet },
     tokenIn: swapTokenParam(args.tokenIn),
     tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
@@ -258,7 +258,7 @@ export async function estimateEoaSwapWithAppKit(args: { tokenIn: string; tokenOu
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
   return await kit.estimateSwap({
-    from: { adapter, chain: SwapChain.Arc_Testnet, address },
+    from: { adapter, chain: SwapChain.Arc_Testnet },
     tokenIn: swapTokenParam(args.tokenIn),
     tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
