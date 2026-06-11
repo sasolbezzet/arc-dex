@@ -1,32 +1,76 @@
 import { safePost } from '../api'
-import { estimateEoaSwapWithAppKit, swapEoaWithAppKit } from '../appKit'
+import { switchToArcTestnet } from '../appKit'
 import { getArcToken } from '../domain/tokens'
-import { formatUnits, parseUnits } from 'viem'
+import { encodeFunctionData, parseUnits, toHex } from 'viem'
 
 const API = ''
-const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 30)
 const EVM_FEE_TREASURY = import.meta.env.VITE_ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
+const ARC_APPKIT_ADAPTER = '0xBBD70b01a1CAbc96d5b7b129Ae1AAabdf50dd40b'
 
-let kitKeyCache: { value: string; expiresAt: number } | null = null
-const KIT_KEY_CACHE_TTL_MS = 5 * 60 * 1000
+const erc20ApproveAbi = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const
 
-export async function getKitKey() {
-  if (kitKeyCache && Date.now() < kitKeyCache.expiresAt) return kitKeyCache.value
-  const r = await fetchWithTimeout(`${API}/api/config`)
-  const d = await r.json()
-  kitKeyCache = { value: d.kitKey || '', expiresAt: Date.now() + KIT_KEY_CACHE_TTL_MS }
-  return kitKeyCache.value
-}
-
-async function fetchWithTimeout(url: string, timeoutMs = 10000) {
-  const controller = new AbortController()
-  const id = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { signal: controller.signal })
-  } finally {
-    clearTimeout(id)
-  }
-}
+const adapterExecuteAbi = [
+  {
+    type: 'function',
+    name: 'execute',
+    stateMutability: 'payable',
+    inputs: [
+      {
+        name: 'params',
+        type: 'tuple',
+        components: [
+          {
+            name: 'instructions',
+            type: 'tuple[]',
+            components: [
+              { name: 'target', type: 'address' },
+              { name: 'data', type: 'bytes' },
+              { name: 'value', type: 'uint256' },
+              { name: 'tokenIn', type: 'address' },
+              { name: 'amountToApprove', type: 'uint256' },
+              { name: 'tokenOut', type: 'address' },
+              { name: 'minTokenOut', type: 'uint256' },
+            ],
+          },
+          {
+            name: 'tokens',
+            type: 'tuple[]',
+            components: [
+              { name: 'token', type: 'address' },
+              { name: 'beneficiary', type: 'address' },
+            ],
+          },
+          { name: 'execId', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'metadata', type: 'bytes' },
+        ],
+      },
+      {
+        name: 'tokenInputs',
+        type: 'tuple[]',
+        components: [
+          { name: 'permitType', type: 'uint8' },
+          { name: 'token', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'permitCalldata', type: 'bytes' },
+        ],
+      },
+      { name: 'signature', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+] as const
 
 export async function quoteCircleSwap(args: {
   metamaskAddress: string | null
@@ -46,25 +90,41 @@ export async function swapFromCircleWallet(args: {
   return safePost(API, '/api/swap', args)
 }
 
-export async function swapFromEoa(args: { tokenIn: string; tokenOut: string; amountIn: string }) {
-  const split = splitEoaPlatformFee(args.tokenIn, args.amountIn)
+export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: string; tokenOut: string; amountIn: string }) {
+  await switchToArcTestnet()
+  const ethereum = window.ethereum
+  if (!ethereum) throw new Error('MetaMask tidak terdeteksi.')
+  const accounts = await ethereum.request({ method: 'eth_requestAccounts' })
+  const from = accounts?.[0]
+  if (!from) throw new Error('Wallet EOA belum terhubung.')
+  if (from.toLowerCase() !== args.metamaskAddress.toLowerCase()) throw new Error('Wallet aktif berbeda dengan wallet login.')
+  const prepared = await safePost(API, '/api/eoa-swap-prepare', args)
+  if (!prepared?.success) throw new Error(prepared?.error || 'Gagal menyiapkan swap EOA.')
+  const adapterContract = prepared.adapterContract || ARC_APPKIT_ADAPTER
+  const approveTxHash = await approveEoaSwapToken(prepared.tokenInAddress, adapterContract, BigInt(prepared.amountBaseUnits), from)
+  await waitForEvmReceipt(approveTxHash)
+  const swapTxHash = await executeEoaSwap(prepared, adapterContract, from)
+  await waitForEvmReceipt(swapTxHash)
   let feeTxHash = ''
   let feeError = ''
-  const result = await swapEoaWithAppKit({ ...args, amountIn: split.netAmount, kitKey: await getKitKey() })
-  if (split.feeUnits > 0n) {
+  const feeToken = getArcToken(args.tokenIn)
+  const feeAmount = prepared?.platformFee?.amount || '0'
+  const feeUnits = feeToken ? parseUnits(feeAmount, feeToken.decimals) : 0n
+  if (feeUnits > 0n) {
     try {
-      feeTxHash = await sendEoaTokenFee(args.tokenIn, split.feeUnits)
+      feeTxHash = await sendEoaTokenFee(args.tokenIn, feeUnits)
     } catch (error) {
       feeError = error instanceof Error ? error.message : 'Platform fee transaction failed.'
     }
   }
   return {
-    ...result,
-    grossAmountIn: args.amountIn,
-    amountIn: split.netAmount,
+    ...prepared,
+    txHash: swapTxHash,
+    transactionHash: swapTxHash,
+    approveTxHash,
+    explorerUrl: `https://testnet.arcscan.app/tx/${swapTxHash}`,
     platformFee: {
-      bps: split.bps,
-      amount: split.feeAmount,
+      ...prepared.platformFee,
       token: args.tokenIn,
       treasury: EVM_FEE_TREASURY,
       txHash: feeTxHash,
@@ -73,21 +133,61 @@ export async function swapFromEoa(args: { tokenIn: string; tokenOut: string; amo
   }
 }
 
-function splitEoaPlatformFee(tokenSymbol: string, amount: string) {
-  const token = getArcToken(tokenSymbol)
-  if (!token) throw new Error(`Unsupported token: ${tokenSymbol}`)
-  const amountUnits = parseUnits(amount, token.decimals)
-  const bps = Number.isFinite(PLATFORM_FEE_BPS) && PLATFORM_FEE_BPS > 0 ? Math.floor(PLATFORM_FEE_BPS) : 0
-  const feeUnits = (amountUnits * BigInt(bps)) / 10000n
-  const netUnits = amountUnits - feeUnits
-  if (netUnits <= 0n) throw new Error('Amount terlalu kecil setelah platform fee.')
-  return {
-    bps,
-    feeUnits,
-    netUnits,
-    feeAmount: formatUnits(feeUnits, token.decimals),
-    netAmount: formatUnits(netUnits, token.decimals),
+async function approveEoaSwapToken(tokenAddress: string, spender: string, amount: bigint, from: string) {
+  const data = encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [spender as `0x${string}`, amount] })
+  return window.ethereum.request({
+    method: 'eth_sendTransaction',
+    params: [{ from, to: tokenAddress, data }],
+  })
+}
+
+async function executeEoaSwap(prepared: any, adapterContract: string, from: string) {
+  const executionParams = {
+    instructions: (prepared.executionParams?.instructions || []).map((item: any) => ({
+      target: item.target,
+      data: item.data,
+      value: BigInt(item.value),
+      tokenIn: item.tokenIn,
+      amountToApprove: BigInt(item.amountToApprove),
+      tokenOut: item.tokenOut,
+      minTokenOut: BigInt(item.minTokenOut),
+    })),
+    tokens: (prepared.executionParams?.tokens || []).map((item: any) => ({
+      token: item.token,
+      beneficiary: item.beneficiary,
+    })),
+    execId: BigInt(prepared.executionParams?.execId),
+    deadline: BigInt(prepared.executionParams?.deadline),
+    metadata: prepared.executionParams?.metadata,
   }
+  const tokenInputs = [{
+    permitType: 0,
+    token: prepared.tokenInAddress as `0x${string}`,
+    amount: BigInt(prepared.amountBaseUnits),
+    permitCalldata: '0x' as `0x${string}`,
+  }]
+  const data = encodeFunctionData({
+    abi: adapterExecuteAbi,
+    functionName: 'execute',
+    args: [executionParams, tokenInputs, prepared.signature],
+  })
+  const gasLimit = prepared.gasLimit ? (BigInt(prepared.gasLimit) * 120n) / 100n : 0n
+  const tx: Record<string, unknown> = { from, to: adapterContract, data }
+  if (gasLimit > 0n) tx.gas = toHex(gasLimit)
+  return window.ethereum.request({ method: 'eth_sendTransaction', params: [tx] })
+}
+
+async function waitForEvmReceipt(txHash: string, timeoutMs = 90000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const receipt = await window.ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] })
+    if (receipt) {
+      if (receipt.status === '0x0') throw new Error(`Transaction reverted: ${txHash}`)
+      return receipt
+    }
+    await new Promise(resolve => setTimeout(resolve, 2500))
+  }
+  throw new Error(`Transaction belum confirmed: ${txHash}`)
 }
 
 async function sendEoaTokenFee(tokenSymbol: string, feeUnits: bigint) {
@@ -104,39 +204,6 @@ async function sendEoaTokenFee(tokenSymbol: string, feeUnits: bigint) {
   return ethereum.request({ method: 'eth_sendTransaction', params: [{ from, to: token.address, data }] })
 }
 
-function sumFees(fees: unknown): number {
-  if (!Array.isArray(fees)) return 0
-  return fees.reduce((sum, fee) => {
-    if (!fee || typeof fee !== 'object') return sum
-    const item = fee as { amount?: string | number; fee?: string | number }
-    return sum + Number(item.amount || item.fee || 0)
-  }, 0)
-}
-
-function getTokenAmount(value: unknown): string {
-  if (typeof value === 'string' || typeof value === 'number') return String(value)
-  if (!value || typeof value !== 'object') return ''
-  const item = value as { amount?: unknown; value?: unknown; uiAmount?: unknown; uiAmountString?: unknown }
-  return getTokenAmount(item.amount ?? item.value ?? item.uiAmountString ?? item.uiAmount)
-}
-
-export async function quoteEoaSwap(args: { tokenIn: string; tokenOut: string; amountIn: string }) {
-  const split = splitEoaPlatformFee(args.tokenIn, args.amountIn)
-  const estimate = await estimateEoaSwapWithAppKit({ ...args, amountIn: split.netAmount, kitKey: await getKitKey() })
-  const amountOut = getTokenAmount(estimate?.estimatedOutput) || getTokenAmount(estimate?.amountOut) || getTokenAmount(estimate?.stopLimit)
-  if (!amountOut || Number(amountOut) <= 0) {
-    return {
-      available: false,
-      error: 'Estimasi swap EOA belum tersedia dari App Kit untuk route ini.',
-      estimate,
-    }
-  }
-  return {
-    available: true,
-    amountOut,
-    fee: sumFees(estimate?.fees).toFixed(6),
-    rate: Number(amountOut || 0) / Number(args.amountIn || 1),
-    platformFee: { amount: split.feeAmount, token: args.tokenIn, swapAmountIn: split.netAmount, bps: split.bps },
-    estimate,
-  }
+export async function quoteEoaSwap(args: { metamaskAddress: string | null; tokenIn: string; tokenOut: string; amountIn: string }) {
+  return safePost(API, '/api/eoa-swap-quote', args)
 }

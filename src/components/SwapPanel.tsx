@@ -25,7 +25,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
     setQuoteLoading(true)
     try {
       const d = src === 'eoa'
-        ? await quoteEoaSwap({tokenIn:tin,tokenOut:tout,amountIn:amt})
+        ? await quoteEoaSwap({metamaskAddress:address,tokenIn:tin,tokenOut:tout,amountIn:amt})
         : await quoteCircleSwap({metamaskAddress:address,tokenIn:tin,tokenOut:tout,amountIn:amt})
       if (d.available === false) {
         setQuote(null)
@@ -55,7 +55,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
     try {
       if (source === 'eoa') {
         setStatus({ type:'warning', msg:'MetaMask akan meminta approval/swap signature dari wallet EOA Anda.' })
-        const result = await swapFromEoa({ tokenIn, tokenOut, amountIn })
+        const result = await swapFromEoa({ metamaskAddress: address, tokenIn, tokenOut, amountIn })
         txHistory.add({
           id: `swap-${Date.now()}-${(result?.txHash || result?.transactionHash || tokenOut).slice(-6)}`,
           ts: Date.now(),
