@@ -55,6 +55,7 @@ export default function App() {
   const { lang, setLang, t } = useI18n()
   const [page, setPage] = useState<PageId>(() => currentPageFromLocation())
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [languageOpen, setLanguageOpen] = useState(false)
   const [address, setAddress] = useState<string|null>(null)
   const [circleWallet, setCircleWallet] = useState<{id:string;address:string}|null>(null)
   const [balances, setBalances] = useState<Record<string,string>>({...EMPTY_BAL})
@@ -256,8 +257,9 @@ export default function App() {
   return (
     <div className='app-shell page-layout'>
       {routeMode === 'normal' && (
-        <>
-          <aside className='side-nav glass'>
+        <div className={`mobile-drawer ${drawerOpen ? 'open' : ''}`}>
+          <button type='button' className='drawer-backdrop' aria-label='Close menu' onClick={() => setDrawerOpen(false)} />
+          <aside className='drawer-panel glass'>
             <div className='side-brand'><ArcoxLogo /><div><strong>ARCOX</strong><span>Arc Testnet</span></div></div>
             <nav>
               {NAV.map(item => (
@@ -267,20 +269,7 @@ export default function App() {
               ))}
             </nav>
           </aside>
-          <div className={`mobile-drawer ${drawerOpen ? 'open' : ''}`}>
-            <button type='button' className='drawer-backdrop' aria-label='Close menu' onClick={() => setDrawerOpen(false)} />
-            <aside className='drawer-panel glass'>
-              <div className='side-brand'><ArcoxLogo /><div><strong>ARCOX</strong><span>Arc Testnet</span></div></div>
-              <nav>
-                {NAV.map(item => (
-                  <button key={item.id} type='button' className={page === item.id ? 'active' : ''} onClick={() => navigate(item.id)}>
-                    <span>{item.icon}</span>{item.label}
-                  </button>
-                ))}
-              </nav>
-            </aside>
-          </div>
-        </>
+        </div>
       )}
 
       <main className={routeMode === 'normal' ? 'page-main' : 'page-main pay-main'}>
@@ -294,19 +283,25 @@ export default function App() {
               <span className={`api-health ${apiStatus}`}>API {apiStatus}</span>
             </div>
             <div className='header-actions'>
-              <div className='language-switcher' role='group' aria-label='Language'>
-                {LANGUAGES.map(item => (
+              <div className={`language-menu ${languageOpen ? 'open' : ''}`}>
+                <button type='button' className='language-trigger' onClick={() => setLanguageOpen(v => !v)} aria-expanded={languageOpen} aria-label='Language'>
+                  {lang === 'zh' ? '中文' : lang.toUpperCase()} ▾
+                </button>
+                <div className='language-menu-list'>
+                  {LANGUAGES.map(item => (
                   <button
                     key={item.code}
                     type='button'
                     className={lang === item.code ? 'active' : ''}
-                    onClick={() => setLang(item.code)}
+                    onClick={() => { setLang(item.code); setLanguageOpen(false) }}
                     aria-pressed={lang === item.code}
                     title={item.label}
                   >
-                    {item.code === 'zh' ? '中文' : item.code.toUpperCase()}
+                    <span>{item.code === 'zh' ? '中文' : item.code.toUpperCase()}</span>
+                    <small>{item.label}</small>
                   </button>
-                ))}
+                  ))}
+                </div>
               </div>
               <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
             </div>
