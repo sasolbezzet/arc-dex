@@ -21,7 +21,7 @@ export function ReceivePanel({ address, circleWallet }: Props) {
   const receiveAddress = target === 'circle' ? circleWallet?.address : address
   const requestLink = useMemo(() => {
     if (!receiveAddress) return ''
-    const url = new URL(window.location.href)
+    const url = new URL('/send', window.location.origin)
     url.searchParams.set('to', receiveAddress)
     url.searchParams.set('token', token)
     if (amount) url.searchParams.set('amount', amount)
@@ -80,7 +80,7 @@ export function ReceivePanel({ address, circleWallet }: Props) {
           <img src={qrUrl} alt='Payment request QR' width={176} height={176} style={{borderRadius:8,background:'#fff',padding:8,maxWidth:'100%',height:'auto'}} />
           <button onClick={()=>copy(requestLink,'link')} style={{marginTop:10,width:'100%',background:'#4f46e5',color:'white',border:'none',padding:'10px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:600}}>{copied==='link'?t('receive.linkCopied'):t('common.copyLink')}</button>
           <button onClick={createPayInvoice} disabled={!amount || token !== 'USDC'} style={{marginTop:8,width:'100%',background:'rgba(8,145,178,0.18)',color:'#67e8f9',border:'1px solid rgba(8,145,178,0.32)',padding:'10px',borderRadius:10,cursor:amount && token === 'USDC'?'pointer':'not-allowed',fontSize:13,fontWeight:600}}>Create ARCOX Pay Invoice</button>
-          {invoiceLink && <button onClick={()=>copy(invoiceLink,'invoice')} style={{marginTop:8,width:'100%',background:'rgba(34,197,94,0.14)',color:'#86efac',border:'1px solid rgba(34,197,94,0.3)',padding:'10px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:600}}>{copied==='invoice'?'Copied':'Copy Invoice Link'}</button>}
+          {invoiceLink && <button onClick={()=>{ window.location.href = invoiceLink }} style={{marginTop:8,width:'100%',background:'rgba(34,197,94,0.14)',color:'#86efac',border:'1px solid rgba(34,197,94,0.3)',padding:'10px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:600}}>Lihat preview pembayaran</button>}
           {invoiceError && <div className='inline-error'>{invoiceError}</div>}
         </div>
       )}

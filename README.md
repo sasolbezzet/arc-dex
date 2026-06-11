@@ -16,6 +16,22 @@ npm run dev
 
 Repo ini bukan monorepo frontend/backend. Source frontend ada langsung di `src/`, jadi tidak ada langkah `cd frontend`.
 
+## App Pages
+
+The UI is page-based:
+
+- `/` intro/dashboard
+- `/portfolio`
+- `/swap`
+- `/bridge`
+- `/send`
+- `/receive`
+- `/agent-jobs`
+- `/info`
+- `/docs`
+- `/pay?invoice=...`
+- `/pay/sandbox`
+
 Backend:
 
 ```bash

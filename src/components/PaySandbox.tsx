@@ -95,8 +95,7 @@ export function PaySandbox() {
           <button className='btn btn-primary' onClick={create}>Create Invoice</button>
           {invoice && (
             <div className='json-box'>
-              <button className='header-link-button' onClick={() => navigator.clipboard.writeText(invoice.paymentUrl)}>Copy Payment Link</button>
-              <a href={invoice.paymentUrl} className='header-link-button'>Open Checkout</a>
+              <a href={invoice.paymentUrl} className='header-link-button'>Lihat preview pembayaran</a>
               <pre>{JSON.stringify(invoice, null, 2)}</pre>
             </div>
           )}

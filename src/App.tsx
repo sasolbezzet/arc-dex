@@ -11,9 +11,24 @@ import { PayCheckout } from './components/PayCheckout'
 import { PaySandbox } from './components/PaySandbox'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
+
 const API = ''
-const TABS = [{ id:'swap', labelKey:'tab.swap', icon:'⇄' },{ id:'bridge', labelKey:'tab.bridge', icon:'⛓' },{ id:'send', labelKey:'tab.send', icon:'→' },{ id:'receive', labelKey:'tab.receive', icon:'↓' },{ id:'agentic', labelKey:'tab.agentic', icon:'◎' },{ id:'info', labelKey:'tab.info', icon:'ℹ' }] as const
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
+
+const NAV = [
+  { id: 'intro', path: '/', label: 'Intro', icon: '⌂' },
+  { id: 'portfolio', path: '/portfolio', label: 'Portfolio', icon: '▦' },
+  { id: 'swap', path: '/swap', label: 'Swap', icon: '⇄' },
+  { id: 'bridge', path: '/bridge', label: 'Bridge', icon: '⛓' },
+  { id: 'send', path: '/send', label: 'Send', icon: '→' },
+  { id: 'receive', path: '/receive', label: 'Receive', icon: '↓' },
+  { id: 'agentic', path: '/agent-jobs', label: 'Agent Jobs', icon: '◎' },
+  { id: 'info', path: '/info', label: 'Info', icon: 'ℹ' },
+  { id: 'docs', path: '/docs', label: 'Docs', icon: '?' },
+] as const
+
+type PageId = typeof NAV[number]['id']
+
 function ArcoxLogo() {
   return (
     <div className='arcox-logo' style={{width:36,height:36,borderRadius:10,background:'linear-gradient(135deg,#22d3ee 0%,#6366f1 48%,#f59e0b 100%)',display:'grid',placeItems:'center',boxShadow:'0 10px 28px rgba(99,102,241,0.32)',position:'relative',overflow:'hidden'}}>
@@ -23,12 +38,23 @@ function ArcoxLogo() {
     </div>
   )
 }
+
+function currentPageFromLocation(): PageId {
+  const path = window.location.pathname.replace(/\/$/, '') || '/'
+  if (new URLSearchParams(window.location.search).get('page') === 'docs') return 'docs'
+  return NAV.find(item => item.path === path)?.id || 'intro'
+}
+
+function titleFor(page: PageId) {
+  if (page === 'intro') return 'ARCOX DEX'
+  if (page === 'agentic') return 'Agent Jobs'
+  return NAV.find(item => item.id === page)?.label || 'ARCOX DEX'
+}
+
 export default function App() {
   const { lang, setLang, t } = useI18n()
-  const routePath = window.location.pathname
-  const routeMode = routePath === '/pay/sandbox' ? 'pay-sandbox' : routePath === '/pay' ? 'pay-checkout' : 'normal'
-  const [tab, setTab] = useState('swap')
-  const [page, setPage] = useState<'app'|'docs'>('app')
+  const [page, setPage] = useState<PageId>(() => currentPageFromLocation())
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [address, setAddress] = useState<string|null>(null)
   const [circleWallet, setCircleWallet] = useState<{id:string;address:string}|null>(null)
   const [balances, setBalances] = useState<Record<string,string>>({...EMPTY_BAL})
@@ -37,6 +63,13 @@ export default function App() {
   const [walletSetupError, setWalletSetupError] = useState('')
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const connectInFlightRef = useRef('')
+
+  const routeMode = window.location.pathname === '/pay/sandbox'
+    ? 'pay-sandbox'
+    : window.location.pathname === '/pay'
+      ? 'pay-checkout'
+      : 'normal'
+
   const fetchCircleBal = async (addr:string) => {
     try {
       const r = await fetch(`${API}/api/balance/${addr}`)
@@ -73,6 +106,15 @@ export default function App() {
     if (circleWallet?.address) fetchCircleBalRef.current(circleWallet.address)
     if (address) fetchEoaBalRef.current(address)
   }, [circleWallet, address])
+
+  const navigate = (next: PageId) => {
+    const nav = NAV.find(item => item.id === next)
+    if (!nav) return
+    window.history.pushState(null, '', nav.path)
+    setPage(next)
+    setDrawerOpen(false)
+  }
+
   const loadCircleWallet = async (addr:string, token = getAuthToken()) => {
     let lastError = ''
     for (let i=0;i<3;i++) {
@@ -111,6 +153,7 @@ export default function App() {
     setWalletSetupError(lastError || 'Circle Wallet setup failed. Please retry.')
     return false
   }
+
   const handleConnect = async (addr:string) => {
     const normalized = addr.toLowerCase()
     if (connectInFlightRef.current === normalized) return
@@ -143,11 +186,16 @@ export default function App() {
     setLoadingWallet(false)
   }
   const handleDisconnect = () => { clearAuthSession(); setWalletSetupError(''); setAddress(null); setCircleWallet(null); setBalances({...EMPTY_BAL}); setEoaBalances({...EMPTY_BAL}) }
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('page') === 'docs') setPage('docs')
-    if (params.get('to')) setTab('send')
+    if (params.get('page') === 'docs') navigate('docs')
+    if (params.get('to')) setPage('send')
+    const onPopState = () => setPage(currentPageFromLocation())
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
   }, [])
+
   useEffect(() => {
     let cancelled = false
     const checkApi = async () => {
@@ -171,12 +219,7 @@ export default function App() {
       clearInterval(timer)
     }
   }, [])
-  useEffect(() => {
-    const url = new URL(window.location.href)
-    if (page === 'docs') url.searchParams.set('page', 'docs')
-    else url.searchParams.delete('page')
-    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
-  }, [page])
+
   useEffect(() => {
     if (!circleWallet?.address) return
     let iv: ReturnType<typeof setInterval> | null = null
@@ -201,135 +244,195 @@ export default function App() {
       stop()
     }
   }, [circleWallet, address, refresh])
+
+  const content = routeMode === 'pay-sandbox'
+    ? <PaySandbox />
+    : routeMode === 'pay-checkout'
+      ? <PayCheckout address={address} onConnect={handleConnect} onRefresh={refresh} />
+      : renderPage({ page, address, circleWallet, balances, eoaBalances, loadingWallet, walletSetupError, retryCircleWallet, refresh, navigate, t })
+
+  const pageTitle = routeMode === 'pay-sandbox' ? 'ARCOX Pay Sandbox' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : titleFor(page)
+
   return (
-    <div className='app-shell'>
-      <header className='glass app-header'>
-        <div className='header-row'>
-          <div className='brand-row'>
-            <ArcoxLogo />
-            <span className='brand-title'>ARCOX DEX</span>
-            <span className='env-pill'>{t('app.testnet')}</span>
-            <span className={`api-health ${apiStatus}`}>API {apiStatus}</span>
-          </div>
-          <div className='header-actions'>
-            <div className='language-switcher' role='group' aria-label='Language'>
-              {LANGUAGES.map(item => (
-                <button
-                  key={item.code}
-                  type='button'
-                  className={lang === item.code ? 'active' : ''}
-                  onClick={() => setLang(item.code)}
-                  aria-pressed={lang === item.code}
-                  title={item.label}
-                >
-                  {item.code === 'zh' ? '中文' : item.code.toUpperCase()}
+    <div className='app-shell page-layout'>
+      {routeMode === 'normal' && (
+        <>
+          <aside className='side-nav glass'>
+            <div className='side-brand'><ArcoxLogo /><div><strong>ARCOX</strong><span>Arc Testnet</span></div></div>
+            <nav>
+              {NAV.map(item => (
+                <button key={item.id} type='button' className={page === item.id ? 'active' : ''} onClick={() => navigate(item.id)}>
+                  <span>{item.icon}</span>{item.label}
                 </button>
               ))}
+            </nav>
+          </aside>
+          <div className={`mobile-drawer ${drawerOpen ? 'open' : ''}`}>
+            <button type='button' className='drawer-backdrop' aria-label='Close menu' onClick={() => setDrawerOpen(false)} />
+            <aside className='drawer-panel glass'>
+              <div className='side-brand'><ArcoxLogo /><div><strong>ARCOX</strong><span>Arc Testnet</span></div></div>
+              <nav>
+                {NAV.map(item => (
+                  <button key={item.id} type='button' className={page === item.id ? 'active' : ''} onClick={() => navigate(item.id)}>
+                    <span>{item.icon}</span>{item.label}
+                  </button>
+                ))}
+              </nav>
+            </aside>
+          </div>
+        </>
+      )}
+
+      <main className={routeMode === 'normal' ? 'page-main' : 'page-main pay-main'}>
+        <header className='glass app-header page-header'>
+          <div className='header-row'>
+            <div className='brand-row'>
+              {routeMode === 'normal' && <button type='button' className='menu-button' onClick={() => setDrawerOpen(true)} aria-label='Open navigation'>☰</button>}
+              <ArcoxLogo />
+              <span className='brand-title'>{pageTitle}</span>
+              <span className='env-pill'>{t('app.testnet')}</span>
+              <span className={`api-health ${apiStatus}`}>API {apiStatus}</span>
             </div>
-            <button type='button' className='header-link-button' onClick={() => setPage(page === 'docs' ? 'app' : 'docs')}>
-              {page === 'docs' ? 'App' : 'Docs'}
-            </button>
-            <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
-          </div>
-        </div>
-        {address && page === 'app' && routeMode === 'normal' && (
-          <div className='balance-strip'>
-            <div className='glass chip'><span style={{color:'#64748b'}}>MetaMask: </span><span style={{color:'#f59e0b',fontFamily:'monospace'}}>{address.slice(0,6)}...{address.slice(-4)}</span></div>
-            <div className='glass chip'>
-              <span style={{color:'#64748b'}}>Circle: </span>
-              {circleWallet ? (
-                <span style={{color:'#818cf8',fontFamily:'monospace'}}>{circleWallet.address.slice(0,6)}...{circleWallet.address.slice(-4)}</span>
-              ) : loadingWallet ? (
-                <span style={{color:'#818cf8'}}>Preparing...</span>
-              ) : (
-                <button onClick={retryCircleWallet} style={{background:'none',border:'none',color:'#f87171',fontSize:12,cursor:'pointer',padding:0}}>Retry setup</button>
-              )}
-            </div>
-            {parseFloat(balances.USDC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>C-USDC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(balances.USDC).toFixed(4)}</span></div>}
-            <div className='glass chip'><span style={{color:'#64748b'}}>E-USDC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(eoaBalances.USDC).toFixed(4)}</span></div>
-            <div className='glass chip'><span style={{color:'#64748b'}}>E-cirBTC: </span><span style={{color:'#f7931a',fontWeight:600}}>{parseFloat(eoaBalances.cirBTC).toFixed(6)}</span></div>
-            {parseFloat(eoaBalances.USYC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>E-USYC: </span><span style={{color:'#10b981',fontWeight:600}}>{parseFloat(eoaBalances.USYC).toFixed(4)}</span></div>}
-            {parseFloat(balances.EURC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>EURC: </span><span style={{color:'#e2e8f0',fontWeight:600}}>{parseFloat(balances.EURC).toFixed(4)}</span></div>}
-            {parseFloat(balances.USYC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>C-USYC: </span><span style={{color:'#10b981',fontWeight:600}}>{parseFloat(balances.USYC).toFixed(4)}</span></div>}
-            {parseFloat(balances.cirBTC||'0')>0&&<div className='glass chip'><span style={{color:'#64748b'}}>C-cirBTC: </span><span style={{color:'#f7931a',fontWeight:600}}>{parseFloat(balances.cirBTC).toFixed(6)}</span></div>}
-            {walletSetupError && <div className='glass chip'><span style={{color:'#f87171'}}>{walletSetupError.slice(0,90)}</span></div>}
-          </div>
-        )}
-      </header>
-      <div className='hero-copy'>
-        {routeMode === 'pay-sandbox' ? (
-          <>
-            <h1>ARCOX <span style={{color:'#818cf8'}}>Pay</span></h1>
-            <p>Invoice, webhook, and API sandbox on Arc Testnet</p>
-          </>
-        ) : routeMode === 'pay-checkout' ? (
-          <>
-            <h1>ARCOX <span style={{color:'#818cf8'}}>Pay</span></h1>
-            <p>Public USDC payment request on Arc Testnet</p>
-          </>
-        ) : page === 'docs' ? (
-          <>
-            <h1>ARCOX DEX <span style={{color:'#818cf8'}}>Docs</span></h1>
-            <p>User guide, bridge retry, and feature tutorial</p>
-          </>
-        ) : (
-          <>
-            <h1>{t('app.heroTitle')} <span style={{color:'#818cf8'}}>ARCOX</span></h1>
-            <p>{t('app.heroSubtitle')}</p>
-          </>
-        )}
-      </div>
-      <div className={page === 'docs' || routeMode !== 'normal' ? 'docs-page-wrap' : 'app-panel-wrap'}>
-        {routeMode === 'pay-sandbox' ? (
-          <PaySandbox />
-        ) : routeMode === 'pay-checkout' ? (
-          <PayCheckout address={address} onConnect={handleConnect} onRefresh={refresh} />
-        ) : page === 'docs' ? (
-          <div className='glass docs-page-shell'>
-            <button type='button' className='docs-back-button' onClick={() => setPage('app')}>Back to app</button>
-            <DocsPanel />
-          </div>
-        ) : !address ? (
-          <div className='glass welcome-card'>
-            <div className='welcome-logo'><ArcoxLogo /></div>
-            <h2>{t('app.welcomeTitle')}</h2>
-            <p>{t('app.welcomeCopy')}</p>
-            {[
-              ['1', t('app.stepConnectTitle'), t('app.stepConnectDesc')],
-              ['2', t('app.stepCircleTitle'), t('app.stepCircleDesc')],
-              ['3', t('app.stepFundTitle'), t('app.stepFundDesc')],
-              ['4', t('app.stepTradeTitle'), t('app.stepTradeDesc')],
-            ].map(([n,title,desc])=>(
-              <div key={n} className='welcome-step'>
-                <div className='welcome-step-number'>{n}</div>
-                <div><div className='welcome-step-title'>{title}</div><div className='welcome-step-desc'>{desc}</div></div>
+            <div className='header-actions'>
+              <div className='language-switcher' role='group' aria-label='Language'>
+                {LANGUAGES.map(item => (
+                  <button
+                    key={item.code}
+                    type='button'
+                    className={lang === item.code ? 'active' : ''}
+                    onClick={() => setLang(item.code)}
+                    aria-pressed={lang === item.code}
+                    title={item.label}
+                  >
+                    {item.code === 'zh' ? '中文' : item.code.toUpperCase()}
+                  </button>
+                ))}
               </div>
-            ))}
-            {walletSetupError && (
-              <div className='inline-error'>{walletSetupError}</div>
-            )}
-          </div>
-        ) : (
-          <div className='glass app-main-card'>
-            <div className='tab-bar'>
-              {TABS.map(item=>(
-                <button key={item.id} onClick={()=>setTab(item.id)} className={`tab-button ${tab===item.id?'active':''}`}>
-                  <span style={{marginRight:4}}>{item.icon}</span>{t(item.labelKey)}
-                </button>
-              ))}
-            </div>
-            <div className='panel-body'>
-              {tab==='swap'&&<SwapPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />}
-              {tab==='bridge'&&<BridgePanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />}
-              {tab==='send'&&<SendPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />}
-              {tab==='receive'&&<ReceivePanel address={address} circleWallet={circleWallet} />}
-              {tab==='agentic'&&<AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />}
-              {tab==='info'&&<InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />}
+              <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
             </div>
           </div>
-        )}
-        <p className='app-footer'>Powered by <a href='https://arc.network'>Arc Network</a> & <a href='https://developers.circle.com'>Circle App Kit</a></p>
-      </div>
+        </header>
+
+        <section className={routeMode === 'normal' ? 'page-content' : 'docs-page-wrap'}>
+          {content}
+          <p className='app-footer'>Powered by <a href='https://arc.network'>Arc Network</a> & <a href='https://developers.circle.com'>Circle App Kit</a></p>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+function renderPage(args: {
+  page: PageId
+  address: string | null
+  circleWallet: {id:string;address:string}|null
+  balances: Record<string,string>
+  eoaBalances: Record<string,string>
+  loadingWallet: boolean
+  walletSetupError: string
+  retryCircleWallet: () => void
+  refresh: () => void
+  navigate: (page: PageId) => void
+  t: any
+}) {
+  const { page, address, circleWallet, balances, eoaBalances, loadingWallet, walletSetupError, retryCircleWallet, refresh, navigate, t } = args
+  if (page === 'intro') return <IntroPage address={address} walletSetupError={walletSetupError} navigate={navigate} t={t} />
+  if (page === 'docs') return <DocsPanel />
+  if (!address) return <ConnectRequired walletSetupError={walletSetupError} t={t} />
+  if (page === 'portfolio') return <PortfolioPage address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} />
+  if (page === 'swap') return <SwapPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+  if (page === 'bridge') return <BridgePanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+  if (page === 'send') return <SendPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+  if (page === 'receive') return <ReceivePanel address={address} circleWallet={circleWallet} />
+  if (page === 'agentic') return <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />
+  if (page === 'info') return <InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+  return null
+}
+
+function IntroPage({ address, walletSetupError, navigate, t }: { address: string|null; walletSetupError: string; navigate: (page: PageId) => void; t: any }) {
+  return (
+    <div className='page-grid intro-grid'>
+      <section className='glass welcome-card'>
+        <div className='welcome-logo'><ArcoxLogo /></div>
+        <h2>{address ? 'ARCOX DEX Console' : t('app.welcomeTitle')}</h2>
+        <p>{address ? 'Swap, bridge, send, receive, ARCOX Pay, and agent workflows on Arc Testnet.' : t('app.welcomeCopy')}</p>
+        {[
+          ['1', t('app.stepConnectTitle'), t('app.stepConnectDesc')],
+          ['2', t('app.stepCircleTitle'), t('app.stepCircleDesc')],
+          ['3', t('app.stepFundTitle'), t('app.stepFundDesc')],
+          ['4', t('app.stepTradeTitle'), t('app.stepTradeDesc')],
+        ].map(([n,title,desc])=>(
+          <div key={n} className='welcome-step'>
+            <div className='welcome-step-number'>{n}</div>
+            <div><div className='welcome-step-title'>{title}</div><div className='welcome-step-desc'>{desc}</div></div>
+          </div>
+        ))}
+        {walletSetupError && <div className='inline-error'>{walletSetupError}</div>}
+      </section>
+      <section className='glass action-board'>
+        <h3>Quick Actions</h3>
+        <button onClick={() => navigate('portfolio')}>Portfolio</button>
+        <button onClick={() => navigate('swap')}>Swap</button>
+        <button onClick={() => navigate('bridge')}>Bridge</button>
+        <button onClick={() => navigate('send')}>Send</button>
+        <button onClick={() => navigate('receive')}>Receive / Invoice</button>
+      </section>
+    </div>
+  )
+}
+
+function ConnectRequired({ walletSetupError, t }: { walletSetupError: string; t: any }) {
+  return (
+    <div className='glass welcome-card'>
+      <div className='welcome-logo'><ArcoxLogo /></div>
+      <h2>{t('app.welcomeTitle')}</h2>
+      <p>{t('app.welcomeCopy')}</p>
+      {walletSetupError && <div className='inline-error'>{walletSetupError}</div>}
+    </div>
+  )
+}
+
+function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWallet, walletSetupError, retryCircleWallet, refresh }: {
+  address: string
+  circleWallet: {id:string;address:string}|null
+  balances: Record<string,string>
+  eoaBalances: Record<string,string>
+  loadingWallet: boolean
+  walletSetupError: string
+  retryCircleWallet: () => void
+  refresh: () => void
+}) {
+  return (
+    <div className='portfolio-page'>
+      <section className='glass portfolio-card wallet-card'>
+        <div>
+          <span>MetaMask EOA</span>
+          <strong>{address.slice(0,6)}...{address.slice(-4)}</strong>
+        </div>
+        <div>
+          <span>Circle Wallet</span>
+          {circleWallet ? <strong>{circleWallet.address.slice(0,6)}...{circleWallet.address.slice(-4)}</strong> : loadingWallet ? <strong>Preparing...</strong> : <button onClick={retryCircleWallet}>Retry setup</button>}
+        </div>
+        {walletSetupError && <div className='inline-error'>{walletSetupError}</div>}
+      </section>
+      <section className='portfolio-grid'>
+        {[
+          ['E-USDC', eoaBalances.USDC, '#e2e8f0'],
+          ['E-EURC', eoaBalances.EURC, '#e2e8f0'],
+          ['E-USYC', eoaBalances.USYC, '#10b981'],
+          ['E-cirBTC', eoaBalances.cirBTC, '#f7931a'],
+          ['C-USDC', balances.USDC, '#c7d2fe'],
+          ['C-EURC', balances.EURC, '#c7d2fe'],
+          ['C-USYC', balances.USYC, '#10b981'],
+          ['C-cirBTC', balances.cirBTC, '#f7931a'],
+        ].map(([label, value, color]) => (
+          <div className='glass portfolio-card' key={label}>
+            <span>{label}</span>
+            <strong style={{color}}>{Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: String(label).includes('BTC') ? 8 : 6 })}</strong>
+          </div>
+        ))}
+      </section>
+      <button type='button' className='btn btn-primary' onClick={refresh}>Refresh Balances</button>
     </div>
   )
 }
