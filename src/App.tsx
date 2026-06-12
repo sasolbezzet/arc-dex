@@ -16,25 +16,25 @@ const API = ''
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 
 const NAV = [
-  { id: 'intro', path: '/', label: 'Intro', icon: '⌂' },
-  { id: 'portfolio', path: '/portfolio', label: 'Portfolio', icon: '▦' },
-  { id: 'swap', path: '/swap', label: 'Swap', icon: '⇄' },
-  { id: 'bridge', path: '/bridge', label: 'Bridge', icon: '⛓' },
-  { id: 'send', path: '/send', label: 'Send', icon: '→' },
-  { id: 'receive', path: '/receive', label: 'Receive', icon: '↓' },
-  { id: 'agentic', path: '/agent-jobs', label: 'Agent Jobs', icon: '◎' },
-  { id: 'info', path: '/info', label: 'Info', icon: 'ℹ' },
-  { id: 'docs', path: '/docs', label: 'Docs', icon: '?' },
+  { id: 'intro', path: '/', label: 'Intro', icon: 'IN' },
+  { id: 'portfolio', path: '/portfolio', label: 'Portfolio', icon: 'PF' },
+  { id: 'swap', path: '/swap', label: 'Swap', icon: 'SW' },
+  { id: 'bridge', path: '/bridge', label: 'Bridge', icon: 'BR' },
+  { id: 'send', path: '/send', label: 'Send', icon: 'SE' },
+  { id: 'receive', path: '/receive', label: 'Receive', icon: 'RC' },
+  { id: 'agentic', path: '/agent-jobs', label: 'Agent Jobs', icon: 'AI' },
+  { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
+  { id: 'docs', path: '/docs', label: 'Docs', icon: 'DX' },
 ] as const
 
 type PageId = typeof NAV[number]['id']
 
 function ArcoxLogo() {
   return (
-    <div className='arcox-logo' style={{width:36,height:36,borderRadius:10,background:'linear-gradient(135deg,#22d3ee 0%,#6366f1 48%,#f59e0b 100%)',display:'grid',placeItems:'center',boxShadow:'0 10px 28px rgba(99,102,241,0.32)',position:'relative',overflow:'hidden'}}>
-      <div style={{position:'absolute',inset:3,border:'1px solid rgba(255,255,255,0.38)',borderRadius:8}} />
-      <div style={{width:18,height:18,border:'3px solid rgba(255,255,255,0.95)',borderLeftColor:'transparent',transform:'rotate(45deg)',borderRadius:5}} />
-      <div style={{position:'absolute',width:9,height:9,borderRadius:'50%',background:'#0a0a0f',right:8,top:8,border:'2px solid rgba(255,255,255,0.9)'}} />
+    <div className='arcox-logo' aria-hidden='true'>
+      <div className='arcox-logo-ring' />
+      <div className='arcox-logo-core' />
+      <div className='arcox-logo-node' />
     </div>
   )
 }
@@ -264,7 +264,7 @@ export default function App() {
             <nav>
               {NAV.map(item => (
                 <button key={item.id} type='button' className={page === item.id ? 'active' : ''} onClick={() => navigate(item.id)}>
-                  <span>{item.icon}</span>{item.label}
+                  <span className='nav-mark'>{item.icon}</span>{item.label}
                 </button>
               ))}
             </nav>
@@ -276,7 +276,13 @@ export default function App() {
         <header className='glass app-header page-header'>
           <div className='header-row'>
             <div className='brand-row'>
-              {routeMode === 'normal' && <button type='button' className='menu-button' onClick={() => setDrawerOpen(true)} aria-label='Open navigation'>☰</button>}
+              {routeMode === 'normal' && (
+                <button type='button' className='menu-button' onClick={() => setDrawerOpen(true)} aria-label='Open navigation'>
+                  <span />
+                  <span />
+                  <span />
+                </button>
+              )}
               <ArcoxLogo />
               <span className='brand-title'>{pageTitle}</span>
               <span className={`env-pill ${apiStatus}`} title={`API ${apiStatus}`}>{t('app.testnet')}</span>
@@ -284,7 +290,7 @@ export default function App() {
             <div className='header-actions'>
               <div className={`language-menu ${languageOpen ? 'open' : ''}`}>
                 <button type='button' className='language-trigger' onClick={() => setLanguageOpen(v => !v)} aria-expanded={languageOpen} aria-label='Language'>
-                  {lang === 'zh' ? '中文' : lang.toUpperCase()} ▾
+                  <span>{lang === 'zh' ? '中文' : lang.toUpperCase()}</span>
                 </button>
                 <div className='language-menu-list'>
                   {LANGUAGES.map(item => (
