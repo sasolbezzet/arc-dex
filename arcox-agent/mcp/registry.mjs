@@ -131,8 +131,8 @@ export const actions = [
 
 export const chainSupport = {
   Arc_Testnet: { bridge: true, router: '0xDf800310443BEB589CEf91A09854203Ea36e43a7', circleWallet: true, aliases: ['arc', 'arc testnet', 'arc_testnet'] },
-  Ethereum_Sepolia: { bridge: true, router: '0x53aB114FeE64b177B8D6066056DfD03Ea38D0ef1', circleWallet: false, aliases: ['ethereum', 'ethereum sepolia', 'eth sepolia', 'sepolia'] },
-  Base_Sepolia: { bridge: true, router: '0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc', circleWallet: false, aliases: ['base', 'base sepolia'] },
+  Ethereum_Sepolia: { bridge: true, router: '0x53aB114FeE64b177B8D6066056DfD03Ea38D0ef1', nativeSwapBridgeRouter: '0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59', circleWallet: false, aliases: ['ethereum', 'ethereum sepolia', 'eth sepolia', 'sepolia'] },
+  Base_Sepolia: { bridge: true, router: '0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc', nativeSwapBridgeRouter: '0x3c5beFa0c208F0732D2c357f26EB897E727da498', circleWallet: false, aliases: ['base', 'base sepolia'] },
   Arbitrum_Sepolia: { bridge: true, router: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7', circleWallet: false, aliases: ['arbitrum', 'arbitrum sepolia', 'arb sepolia'] },
   HyperEVM_Testnet: { bridge: true, router: null, circleWallet: false, aliases: ['hyperevm', 'hyper evm', 'hypevm', 'hype', 'hyperevm testnet'] },
   Solana_Devnet: {

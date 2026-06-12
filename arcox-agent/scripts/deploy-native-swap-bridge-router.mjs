@@ -7,6 +7,11 @@ import { privateKeyToAccount } from 'viem/accounts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = dirname(__dirname)
+const repoRoot = dirname(root)
+loadEnv(join(repoRoot, '.env'))
+loadEnv(join(repoRoot, '.env.local'))
+loadEnv(join(repoRoot, '.env.production'))
+loadEnv(join(repoRoot, '.vercel', '.env.production.local'))
 loadEnv(join(root, '.env'))
 
 const artifact = JSON.parse(readFileSync(join(root, 'artifacts', 'ArcoxNativeSwapBridgeRouter.json'), 'utf8'))
@@ -19,35 +24,43 @@ const chains = {
   Ethereum_Sepolia: {
     domain: 0,
     usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
-    wrappedNative: process.env.ETHEREUM_SEPOLIA_WRAPPED_NATIVE,
-    swapRouter: process.env.ETHEREUM_SEPOLIA_UNISWAP_SWAP_ROUTER,
+    wrappedNative: firstEnv('ETHEREUM_SEPOLIA_WRAPPED_NATIVE', 'ETHEREUM_SEPOLIA_WETH', 'ETHEREUM_SEPOLIA_WETH9') || '0xfff9976782d46cc05630d1f6ebab18b2324d6b14',
+    swapRouter: firstEnv('ETHEREUM_SEPOLIA_UNIVERSAL_ROUTER', 'ETHEREUM_SEPOLIA_UNISWAP_UNIVERSAL_ROUTER', 'ETHEREUM_SEPOLIA_UNISWAP_SWAP_ROUTER') || '0x3a9d48ab9751398bbfa63ad67599bb04e4bdf98b',
     rpc: process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com',
     chain: defineChain({ id: 11155111, name: 'Ethereum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com'] } } }),
   },
   Base_Sepolia: {
     domain: 6,
     usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    wrappedNative: process.env.BASE_SEPOLIA_WRAPPED_NATIVE,
-    swapRouter: process.env.BASE_SEPOLIA_UNISWAP_SWAP_ROUTER,
+    wrappedNative: firstEnv('BASE_SEPOLIA_WRAPPED_NATIVE', 'BASE_SEPOLIA_WETH', 'BASE_SEPOLIA_WETH9') || '0x4200000000000000000000000000000000000006',
+    swapRouter: firstEnv('BASE_SEPOLIA_UNIVERSAL_ROUTER', 'BASE_SEPOLIA_UNISWAP_UNIVERSAL_ROUTER', 'BASE_SEPOLIA_UNISWAP_SWAP_ROUTER') || '0x95273d871c8156636e114b63797d78D7E1720d81',
     rpc: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
     chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org'] } } }),
   },
   Arbitrum_Sepolia: {
     domain: 3,
     usdc: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
-    wrappedNative: process.env.ARBITRUM_SEPOLIA_WRAPPED_NATIVE,
-    swapRouter: process.env.ARBITRUM_SEPOLIA_UNISWAP_SWAP_ROUTER,
+    wrappedNative: firstEnv('ARBITRUM_SEPOLIA_WRAPPED_NATIVE', 'ARBITRUM_SEPOLIA_WETH', 'ARBITRUM_SEPOLIA_WETH9') || '0xE591bf0A0CF924A0674d7792db046B23CEbF5f34',
+    swapRouter: firstEnv('ARBITRUM_SEPOLIA_UNIVERSAL_ROUTER', 'ARBITRUM_SEPOLIA_UNISWAP_UNIVERSAL_ROUTER', 'ARBITRUM_SEPOLIA_UNISWAP_SWAP_ROUTER'),
     rpc: process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com',
     chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com'] } } }),
   },
   HyperEVM_Testnet: {
     domain: 19,
     usdc: '0x2B3370eE501B4a559b57D449569354196457D8Ab',
-    wrappedNative: process.env.HYPEREVM_TESTNET_WRAPPED_NATIVE,
-    swapRouter: process.env.HYPEREVM_TESTNET_UNISWAP_SWAP_ROUTER,
+    wrappedNative: firstEnv('HYPEREVM_TESTNET_WRAPPED_NATIVE', 'HYPEREVM_TESTNET_WHYPE', 'HYPEREVM_TESTNET_WETH'),
+    swapRouter: firstEnv('HYPEREVM_TESTNET_UNIVERSAL_ROUTER', 'HYPEREVM_TESTNET_UNISWAP_UNIVERSAL_ROUTER', 'HYPEREVM_TESTNET_UNISWAP_SWAP_ROUTER'),
     rpc: process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm',
     chain: defineChain({ id: 998, name: 'HyperEVM Testnet', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: [process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm'] } } }),
   },
+}
+
+function firstEnv(...names) {
+  for (const name of names) {
+    const value = process.env[name]
+    if (value) return value
+  }
+  return ''
 }
 
 function loadEnv(path) {
@@ -73,9 +86,11 @@ function requireAddress(value, name, chainName) {
 
 async function deployOne(name, cfg) {
   const wrappedNative = requireAddress(cfg.wrappedNative, 'WRAPPED_NATIVE env', name)
-  const swapRouter = requireAddress(cfg.swapRouter, 'UNISWAP_SWAP_ROUTER env', name)
+  const swapRouter = requireAddress(cfg.swapRouter, 'UNIVERSAL_ROUTER env', name)
   const publicClient = createPublicClient({ chain: cfg.chain, transport: http(cfg.rpc) })
   const walletClient = createWalletClient({ account, chain: cfg.chain, transport: http(cfg.rpc) })
+  await requireContractCode(publicClient, wrappedNative, 'wrapped native', name)
+  await requireContractCode(publicClient, swapRouter, 'Universal Router', name)
   const nativeBalance = await publicClient.getBalance({ address: account.address })
   console.log(`[${name}] deployer=${account.address} native=${nativeBalance}`)
   if (nativeBalance === 0n) throw new Error(`[${name}] no native gas`)
@@ -103,13 +118,19 @@ const outDir = join(root, 'deployments')
 mkdirSync(outDir, { recursive: true })
 const outPath = join(outDir, 'arcox-native-swap-bridge-router.testnet.json')
 const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : {}
-const selected = (process.env.DEPLOY_CHAINS || 'Ethereum_Sepolia,Base_Sepolia,Arbitrum_Sepolia').split(',').map(item => item.trim()).filter(Boolean)
+const selected = (process.env.DEPLOY_CHAINS || 'Ethereum_Sepolia,Base_Sepolia').split(',').map(item => item.trim()).filter(Boolean)
 const deployments = { ...(previous.deployments || {}) }
 const errors = { ...(previous.errors || {}) }
+const forceRedeploy = process.env.FORCE_REDEPLOY_NATIVE_ROUTER === 'true'
 for (const name of selected) {
   const cfg = chains[name]
   if (!cfg) {
     errors[name] = 'unknown chain'
+    continue
+  }
+  if (deployments[name]?.address && !forceRedeploy) {
+    console.log(`[${name}] skipped existing nativeSwapBridgeRouter=${deployments[name].address}`)
+    delete errors[name]
     continue
   }
   try {
@@ -133,7 +154,12 @@ console.log(`Wrote ${outPath}`)
 
 function summarizeError(message = '') {
   const firstLine = String(message).split('\n').find(Boolean) || String(message)
-  if (/exceeds the balance|insufficient funds/i.test(message)) return 'insufficient native gas for deployment'
+  if (/exceeds the balance|insufficient funds|contract creation code storage out of gas/i.test(message)) return 'insufficient native gas for deployment'
   if (/no native gas|missing/i.test(message)) return firstLine
   return firstLine.slice(0, 300)
+}
+
+async function requireContractCode(publicClient, address, label, chainName) {
+  const code = await publicClient.getBytecode({ address })
+  if (!code || code === '0x') throw new Error(`[${chainName}] ${label} has no bytecode at ${address}`)
 }

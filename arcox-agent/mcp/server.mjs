@@ -55,6 +55,7 @@ const resources = [
   { uri: 'arcox://ui/chains', name: 'ARCOX Chain Support', mimeType: 'application/json' },
   { uri: 'arcox://rules/retail-safety', name: 'Retail Safety Rules', mimeType: 'application/json' },
   { uri: 'arcox://deployments/router', name: 'Arcox Router Deployments', mimeType: 'application/json' },
+  { uri: 'arcox://deployments/native-swap-bridge-router', name: 'Arcox Native Swap Bridge Router Deployments', mimeType: 'application/json' },
 ]
 
 const tools = [
@@ -228,12 +229,20 @@ const tools = [
 ]
 
 function routerDeployments() {
-  const path = join(agentRoot, 'deployments', 'arcox-router.testnet.json')
+  return readDeploymentFile('arcox-router.testnet.json', 'router_deployments_read_failed')
+}
+
+function nativeSwapBridgeRouterDeployments() {
+  return readDeploymentFile('arcox-native-swap-bridge-router.testnet.json', 'native_router_deployments_read_failed')
+}
+
+function readDeploymentFile(fileName, debugEvent) {
+  const path = join(agentRoot, 'deployments', fileName)
   if (!existsSync(path)) return {}
   try {
     return JSON.parse(readFileSync(path, 'utf8'))
   } catch (error) {
-    debug('router_deployments_read_failed', { message: error.message })
+    debug(debugEvent, { message: error.message })
     return {}
   }
 }
@@ -244,6 +253,7 @@ function readResource(uri) {
   if (uri === 'arcox://ui/chains') return chainSupport
   if (uri === 'arcox://rules/retail-safety') return retailRules
   if (uri === 'arcox://deployments/router') return routerDeployments()
+  if (uri === 'arcox://deployments/native-swap-bridge-router') return nativeSwapBridgeRouterDeployments()
   throw new Error(`Unknown resource: ${uri}`)
 }
 

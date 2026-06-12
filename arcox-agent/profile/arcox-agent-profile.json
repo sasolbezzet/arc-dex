@@ -30,12 +30,17 @@
     "deployments_file": "./deployments/arcox-router.testnet.json",
     "deployed": {
       "Arc_Testnet": "0xDf800310443BEB589CEf91A09854203Ea36e43a7",
+      "Ethereum_Sepolia": "0x53aB114FeE64b177B8D6066056DfD03Ea38D0ef1",
       "Base_Sepolia": "0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc",
       "Arbitrum_Sepolia": "0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7"
     },
     "pending_gas": [
-      "Ethereum_Sepolia",
       "HyperEVM_Testnet"
-    ]
+    ],
+    "native_swap_bridge_deployments_file": "./deployments/arcox-native-swap-bridge-router.testnet.json",
+    "native_swap_bridge_deployed": {
+      "Ethereum_Sepolia": "0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59",
+      "Base_Sepolia": "0x3c5beFa0c208F0732D2c357f26EB897E727da498"
+    }
   }
 }

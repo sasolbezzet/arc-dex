@@ -6,7 +6,7 @@ Flow:
 
 1. User sends native gas token to the router, for example ETH on Ethereum Sepolia.
 2. Router wraps native token into WETH-like token.
-3. Router swaps wrapped native token to USDC through a configured Uniswap V3 `exactInputSingle` pool.
+3. Router calls Uniswap Universal Router with a bundled `WRAP_ETH -> V3_SWAP_EXACT_IN` command.
 4. Router takes the ARCOX platform fee in USDC.
 5. Router approves Circle `TokenMessengerV2`.
 6. Router calls CCTP `depositForBurn`.
@@ -20,32 +20,33 @@ The attestation and destination mint cannot be inside the same source-chain tran
 
 EVM source chains only:
 
-- Ethereum Sepolia native ETH
-- Base Sepolia native ETH
-- Arbitrum Sepolia native ETH
+- Ethereum Sepolia native ETH, using the official Uniswap Universal Router if no env override is set
+- Base Sepolia native ETH, using the official Uniswap Universal Router if no env override is set
+- Arbitrum Sepolia native ETH, only if a Universal Router-compatible deployment is provided in env
 - HyperEVM Testnet native HYPE, only if a WETH-like wrapper and Uniswap-compatible router/pool exist
 
 Solana native SOL requires a separate Solana adapter/program. Do not route SOL through this EVM contract.
 
 ## Required environment
 
-Set the source chain wrapped-native token and Uniswap V3 swap router address before deploy:
+Set the source chain wrapped-native token and Uniswap Universal Router address before deploy.
+Ethereum Sepolia and Base Sepolia have checked defaults in the deploy script, but env overrides are still supported:
 
 ```text
 ETHEREUM_SEPOLIA_WRAPPED_NATIVE=
-ETHEREUM_SEPOLIA_UNISWAP_SWAP_ROUTER=
+ETHEREUM_SEPOLIA_UNIVERSAL_ROUTER=
 
 BASE_SEPOLIA_WRAPPED_NATIVE=
-BASE_SEPOLIA_UNISWAP_SWAP_ROUTER=
+BASE_SEPOLIA_UNIVERSAL_ROUTER=
 
 ARBITRUM_SEPOLIA_WRAPPED_NATIVE=
-ARBITRUM_SEPOLIA_UNISWAP_SWAP_ROUTER=
+ARBITRUM_SEPOLIA_UNIVERSAL_ROUTER=
 
 HYPEREVM_TESTNET_WRAPPED_NATIVE=
-HYPEREVM_TESTNET_UNISWAP_SWAP_ROUTER=
+HYPEREVM_TESTNET_UNIVERSAL_ROUTER=
 ```
 
-Only use verified official router addresses and confirm the wrapped-native/USDC pool has liquidity. Uniswap docs warn not to assume deployments are the same across chains.
+Only use verified official router addresses and confirm the wrapped-native/USDC pool has liquidity. Uniswap docs warn not to assume deployments are the same across chains. The deploy script checks that the configured router and wrapped-native addresses have bytecode before deploying.
 
 ## Compile
 
@@ -56,7 +57,7 @@ npm --prefix arcox-agent run compile:router
 ## Deploy
 
 ```bash
-DEPLOY_CHAINS=Ethereum_Sepolia npm --prefix arcox-agent run deploy:native-swap-bridge-router
+DEPLOY_CHAINS=Ethereum_Sepolia,Base_Sepolia npm --prefix arcox-agent run deploy:native-swap-bridge-router
 ```
 
 Deployment output is written to:

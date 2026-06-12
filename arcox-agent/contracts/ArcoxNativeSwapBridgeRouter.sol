@@ -7,24 +7,8 @@ interface IERC20Like {
     function approve(address spender, uint256 value) external returns (bool);
 }
 
-interface IWETHLike {
-    function deposit() external payable;
-    function withdraw(uint256 amount) external;
-}
-
-interface IUniswapV3SwapRouterLike {
-    struct ExactInputSingleParams {
-        address tokenIn;
-        address tokenOut;
-        uint24 fee;
-        address recipient;
-        uint256 deadline;
-        uint256 amountIn;
-        uint256 amountOutMinimum;
-        uint160 sqrtPriceLimitX96;
-    }
-
-    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+interface IUniversalRouterLike {
+    function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
 }
 
 interface ITokenMessengerV2Like {
@@ -161,26 +145,24 @@ contract ArcoxNativeSwapBridgeRouter {
         require(supportedPoolFees[poolFee], "POOL_FEE_NOT_SUPPORTED");
         require(deadline >= block.timestamp, "DEADLINE_EXPIRED");
 
-        IWETHLike(wrappedNative).deposit{value: msg.value}();
-        _forceApprove(wrappedNative, swapRouter, 0);
-        _forceApprove(wrappedNative, swapRouter, msg.value);
-
         uint256 beforeUsdc = IERC20Like(usdc).balanceOf(address(this));
-        usdcOut = IUniswapV3SwapRouterLike(swapRouter).exactInputSingle(
-            IUniswapV3SwapRouterLike.ExactInputSingleParams({
-                tokenIn: wrappedNative,
-                tokenOut: usdc,
-                fee: poolFee,
-                recipient: address(this),
-                deadline: deadline,
-                amountIn: msg.value,
-                amountOutMinimum: amountOutMinimum,
-                sqrtPriceLimitX96: 0
-            })
+        bytes memory commands = new bytes(2);
+        commands[0] = 0x0b; // WRAP_ETH
+        commands[1] = 0x00; // V3_SWAP_EXACT_IN
+        bytes[] memory inputs = new bytes[](2);
+        inputs[0] = abi.encode(swapRouter, msg.value);
+        inputs[1] = abi.encode(
+            address(this),
+            msg.value,
+            amountOutMinimum,
+            abi.encodePacked(wrappedNative, poolFee, usdc),
+            false,
+            new uint256[](0)
         );
+        IUniversalRouterLike(swapRouter).execute{value: msg.value}(commands, inputs, deadline);
         uint256 actualOut = IERC20Like(usdc).balanceOf(address(this)) - beforeUsdc;
         require(actualOut >= amountOutMinimum, "SLIPPAGE");
-        if (actualOut > usdcOut) usdcOut = actualOut;
+        usdcOut = actualOut;
 
         (platformFee, netUsdc) = quoteFee(usdcOut);
         require(netUsdc > 0, "NET_ZERO");
