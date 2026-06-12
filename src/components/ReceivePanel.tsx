@@ -19,13 +19,14 @@ export function ReceivePanel({ address, circleWallet }: Props) {
   const [invoiceLink, setInvoiceLink] = useState('')
   const [invoiceError, setInvoiceError] = useState('')
   const [receiverAddress, setReceiverAddress] = useState('')
+  const [receiverTouched, setReceiverTouched] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const receiveAddress = target === 'circle' ? circleWallet?.address : address
-  const merchantAddress = receiverAddress || receiveAddress || ''
+  const merchantAddress = receiverAddress
 
   useEffect(() => {
-    if (receiveAddress && !receiverAddress) setReceiverAddress(receiveAddress)
-  }, [receiveAddress, receiverAddress])
+    if (receiveAddress && !receiverTouched) setReceiverAddress(receiveAddress)
+  }, [receiveAddress, receiverTouched])
 
   const requestLink = useMemo(() => {
     if (!merchantAddress) return ''
@@ -66,13 +67,13 @@ export function ReceivePanel({ address, circleWallet }: Props) {
       <div>
         <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Receiver wallet</label>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-          <button onClick={()=>{setTarget('eoa'); if (address) setReceiverAddress(address); setShowPreview(false)}} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:target==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:target==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:target==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>MetaMask EOA</button>
-          <button onClick={()=>{setTarget('circle'); if (circleWallet?.address) setReceiverAddress(circleWallet.address); setShowPreview(false)}} disabled={!circleWallet} style={{padding:'10px 8px',borderRadius:8,cursor:circleWallet?'pointer':'not-allowed',border:target==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:target==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:target==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>Circle Wallet</button>
+          <button onClick={()=>{setTarget('eoa'); if (address) setReceiverAddress(address); setReceiverTouched(true); setShowPreview(false)}} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:target==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:target==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:target==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>MetaMask EOA</button>
+          <button onClick={()=>{setTarget('circle'); if (circleWallet?.address) setReceiverAddress(circleWallet.address); setReceiverTouched(true); setShowPreview(false)}} disabled={!circleWallet} style={{padding:'10px 8px',borderRadius:8,cursor:circleWallet?'pointer':'not-allowed',border:target==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:target==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:target==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>Circle Wallet</button>
         </div>
       </div>
       <div className='glass' style={{padding:12,borderRadius:10}}>
         <div style={{fontSize:11,color:'#64748b',marginBottom:6}}>Receiver / merchant address</div>
-        <input className='input' value={receiverAddress} onChange={event => { setReceiverAddress(event.target.value); setShowPreview(false) }} placeholder='0x receiver wallet on Arc Testnet' style={{fontFamily:'monospace',fontSize:12}} />
+        <input className='input' value={receiverAddress} onChange={event => { setReceiverTouched(true); setReceiverAddress(event.target.value); setShowPreview(false) }} placeholder='0x receiver wallet on Arc Testnet' style={{fontFamily:'monospace',fontSize:12}} />
         {merchantAddress && <button onClick={()=>copy(merchantAddress,'addr')} style={{marginTop:8,width:'100%',background:'rgba(99,102,241,0.12)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12}}>{copied==='addr'?t('common.copied'):t('common.copyAddress')}</button>}
       </div>
       <div>

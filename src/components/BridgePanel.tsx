@@ -20,6 +20,13 @@ const EVM_CHAINS = [
 ]
 const SOLANA_CHAIN = { id: 'Solana_Devnet', label: 'Solana Devnet (Solana)' }
 const ALL_DST_CHAINS = [...EVM_CHAINS, SOLANA_CHAIN]
+const NATIVE_TO_ARC: Record<string,{ token:string; symbol:string; label:string; note:string }> = {
+  Ethereum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Ethereum native ETH', note:'ETH is the gas token on Ethereum Sepolia.' },
+  Base_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Base native ETH', note:'ETH is the gas token on Base Sepolia.' },
+  Arbitrum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Arbitrum native ETH', note:'ETH is the gas token on Arbitrum Sepolia.' },
+  HyperEVM_Testnet: { token:'HYPE_NATIVE', symbol:'HYPE', label:'HyperEVM native HYPE', note:'HYPE is the gas token on HyperEVM Testnet.' },
+  Solana_Devnet: { token:'SOL_NATIVE', symbol:'SOL', label:'Solana native SOL', note:'SOL is the gas token on Solana Devnet.' },
+}
 
 // CCTP source config — token addresses per chain
 // cirBTC hanya ada di Arc Testnet + Ethereum Sepolia (Circle docs)
@@ -104,6 +111,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const BRIDGE_TOKENS = ['USDC','cirBTC']
   const [token, setToken] = useState('USDC')
   const TOKEN_DECIMALS: Record<string,number> = { USDC:6, cirBTC:8 }
+  const nativeBridgeToken = toChain === 'Arc_Testnet' ? NATIVE_TO_ARC[fromChain] : null
+  const isNativeBridgeToken = Boolean(nativeBridgeToken && token === nativeBridgeToken.token)
+  const displayToken = isNativeBridgeToken ? nativeBridgeToken!.symbol : token
   const tokenDec = TOKEN_DECIMALS[token]||6
 
   const circleB = parseFloat(balances[token]||'0')
@@ -111,7 +121,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const totalB = circleB + eoaB
   const isToSolana = toChain === 'Solana_Devnet'
   const isFromSolana = fromChain === 'Solana_Devnet'
-  const sourceBalance = source === 'circle' && fromChain === 'Arc_Testnet' ? circleB : isFromSolana ? parseFloat(solanaUsdcBal || '0') : eoaB
+  const sourceBalance = isNativeBridgeToken ? 0 : source === 'circle' && fromChain === 'Arc_Testnet' ? circleB : isFromSolana ? parseFloat(solanaUsdcBal || '0') : eoaB
   const customFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const cctpFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
   const gatewayForwardingEnabled = false
@@ -120,7 +130,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     ? (parseFloat(amount) * (PLATFORM_FEE_BPS / 10000)).toFixed(6)
     : '-'
   const routerFee = !isFromSolana && (ARCOX_ROUTER[fromChain] || token !== 'USDC') ? platformFee : isFromSolana && token === 'USDC' ? platformFee : '-'
-  const platformFeeLabel = routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
+  const platformFeeLabel = isNativeBridgeToken ? 'Tidak tersedia' : routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
   const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
   const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)-parseFloat(routerFee==='-'?'0':routerFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
 
@@ -165,6 +175,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   // Reset token jika tidak tersedia untuk route yang dipilih
   useEffect(() => {
     if (token==='cirBTC' && (isFromSolana||isToSolana||!CCTP_SRC[fromChain]?.cirbtc||!CCTP_SRC[toChain]?.cirbtc)) {
+      setToken('USDC')
+    }
+    if (token.endsWith('_NATIVE') && !(toChain === 'Arc_Testnet' && NATIVE_TO_ARC[fromChain]?.token === token)) {
       setToken('USDC')
     }
   }, [fromChain, toChain, isFromSolana, isToSolana, token])
@@ -961,6 +974,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   const handleBridge = async () => {
     if (!address) return
+    if (isNativeBridgeToken) {
+      setStatus({
+        type:'warning',
+        msg:`Native ${nativeBridgeToken!.symbol} bridge to Arc is not executable in ARCOX yet. Arc/App Kit CCTP bridge currently moves USDC, and native ${nativeBridgeToken!.symbol} remains the source-chain gas token. Use USDC bridge for now; native-token routing needs a separate canonical bridge or swap-and-bridge adapter.`,
+      })
+      return
+    }
     // Pre-connect Solana wallet — tanpa return, jadi 1x klik langsung bridge
     let _solWallet = solanaWallet
     if ((isFromSolana || isToSolana) && !_solWallet) {
@@ -994,11 +1014,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
             <button onClick={()=>setSource('circle')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:source==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:source==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>
               Circle Wallet
-              <div style={{fontSize:10,marginTop:2,color:'#94a3b8'}}>{circleB.toFixed(4)} {token}</div>
+              <div style={{fontSize:10,marginTop:2,color:'#94a3b8'}}>{circleB.toFixed(4)} {displayToken}</div>
             </button>
             <button onClick={()=>setSource('eoa')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:source==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:source==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>
               EOA MetaMask
-              <div style={{fontSize:10,marginTop:2,color:'#94a3b8'}}>{eoaB.toFixed(4)} {token}</div>
+              <div style={{fontSize:10,marginTop:2,color:'#94a3b8'}}>{eoaB.toFixed(4)} {displayToken}</div>
             </button>
           </div>
         </div>
@@ -1006,10 +1026,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
       {/* Balance */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🔵 Circle Wallet</span><span style={{color:'#818cf8',fontWeight:600}}>{circleB.toFixed(4)} {token}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟡 MetaMask</span><span style={{color:'#f59e0b',fontWeight:600}}>{eoaB.toFixed(4)} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🔵 Circle Wallet</span><span style={{color:'#818cf8',fontWeight:600}}>{isNativeBridgeToken ? '-' : circleB.toFixed(4)} {displayToken}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟡 MetaMask</span><span style={{color:'#f59e0b',fontWeight:600}}>{isNativeBridgeToken ? 'Use wallet gas balance' : eoaB.toFixed(4)} {displayToken}</span></div>
         {solanaWallet && <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟣 Solana</span><span style={{color:'#a78bfa',fontWeight:600}}>{solanaUsdcBal} USDC</span></div>}
-        <div style={{borderTop:'1px solid #1e1e2e',paddingTop:3,display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Total EVM</span><span style={{fontWeight:700}}>{totalB.toFixed(4)} {token}</span></div>
+        <div style={{borderTop:'1px solid #1e1e2e',paddingTop:3,display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Total EVM</span><span style={{fontWeight:700}}>{isNativeBridgeToken ? 'Not indexed' : totalB.toFixed(4)} {displayToken}</span></div>
       </div>
 
       {/* Solana Wallet Card */}
@@ -1038,7 +1058,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       <div style={{display:'flex',justifyContent:'space-between'}}>
         <label style={{color:'#64748b',fontSize:13}}>{t('bridge.fromChain')}</label>
         <button onClick={()=>setAmount(sourceBalance.toString())} style={{color:'#818cf8',background:'none',border:'none',cursor:'pointer',fontSize:12,padding:0}}>
-          {t('common.max')}: {sourceBalance.toFixed(token==='cirBTC'?8:4)} {token}
+          {isNativeBridgeToken ? 'Native balance: wallet' : `${t('common.max')}: ${sourceBalance.toFixed(token==='cirBTC'?8:4)} ${displayToken}`}
         </button>
       </div>
       <CompactChainPicker value={fromChain} options={ALL_DST_CHAINS} onChange={setFromChain} />
@@ -1056,29 +1076,42 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       {/* Token selection */}
       <div>          <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Token</label>
         <CompactTokenPicker
-          value={token}
+          value={isNativeBridgeToken ? displayToken : token}
           width={104}
           options={BRIDGE_TOKENS.filter(t=>!(t==='cirBTC' && (isFromSolana||isToSolana||!CCTP_SRC[fromChain]?.cirbtc||!CCTP_SRC[toChain]?.cirbtc)))}
           onChange={t=>{setToken(t);setStatus(null)}}
         />
+        {nativeBridgeToken && (
+          <button
+            type='button'
+            onClick={() => {
+              setToken(nativeBridgeToken.token)
+              setStatus({ type:'warning', msg:`${nativeBridgeToken.label} selected as preview only. Arc CCTP bridge does not mint native ${nativeBridgeToken.symbol}; bridge execution is disabled until a native-token bridge/swap adapter is added.` })
+            }}
+            style={{marginTop:8,width:'100%',border:'1px solid rgba(245,158,11,0.3)',background:isNativeBridgeToken?'rgba(245,158,11,0.14)':'rgba(15,23,42,0.62)',color:isNativeBridgeToken?'#fbbf24':'#cbd5e1',padding:'9px 10px',borderRadius:8,cursor:'pointer',textAlign:'left',fontSize:12,fontWeight:700}}
+          >
+            {nativeBridgeToken.label}
+            <div style={{fontSize:10,color:'#94a3b8',fontWeight:500,marginTop:2}}>Preview only - {nativeBridgeToken.note}</div>
+          </button>
+        )}
       </div>
 
       {/* Amount */}
       <div>
-        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.amount', { token })}</label>
+        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.amount', { token: displayToken })}</label>
         <input className='input' type='number' placeholder='0.00' value={amount} onChange={e=>setAmount(e.target.value)} />
       </div>
 
       {/* Info */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>CCTP v2 {isToSolana||isFromSolana?'Fast Transfer':''}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>{isNativeBridgeToken ? 'Native route preview' : `CCTP v2 ${isToSolana||isFromSolana?'Fast Transfer':''}`}</span></div>
         {!isFromSolana && fromChain==='Arc_Testnet'&&<div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.fundingSource')}</span><span>{source==='circle'?'Circle → EOA → Bridge':'EOA MetaMask'}</span></div>}
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{totalDebit} {token}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{customFee} {token}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{cctpFee} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{isNativeBridgeToken ? '-' : totalDebit} {displayToken}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{isNativeBridgeToken ? '-' : customFee} {displayToken}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{isNativeBridgeToken ? '-' : cctpFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${token}` : 'Belum aktif'}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:'#10b981'}}>{est} {token}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : 'Belum aktif'}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken?'#64748b':'#10b981'}}>{isNativeBridgeToken ? 'Unsupported' : est} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span style={{color:'#10b981'}}>3x (approve + burn + mint)</span></div>}
         {!isFromSolana && isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span>2x + Solflare 1x</span></div>}
@@ -1105,8 +1138,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         </div>
       )}
 
-      <button onClick={handleBridge} disabled={!amount||loading||fromChain===toChain} className='btn btn-primary'>
-        {loading ? step||`⏳ ${t('common.processing')}` : amount ? `Bridge ${amount} ${token}` : `Bridge ${token}`}
+      <button onClick={handleBridge} disabled={loading||fromChain===toChain||(!isNativeBridgeToken&&!amount)} className='btn btn-primary'>
+        {loading ? step||`⏳ ${t('common.processing')}` : isNativeBridgeToken ? `Native ${displayToken} bridge unavailable` : amount ? `Bridge ${amount} ${displayToken}` : `Bridge ${displayToken}`}
       </button>
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>
         {source==='circle' && fromChain==='Arc_Testnet' ? t('bridge.flowCircle') :

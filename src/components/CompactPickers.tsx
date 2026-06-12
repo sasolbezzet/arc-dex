@@ -27,6 +27,24 @@ export const TOKEN_META: Record<string,LogoMeta> = {
     mark:'₿',
     logo:'https://cryptologos.cc/logos/bitcoin-btc-logo.svg',
   },
+  ETH: {
+    name:'Ether',
+    color:'#627eea',
+    mark:'Ξ',
+    logo:'https://cryptologos.cc/logos/ethereum-eth-logo.svg',
+  },
+  HYPE: {
+    name:'Hyperliquid',
+    color:'#00d7a7',
+    mark:'H',
+    logo:'https://icons.llamao.fi/icons/chains/rsz_hyperevm.jpg',
+  },
+  SOL: {
+    name:'Solana',
+    color:'#14f195',
+    mark:'S',
+    logo:'https://cryptologos.cc/logos/solana-sol-logo.svg',
+  },
 }
 
 const CHAIN_META: Record<string,LogoMeta> = {
