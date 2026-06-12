@@ -28,6 +28,22 @@ export function ReceivePanel({ address, circleWallet }: Props) {
     if (receiveAddress && !receiverTouched) setReceiverAddress(receiveAddress)
   }, [receiveAddress, receiverTouched])
 
+  const editReceiver = (value: string) => {
+    setReceiverTouched(true)
+    setReceiverAddress(value)
+    setShowPreview(false)
+    setInvoiceLink('')
+    setInvoiceError('')
+  }
+
+  const resetReceiver = () => {
+    setReceiverTouched(false)
+    setReceiverAddress(receiveAddress || '')
+    setShowPreview(false)
+    setInvoiceLink('')
+    setInvoiceError('')
+  }
+
   const requestLink = useMemo(() => {
     if (!merchantAddress) return ''
     const url = new URL('/send', window.location.origin)
@@ -67,22 +83,25 @@ export function ReceivePanel({ address, circleWallet }: Props) {
       <div>
         <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Receiver wallet</label>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-          <button onClick={()=>{setTarget('eoa'); if (address) setReceiverAddress(address); setReceiverTouched(true); setShowPreview(false)}} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:target==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:target==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:target==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>MetaMask EOA</button>
-          <button onClick={()=>{setTarget('circle'); if (circleWallet?.address) setReceiverAddress(circleWallet.address); setReceiverTouched(true); setShowPreview(false)}} disabled={!circleWallet} style={{padding:'10px 8px',borderRadius:8,cursor:circleWallet?'pointer':'not-allowed',border:target==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:target==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:target==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>Circle Wallet</button>
+          <button onClick={()=>{setTarget('eoa'); editReceiver(address || '')}} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:target==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:target==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:target==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>MetaMask EOA</button>
+          <button onClick={()=>{setTarget('circle'); editReceiver(circleWallet?.address || '')}} disabled={!circleWallet} style={{padding:'10px 8px',borderRadius:8,cursor:circleWallet?'pointer':'not-allowed',border:target==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:target==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:target==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>Circle Wallet</button>
         </div>
       </div>
       <div className='glass' style={{padding:12,borderRadius:10}}>
         <div style={{fontSize:11,color:'#64748b',marginBottom:6}}>Receiver / merchant address</div>
-        <input className='input' value={receiverAddress} onChange={event => { setReceiverTouched(true); setReceiverAddress(event.target.value); setShowPreview(false) }} placeholder='0x receiver wallet on Arc Testnet' style={{fontFamily:'monospace',fontSize:12}} />
-        {merchantAddress && <button onClick={()=>copy(merchantAddress,'addr')} style={{marginTop:8,width:'100%',background:'rgba(99,102,241,0.12)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12}}>{copied==='addr'?t('common.copied'):t('common.copyAddress')}</button>}
+        <input className='input' value={receiverAddress} onChange={event => editReceiver(event.target.value)} placeholder='0x receiver wallet on Arc Testnet' style={{fontFamily:'monospace',fontSize:12}} />
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
+          <button onClick={()=>copy(merchantAddress,'addr')} disabled={!merchantAddress} style={{background:'rgba(99,102,241,0.12)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',padding:'8px',borderRadius:8,cursor:merchantAddress?'pointer':'not-allowed',fontSize:12}}>{copied==='addr'?t('common.copied'):t('common.copyAddress')}</button>
+          <button onClick={resetReceiver} style={{background:'rgba(15,23,42,0.72)',color:'#cbd5e1',border:'1px solid rgba(148,163,184,0.22)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12}}>Reset receiver</button>
+        </div>
       </div>
       <div>
         <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Payment request</label>
         <div style={{display:'flex',gap:8}}>
-          <input className='input' type='number' placeholder={t('receive.amountPlaceholder')} value={amount} onChange={e=>{setAmount(e.target.value); setShowPreview(false)}} />
-          <CompactTokenPicker value={token} options={SEND_TOKENS} onChange={setToken} />
+          <input className='input' type='number' placeholder={t('receive.amountPlaceholder')} value={amount} onChange={e=>{setAmount(e.target.value); setShowPreview(false); setInvoiceLink('')}} />
+          <CompactTokenPicker value={token} options={SEND_TOKENS} onChange={next => { setToken(next); setShowPreview(false); setInvoiceLink('') }} />
         </div>
-        <input className='input' placeholder={t('receive.memoPlaceholder')} value={memo} onChange={e=>{setMemo(e.target.value); setShowPreview(false)}} style={{marginTop:8}} />
+        <input className='input' placeholder={t('receive.memoPlaceholder')} value={memo} onChange={e=>{setMemo(e.target.value); setShowPreview(false); setInvoiceLink('')}} style={{marginTop:8}} />
       </div>
       {requestLink && (
         <div className='glass' style={{padding:12,borderRadius:10,textAlign:'center'}}>

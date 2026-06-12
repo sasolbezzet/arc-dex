@@ -20,12 +20,12 @@ const EVM_CHAINS = [
 ]
 const SOLANA_CHAIN = { id: 'Solana_Devnet', label: 'Solana Devnet (Solana)' }
 const ALL_DST_CHAINS = [...EVM_CHAINS, SOLANA_CHAIN]
-const NATIVE_TO_ARC: Record<string,{ token:string; symbol:string; label:string; note:string }> = {
-  Ethereum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Ethereum native ETH', note:'ETH is the gas token on Ethereum Sepolia.' },
-  Base_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Base native ETH', note:'ETH is the gas token on Base Sepolia.' },
-  Arbitrum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Arbitrum native ETH', note:'ETH is the gas token on Arbitrum Sepolia.' },
-  HyperEVM_Testnet: { token:'HYPE_NATIVE', symbol:'HYPE', label:'HyperEVM native HYPE', note:'HYPE is the gas token on HyperEVM Testnet.' },
-  Solana_Devnet: { token:'SOL_NATIVE', symbol:'SOL', label:'Solana native SOL', note:'SOL is the gas token on Solana Devnet.' },
+const NATIVE_TO_ARC: Record<string,{ token:string; symbol:string; label:string; note:string; unavailableReason?:string }> = {
+  Ethereum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Ethereum native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.' },
+  Base_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Base native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.' },
+  Arbitrum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Arbitrum native ETH', note:'ETH is the gas token on Arbitrum Sepolia.', unavailableReason:'Waiting for a verified router/liquid WETH-USDC route on Arbitrum Sepolia.' },
+  HyperEVM_Testnet: { token:'HYPE_NATIVE', symbol:'HYPE', label:'HyperEVM native HYPE', note:'HYPE is the gas token on HyperEVM Testnet.', unavailableReason:'Native HYPE route is not enabled until a wrapped-HYPE router and CCTP-compatible USDC pool are verified.' },
+  Solana_Devnet: { token:'SOL_NATIVE', symbol:'SOL', label:'Solana native SOL', note:'SOL is the gas token on Solana Devnet.', unavailableReason:'SOL-native swap-and-bridge needs a Solana route/program; current Solana bridge supports USDC only.' },
 }
 
 // CCTP source config — token addresses per chain
@@ -138,6 +138,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const nativeBridgeToken = toChain === 'Arc_Testnet' ? NATIVE_TO_ARC[fromChain] : null
   const isNativeBridgeToken = Boolean(nativeBridgeToken && token === nativeBridgeToken.token)
   const nativeBridgeExecutable = Boolean(isNativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc_Testnet')
+  const nativeRouteLive = Boolean(nativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc_Testnet')
   const displayToken = isNativeBridgeToken ? nativeBridgeToken!.symbol : token
   const tokenDec = TOKEN_DECIMALS[token]||6
 
@@ -1297,16 +1298,19 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
             onClick={() => {
               setToken(nativeBridgeToken.token)
               setStatus({
-                type: nativeBridgeExecutable ? 'info' : 'warning',
-                msg: nativeBridgeExecutable
+                type: nativeRouteLive ? 'info' : 'warning',
+                msg: nativeRouteLive
                   ? `${nativeBridgeToken.label} route aktif. ARCOX akan quote swap native ${nativeBridgeToken.symbol} ke USDC, bridge via CCTP, lalu mint USDC di Arc.`
-                  : `${nativeBridgeToken.label} belum executable. Router/pool native route belum tersedia untuk chain ini.`,
+                  : `${nativeBridgeToken.label} belum executable. ${nativeBridgeToken.unavailableReason || 'Router/pool native route belum tersedia untuk chain ini.'}`,
               })
             }}
             style={{marginTop:8,width:'100%',border:'1px solid rgba(245,158,11,0.3)',background:isNativeBridgeToken?'rgba(245,158,11,0.14)':'rgba(15,23,42,0.62)',color:isNativeBridgeToken?'#fbbf24':'#cbd5e1',padding:'9px 10px',borderRadius:8,cursor:'pointer',textAlign:'left',fontSize:12,fontWeight:700}}
           >
             {nativeBridgeToken.label}
-            <div style={{fontSize:10,color:'#94a3b8',fontWeight:500,marginTop:2}}>{nativeBridgeExecutable ? 'Live route - quote before bridge' : 'Preview only'} - {nativeBridgeToken.note}</div>
+            <div style={{fontSize:10,color:'#94a3b8',fontWeight:500,marginTop:2}}>{nativeRouteLive ? 'Live route - quote before bridge' : 'Unavailable - route not verified'} - {nativeBridgeToken.note}</div>
+            {!nativeRouteLive && nativeBridgeToken.unavailableReason && (
+              <div style={{fontSize:10,color:'#f87171',fontWeight:500,marginTop:3}}>{nativeBridgeToken.unavailableReason}</div>
+            )}
           </button>
         )}
       </div>
