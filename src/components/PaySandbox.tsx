@@ -22,6 +22,7 @@ export function PaySandbox() {
     expiresInMinutes: '15',
   })
   const [invoice, setInvoice] = useState<ArcoxInvoice | null>(null)
+  const [draftPreview, setDraftPreview] = useState(false)
   const [statusId, setStatusId] = useState('')
   const [statusResult, setStatusResult] = useState<any>(null)
   const [webhook, setWebhook] = useState({ invoiceId: '', eventType: 'gateway.mint.finalized', txHash: '0x1230000000000000000000000000000000000000000000000000000000000123' })
@@ -32,6 +33,19 @@ export function PaySandbox() {
   const [error, setError] = useState('')
 
   const updateForm = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+
+  const previewInvoice = () => {
+    setError('')
+    if (!form.amount) {
+      setError('Amount is required.')
+      return
+    }
+    if (!form.merchantAddress) {
+      setError('Receiver wallet / merchant address is required.')
+      return
+    }
+    setDraftPreview(true)
+  }
 
   const create = async () => {
     try {
@@ -96,14 +110,30 @@ export function PaySandbox() {
 
       <section className='sandbox-grid'>
         <div className='glass sandbox-card'>
-          <h3>Create Invoice Demo</h3>
+          <h3>Create Payment Request</h3>
+          <p className='pay-muted'>For merchants: enter the receiver wallet first. The payer cannot edit this address on checkout.</p>
           <Field label='Order ID' value={form.orderId} onChange={v => updateForm('orderId', v)} />
           <Field label='Amount' value={form.amount} onChange={v => updateForm('amount', v)} />
           <Field label='Token' value={form.token} onChange={v => updateForm('token', v)} />
-          <Field label='Merchant Address' value={form.merchantAddress} onChange={v => updateForm('merchantAddress', v)} />
+          <Field label='Receiver Wallet / Merchant Address' value={form.merchantAddress} onChange={v => { updateForm('merchantAddress', v); setDraftPreview(false) }} />
+          <Field label='Receive Network' value='arc-testnet' onChange={() => {}} disabled />
           <Field label='Memo' value={form.memo} onChange={v => updateForm('memo', v)} />
           <Field label='Expires In Minutes' value={form.expiresInMinutes} onChange={v => updateForm('expiresInMinutes', v)} />
-          <button className='btn btn-primary' onClick={create}>Create Invoice</button>
+          <button className='btn btn-primary' onClick={previewInvoice}>Preview Invoice</button>
+          {draftPreview && (
+            <div className='pay-preview'>
+              <h3>Invoice Preview</h3>
+              <div className='pay-grid'>
+                <Info label='Buyer pays' value={`${form.amount || '0'} USDC`} />
+                <Info label='Merchant receives' value={`${form.amount || '0'} USDC on Arc Testnet`} />
+                <Info label='Receiver wallet' value={form.merchantAddress || '-'} mono />
+                <Info label='Order ID' value={form.orderId || '-'} />
+                <Info label='Memo' value={form.memo || '-'} />
+                <Info label='Expires in' value={`${form.expiresInMinutes || '15'} minutes`} />
+              </div>
+              <button className='btn btn-primary' onClick={create}>Create Payment Link</button>
+            </div>
+          )}
           {invoice && (
             <div className='json-box'>
               <a href={invoice.paymentUrl} className='header-link-button'>Lihat preview pembayaran</a>
@@ -129,12 +159,14 @@ export function PaySandbox() {
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>Eco Routing Preview</h3>
+          <h3>Pay Cross-Chain Preview</h3>
+          <p className='pay-muted'>Preview how a buyer can pay from another chain while the merchant receives USDC on Arc. Receiver is taken from the invoice/merchant field.</p>
           <Field label='Source Chain' value={eco.sourceChain} onChange={v => setEco(prev => ({ ...prev, sourceChain: v }))} />
           <Field label='Destination Chain' value={eco.destinationChain} onChange={v => setEco(prev => ({ ...prev, destinationChain: v }))} />
           <Field label='Source Token' value={eco.sourceToken} onChange={v => setEco(prev => ({ ...prev, sourceToken: v }))} />
           <Field label='Destination Token' value={eco.destinationToken} onChange={v => setEco(prev => ({ ...prev, destinationToken: v }))} />
           <Field label='Amount' value={eco.amount} onChange={v => setEco(prev => ({ ...prev, amount: v }))} />
+          <Field label='Receiver Wallet' value={form.merchantAddress} onChange={v => updateForm('merchantAddress', v)} />
           <Field label='Invoice ID' value={eco.invoiceId} onChange={v => setEco(prev => ({ ...prev, invoiceId: v }))} />
           <button className='btn btn-primary' onClick={previewEco}>Preview Eco Route</button>
           {ecoResult && <pre className='json-box'>{JSON.stringify(ecoResult, null, 2)}</pre>}
@@ -175,11 +207,20 @@ export function PaySandbox() {
   )
 }
 
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function Field({ label, value, onChange, disabled = false }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   return (
     <label className='sandbox-field'>
       <span>{label}</span>
-      <input className='input' value={value} onChange={event => onChange(event.target.value)} />
+      <input className='input' value={value} disabled={disabled} onChange={event => onChange(event.target.value)} />
     </label>
+  )
+}
+
+function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className='pay-info'>
+      <span>{label}</span>
+      <strong className={mono ? 'mono' : ''}>{value}</strong>
+    </div>
   )
 }

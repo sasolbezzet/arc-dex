@@ -858,6 +858,114 @@ button, a, select {
   background: rgba(245, 158, 11, 0.08);
 }
 
+.pay-stepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.pay-step {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(3, 7, 13, 0.44);
+  padding: 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pay-step span {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #10131a;
+  background: linear-gradient(135deg, #fde68a, #f59e0b);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.pay-step strong {
+  min-width: 0;
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.pay-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.pay-methods button {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  background: rgba(3, 7, 13, 0.54);
+  padding: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.pay-methods button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.pay-methods button.active {
+  border-color: rgba(245, 158, 11, 0.44);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.14), rgba(139, 92, 246, 0.08));
+}
+
+.pay-methods strong,
+.pay-methods span {
+  display: block;
+}
+
+.pay-methods strong {
+  color: #f8fafc;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.pay-methods span {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pay-source-chain {
+  margin-top: 12px;
+}
+
+.pay-advanced {
+  margin-top: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(3, 7, 13, 0.4);
+  padding: 10px;
+}
+
+.pay-advanced summary {
+  cursor: pointer;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pay-advanced .pay-grid {
+  margin-top: 10px;
+}
+
 .inline-error {
   border-color: rgba(251, 113, 133, 0.3);
   background: rgba(251, 113, 133, 0.1);
@@ -982,6 +1090,11 @@ button, a, select {
   .pay-title-row,
   .portfolio-section-head {
     align-items: flex-start;
+  }
+
+  .pay-stepper,
+  .pay-methods {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { estimateSendTokenFromEoa, sendTokenFromEoa } from '../services/eoaTransactions'
 import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
-import { getInvoice, markInvoicePaid, patchInvoice } from '../payApi'
+import { getInvoice, markInvoicePaid, patchInvoice, quoteEcoRoute } from '../payApi'
 import type { ArcoxInvoice } from '../payApi'
 
 type Props = {
@@ -17,6 +17,8 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<any>(null)
   const [busy, setBusy] = useState(false)
+  const [paymentMode, setPaymentMode] = useState<'arc-eoa' | 'cross-chain'>('arc-eoa')
+  const [sourceChain, setSourceChain] = useState('base-sepolia')
 
   const load = async () => {
     if (!invoiceId) {
@@ -52,6 +54,29 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
     if (invoice.status !== 'unpaid' && invoice.status !== 'pending') throw new Error(`Invoice status is ${invoice.status}.`)
     setBusy(true)
     try {
+      if (paymentMode === 'cross-chain') {
+        const route = await quoteEcoRoute({
+          sourceChain,
+          destinationChain: 'arc-testnet',
+          sourceToken: invoice.token,
+          destinationToken: invoice.token,
+          amount: invoice.amount,
+          recipient: invoice.merchantAddress,
+          invoiceId: invoice.invoiceId,
+        })
+        setPreview({
+          type: 'cross-chain',
+          invoiceId: invoice.invoiceId,
+          from: address,
+          to: invoice.merchantAddress,
+          amount: invoice.amount,
+          token: invoice.token,
+          sourceChain,
+          network: 'Arc Testnet',
+          route,
+        })
+        return
+      }
       const estimate = await estimateSendTokenFromEoa({
         from: address,
         to: invoice.merchantAddress,
@@ -59,6 +84,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
         amount: invoice.amount,
       }).catch((e) => ({ error: e instanceof Error ? e.message : 'Estimate failed' }))
       setPreview({
+        type: 'arc-eoa',
         invoiceId: invoice.invoiceId,
         from: address,
         to: invoice.merchantAddress,
@@ -74,6 +100,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
 
   const confirmAndPay = async () => {
     if (!invoice || !address || !preview) return
+    if (preview.type !== 'arc-eoa') return
     setBusy(true)
     try {
       const sent = await sendTokenFromEoa({
@@ -117,34 +144,85 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
         {invoice && (
           <>
             <div className='pay-grid'>
-              <Info label='Invoice ID' value={invoice.invoiceId} />
+              <Info label='You Pay' value={`${invoice.amount} ${invoice.token}`} />
+              <Info label='Merchant Receives' value={`${invoice.amount} ${invoice.token} on Arc Testnet`} />
+              <Info label='Receiver Wallet' value={invoice.merchantAddress} mono />
+              <Info label='Your Wallet' value={address || 'Connect wallet to continue'} mono />
               <Info label='Order ID' value={invoice.orderId || '-'} />
-              <Info label='Merchant / Receiver' value={invoice.merchantAddress} mono />
-              <Info label='Amount' value={`${invoice.amount} ${invoice.token}`} />
-              <Info label='Network' value='Arc Testnet' />
               <Info label='Memo' value={invoice.memo || '-'} />
               <Info label='Expires At' value={new Date(invoice.expiresAt).toLocaleString()} />
-              <Info label='Tx Hash' value={invoice.txHash || '-'} mono link={invoice.txHash ? ARC_TESTNET_EXPLORER_TX + invoice.txHash : ''} />
+              <Info label='Invoice ID' value={invoice.invoiceId} />
             </div>
+
+            <div className='pay-stepper'>
+              {['Review invoice', 'Choose wallet', 'Preview fee', 'Confirm payment', 'Payment complete'].map((item, idx) => (
+                <div className='pay-step' key={item}>
+                  <span>{idx + 1}</span>
+                  <strong>{item}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className='pay-methods'>
+              <button type='button' className={paymentMode === 'arc-eoa' ? 'active' : ''} onClick={() => { setPaymentMode('arc-eoa'); setPreview(null) }}>
+                <strong>Pay on Arc</strong>
+                <span>Use connected EOA wallet and sign one USDC transfer on Arc Testnet.</span>
+              </button>
+              <button type='button' className={paymentMode === 'cross-chain' ? 'active' : ''} onClick={() => { setPaymentMode('cross-chain'); setPreview(null) }}>
+                <strong>Pay Cross-Chain</strong>
+                <span>Preview an Eco-style route where buyer pays elsewhere and merchant receives USDC on Arc.</span>
+              </button>
+            </div>
+
+            {paymentMode === 'cross-chain' && (
+              <label className='sandbox-field pay-source-chain'>
+                <span>Source chain</span>
+                <select className='input' value={sourceChain} onChange={event => setSourceChain(event.target.value)}>
+                  <option value='base-sepolia'>Base Sepolia</option>
+                  <option value='ethereum-sepolia'>Ethereum Sepolia</option>
+                  <option value='arbitrum-sepolia'>Arbitrum Sepolia</option>
+                  <option value='solana-devnet'>Solana Devnet</option>
+                </select>
+              </label>
+            )}
 
             <div className='pay-actions'>
               <button className='btn btn-primary' disabled={busy || ['paid','expired','cancelled','failed'].includes(invoice.status)} onClick={preparePayment}>
-                {!address ? 'Connect Wallet' : preview ? 'Preview Ready' : 'Pay Now'}
+                {!address ? 'Connect Wallet' : preview ? 'Preview Ready' : paymentMode === 'cross-chain' ? 'Preview Cross-Chain Route' : 'Pay Now'}
               </button>
               <button className='header-link-button' type='button' onClick={load}>Refresh Status</button>
             </div>
 
             {preview && (
               <div className='pay-preview'>
-                <h3>Confirm Payment Preview</h3>
+                <h3>{preview.type === 'cross-chain' ? 'Cross-Chain Route Preview' : 'Confirm Payment Preview'}</h3>
                 <Info label='From' value={preview.from} mono />
                 <Info label='To' value={preview.to} mono />
                 <Info label='Amount' value={`${preview.amount} ${preview.token}`} />
-                <Info label='Estimated network fee' value={preview.estimate?.fee ? `${preview.estimate.fee} USDC` : preview.estimate?.error || 'Unavailable'} />
-                <button className='btn btn-primary' disabled={busy} onClick={confirmAndPay}>Confirm and Send</button>
+                {preview.type === 'cross-chain' ? (
+                  <>
+                    <Info label='Source chain' value={preview.sourceChain} />
+                    <Info label='Route provider' value={preview.route?.provider ? `${preview.route.provider}${preview.route.mockMode ? ' preview' : ''}` : 'Eco preview'} />
+                    <Info label='Estimated steps' value={(preview.route?.estimatedSteps || []).join(' -> ') || 'Publish intent -> fulfill -> prove -> settle'} />
+                    <p className='pay-muted'>Cross-chain payment execution is shown as a route preview. The receiver wallet stays locked to this invoice; execute only after a production Eco/Circle route is available for this source chain.</p>
+                  </>
+                ) : (
+                  <Info label='Estimated network fee' value={preview.estimate?.fee ? `${preview.estimate.fee} USDC` : preview.estimate?.error || 'Unavailable'} />
+                )}
+                {preview.type === 'arc-eoa' && <button className='btn btn-primary' disabled={busy} onClick={confirmAndPay}>Confirm and Send</button>}
                 <button className='header-link-button' type='button' onClick={() => setPreview(null)}>Cancel</button>
               </div>
             )}
+
+            <details className='pay-advanced'>
+              <summary>Advanced details</summary>
+              <div className='pay-grid'>
+                <Info label='Network' value='Arc Testnet' />
+                <Info label='Tx Hash' value={invoice.txHash || '-'} mono link={invoice.txHash ? ARC_TESTNET_EXPLORER_TX + invoice.txHash : ''} />
+                <Info label='Payer Address' value={invoice.payerAddress || '-'} mono />
+                <Info label='Created At' value={new Date(invoice.createdAt).toLocaleString()} />
+              </div>
+            </details>
 
             <div className='pay-timeline'>
               <h3>Payment Timeline</h3>
