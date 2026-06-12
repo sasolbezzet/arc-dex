@@ -5,7 +5,7 @@ import { txHistory } from '../txHistory'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 import { useI18n } from '../i18n'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
-import { encodeFunctionData, parseUnits } from 'viem'
+import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } from 'viem'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -44,6 +44,10 @@ const ARCOX_ROUTER: Record<string,string> = {
   Base_Sepolia: '0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc',
   Arbitrum_Sepolia: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7',
 }
+const NATIVE_SWAP_BRIDGE_ROUTER: Record<string,string> = {
+  Ethereum_Sepolia: '0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59',
+  Base_Sepolia: '0x3c5beFa0c208F0732D2c357f26EB897E727da498',
+}
 const ARCOX_ROUTER_ABI = [{
   type: 'function',
   name: 'bridgeUsdcWithFee',
@@ -57,6 +61,26 @@ const ARCOX_ROUTER_ABI = [{
     { name: 'minFinalityThreshold', type: 'uint32' },
   ],
   outputs: [{ name: 'fee', type: 'uint256' }, { name: 'netAmount', type: 'uint256' }],
+}] as const
+const NATIVE_SWAP_BRIDGE_ROUTER_ABI = [{
+  type: 'function',
+  name: 'swapNativeAndBridgeUsdc',
+  stateMutability: 'payable',
+  inputs: [
+    { name: 'destinationDomain', type: 'uint32' },
+    { name: 'mintRecipient', type: 'bytes32' },
+    { name: 'destinationCaller', type: 'bytes32' },
+    { name: 'poolFee', type: 'uint24' },
+    { name: 'amountOutMinimum', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+    { name: 'maxFee', type: 'uint256' },
+    { name: 'minFinalityThreshold', type: 'uint32' },
+  ],
+  outputs: [
+    { name: 'usdcOut', type: 'uint256' },
+    { name: 'platformFee', type: 'uint256' },
+    { name: 'netUsdc', type: 'uint256' },
+  ],
 }] as const
 
 // Solana CCTP burn config
@@ -113,6 +137,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const TOKEN_DECIMALS: Record<string,number> = { USDC:6, cirBTC:8 }
   const nativeBridgeToken = toChain === 'Arc_Testnet' ? NATIVE_TO_ARC[fromChain] : null
   const isNativeBridgeToken = Boolean(nativeBridgeToken && token === nativeBridgeToken.token)
+  const nativeBridgeExecutable = Boolean(isNativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc_Testnet')
   const displayToken = isNativeBridgeToken ? nativeBridgeToken!.symbol : token
   const tokenDec = TOKEN_DECIMALS[token]||6
 
@@ -130,7 +155,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     ? (parseFloat(amount) * (PLATFORM_FEE_BPS / 10000)).toFixed(6)
     : '-'
   const routerFee = !isFromSolana && (ARCOX_ROUTER[fromChain] || token !== 'USDC') ? platformFee : isFromSolana && token === 'USDC' ? platformFee : '-'
-  const platformFeeLabel = isNativeBridgeToken ? 'Tidak tersedia' : routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
+  const platformFeeLabel = isNativeBridgeToken
+    ? nativeBridgeExecutable ? 'Quote before bridge' : 'Tidak tersedia'
+    : routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
   const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
   const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)-parseFloat(routerFee==='-'?'0':routerFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
 
@@ -190,6 +217,185 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     if (isFromSolana && !solanaWallet) connectSolana()
     if (isToSolana && !solanaWallet) connectSolana()
   }, [fromChain, toChain])
+
+  const buildReceiveMessageCalldata = (message: string, attestation: string) => {
+    const msgHex = message.startsWith('0x') ? message.slice(2) : message
+    const attHex = attestation.startsWith('0x') ? attestation.slice(2) : attestation
+    const pad32 = (hex: string) => hex.length % 64 === 0 ? hex : hex.padEnd(Math.ceil(hex.length / 64) * 64, '0')
+    const msgLenHex = (msgHex.length / 2).toString(16).padStart(64, '0')
+    const attLenHex = (attHex.length / 2).toString(16).padStart(64, '0')
+    const msgPadded = pad32(msgHex)
+    const attPadded = pad32(attHex)
+    const attOffsetBytes = 64 + 32 + msgPadded.length / 2
+    return '0x57ecfd28' +
+      '0000000000000000000000000000000000000000000000000000000000000040' +
+      attOffsetBytes.toString(16).padStart(64, '0') +
+      msgLenHex + msgPadded +
+      attLenHex + attPadded
+  }
+
+  const completeEvmMintAfterBurn = async (params: {
+    burnTx: string
+    historyId: string
+    localSteps: BridgeStep[]
+    sourceChain: string
+    destinationChain: string
+    amountLabel: string
+    tokenLabel: string
+  }) => {
+    const { burnTx, historyId, localSteps, sourceChain, destinationChain, amountLabel, tokenLabel } = params
+    localSteps.push({ name:'attestation', state:'pending' })
+    const attEst = sourceChain === 'Arc_Testnet' ? '~30 detik' : '~30 detik - 3 menit'
+    setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Polling attestasi (${attEst})...`, steps:[...localSteps] })
+    setStep('Menunggu attestasi...')
+
+    const maxPolls = 120
+    const pollDelay = sourceChain === 'Arc_Testnet' ? 1000 : 3000
+    let attData: any = null
+    for (let i = 0; i < maxPolls; i++) {
+      attData = await safePost(API, '/api/get-attestation', {txHash: burnTx, fromChain: sourceChain, toChain: destinationChain, once: true})
+      if (attData.success) break
+      const statusText = attData.status ? ` (${attData.status})` : ''
+      setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Polling attestasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
+      await new Promise(r => setTimeout(r, pollDelay))
+    }
+    if (!attData?.success) {
+      localSteps[localSteps.length-1].state = 'error'
+      txHistory.update(historyId, { status:'error', error:attData?.error || 'Attestation timeout' })
+      throw new Error(attData?.error || 'Attestation timeout')
+    }
+    localSteps[localSteps.length-1].state='success'
+
+    const toInfo = EVM_CHAINS.find(c=>c.id===destinationChain)
+    if (toInfo) {
+      try {
+        await window.ethereum!.request({ method:'wallet_switchEthereumChain', params:[{chainId:toInfo.chainId}] })
+        await new Promise(r=>setTimeout(r,1500))
+      } catch(e:any) {
+        if ((e.code===4902||e.code===-32603) && toInfo.addParams) {
+          await window.ethereum!.request({ method:'wallet_addEthereumChain', params:[toInfo.addParams] })
+          await new Promise(r=>setTimeout(r,3000))
+        }
+      }
+    }
+
+    const callData = buildReceiveMessageCalldata(attData.message, attData.attestation)
+    localSteps.push({ name:'mint', state:'pending' })
+    setStep(`MetaMask: Mint USDC di ${destinationChain}...`)
+    setStatus({ type:'info', msg:`✓ Attestasi siap!\n⏳ MetaMask popup: Mint USDC di ${destinationChain}...`, steps:[...localSteps] })
+    const mintTx = await sendEvmTxBuffered({ from:address, to:attData.messageTransmitter, data:callData })
+    localSteps[localSteps.length-1].txHash = mintTx
+    setStatus({ type:'info', msg:'⏳ Menunggu mint...', steps:[...localSteps] })
+    await waitEvmTx(mintTx)
+    localSteps[localSteps.length-1].state='success'
+    const explorerUrl = explorerFor(destinationChain, mintTx)
+    localSteps[localSteps.length-1].explorerUrl = explorerUrl
+    txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl:explorerUrl, note:'Bridge completed on Arc Testnet.' })
+    setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amountLabel} ${tokenLabel} → ${destinationChain}`, steps:[...localSteps] })
+  }
+
+  const quoteNativeBridge = async (nativeAmount: bigint) => {
+    if (!address || !window.ethereum) throw new Error('Wallet belum terhubung.')
+    const routerAddr = NATIVE_SWAP_BRIDGE_ROUTER[fromChain]
+    if (!routerAddr) throw new Error(`Native bridge router belum tersedia untuk ${fromChain}.`)
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 900)
+    const mintRecipient = `0x${encAddr(address)}`
+    const quotes: Array<{poolFee:number;usdcOut:bigint;platformFee:bigint;netUsdc:bigint;deadline:bigint}> = []
+    for (const poolFee of [500, 3000, 10000]) {
+      try {
+        const data = encodeFunctionData({
+          abi: NATIVE_SWAP_BRIDGE_ROUTER_ABI,
+          functionName: 'swapNativeAndBridgeUsdc',
+          args: [26, mintRecipient as `0x${string}`, `0x${'0'.repeat(64)}`, poolFee, 1n, deadline, 10n, Number(CCTP_FAST_FINALITY_THRESHOLD)],
+        })
+        const result = await window.ethereum.request({
+          method:'eth_call',
+          params:[{ from:address, to:routerAddr, data, value:toHex(nativeAmount) }, 'latest'],
+        })
+        const decoded = decodeFunctionResult({ abi:NATIVE_SWAP_BRIDGE_ROUTER_ABI, functionName:'swapNativeAndBridgeUsdc', data:result })
+        quotes.push({ poolFee, usdcOut:decoded[0] as bigint, platformFee:decoded[1] as bigint, netUsdc:decoded[2] as bigint, deadline })
+      } catch {}
+    }
+    quotes.sort((a,b) => a.netUsdc === b.netUsdc ? 0 : a.netUsdc > b.netUsdc ? -1 : 1)
+    const best = quotes[0]
+    if (!best || best.netUsdc <= 0n) throw new Error('Tidak ada quote native route yang berhasil. Pool mungkin tidak punya liquidity.')
+    return best
+  }
+
+  const bridgeNativeEvmToArc = async () => {
+    if (!address || !amount || !window.ethereum) return
+    if (!nativeBridgeExecutable) throw new Error(`Native bridge belum tersedia untuk ${fromChain}.`)
+    const nativeAmount = parseUnits(amount, 18)
+    const localSteps: BridgeStep[] = []
+    const fromInfo = EVM_CHAINS.find(c=>c.id===fromChain)
+    if (fromInfo) {
+      setStep('Switch network...')
+      try {
+        await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:fromInfo.chainId}] })
+        await new Promise(r=>setTimeout(r,1500))
+      } catch(e:any) {
+        if ((e.code===4902||e.code===-32603) && fromInfo.addParams) {
+          await window.ethereum.request({ method:'wallet_addEthereumChain', params:[fromInfo.addParams] })
+          await new Promise(r=>setTimeout(r,3000))
+        }
+      }
+    }
+    const gasBal = await evmNativeBalance(address)
+    if (gasBal <= nativeAmount) throw new Error(`Saldo ${displayToken} tidak cukup untuk amount + gas.`)
+
+    setStep('Mengambil quote native route...')
+    const quote = await quoteNativeBridge(nativeAmount)
+    const minOut = (quote.usdcOut * 9950n) / 10000n
+    const estimatedReceive = formatUnits(quote.netUsdc, 6)
+    const platformFeeUsdc = formatUnits(quote.platformFee, 6)
+    const ok = window.confirm(
+      `Preview native bridge\n\n` +
+      `Route: ${fromChain} ${displayToken} -> swap USDC -> Arc Testnet\n` +
+      `Input: ${amount} ${displayToken}\n` +
+      `Estimated USDC to Arc: ${estimatedReceive} USDC\n` +
+      `Platform fee: ${platformFeeUsdc} USDC\n` +
+      `Pool fee tier: ${quote.poolFee}\n` +
+      `Slippage guard: 0.5%\n\n` +
+      `Lanjutkan bridge?`
+    )
+    if (!ok) throw new Error('Bridge dibatalkan user setelah preview.')
+
+    const routerAddr = NATIVE_SWAP_BRIDGE_ROUTER[fromChain]
+    const data = encodeFunctionData({
+      abi: NATIVE_SWAP_BRIDGE_ROUTER_ABI,
+      functionName: 'swapNativeAndBridgeUsdc',
+      args: [26, `0x${encAddr(address)}` as `0x${string}`, `0x${'0'.repeat(64)}`, quote.poolFee, minOut, quote.deadline, 10n, Number(CCTP_FAST_FINALITY_THRESHOLD)],
+    })
+    setStep('MetaMask: Confirm native bridge...')
+    setStatus({ type:'info', msg:`⏳ MetaMask popup: bridge ${amount} ${displayToken} ke Arc via native router...`, steps:[...localSteps] })
+    const burnTx = await sendEvmTxBuffered({ from:address, to:routerAddr, data, value:toHex(nativeAmount) })
+    localSteps.push({ name:'burn', state:'pending', txHash:burnTx })
+    setStatus({ type:'info', msg:'⏳ Menunggu swap + burn...', steps:[...localSteps] })
+    await waitEvmTx(burnTx)
+    localSteps[localSteps.length-1].state='success'
+    localSteps[localSteps.length-1].explorerUrl=explorerFor(fromChain, burnTx)
+    const historyId = `bridge-${Date.now()}-${burnTx.slice(-6)}`
+    txHistory.add({
+      id: historyId,
+      ts: Date.now(),
+      action: 'bridge',
+      source: 'web-ui',
+      walletSource: 'eoa',
+      from: fromChain,
+      to: 'Arc_Testnet',
+      amount,
+      token: displayToken,
+      status: 'pending',
+      burnTx,
+      burnExplorerUrl: explorerFor(fromChain, burnTx),
+      srcDomain: CCTP_SRC[fromChain]?.domain,
+      dstDomain: DST_DOMAIN.Arc_Testnet,
+      note: `Native ${displayToken} swapped to USDC through ARCOX native router. Estimated receive ${estimatedReceive} USDC. Mint pending.`,
+    })
+    await completeEvmMintAfterBurn({ burnTx, historyId, localSteps, sourceChain: fromChain, destinationChain: 'Arc_Testnet', amountLabel: estimatedReceive, tokenLabel: 'USDC' })
+    setAmount('')
+    setTimeout(onRefresh,3000); setTimeout(onRefresh,10000)
+  }
 
   // ── EVM Bridge (Arc/EVM ↔ EVM) ──
   const bridgeEvm = async (_solWallet?: {address:string;provider:any}|null) => {
@@ -975,10 +1181,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const handleBridge = async () => {
     if (!address) return
     if (isNativeBridgeToken) {
-      setStatus({
-        type:'warning',
-        msg:`Native ${nativeBridgeToken!.symbol} bridge to Arc is not executable in ARCOX yet. Arc/App Kit CCTP bridge currently moves USDC, and native ${nativeBridgeToken!.symbol} remains the source-chain gas token. Use USDC bridge for now; native-token routing needs a separate canonical bridge or swap-and-bridge adapter.`,
-      })
+      if (!amount) return
+      setLoading(true); setStatus(null)
+      try {
+        await bridgeNativeEvmToArc()
+      } catch(e:any) {
+        setStatus(prev => ({ type:'error', msg:e?.message||'Native bridge gagal', steps: prev?.steps }))
+      }
+      setLoading(false); setStep('')
       return
     }
     // Pre-connect Solana wallet — tanpa return, jadi 1x klik langsung bridge
@@ -1086,12 +1296,17 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
             type='button'
             onClick={() => {
               setToken(nativeBridgeToken.token)
-              setStatus({ type:'warning', msg:`${nativeBridgeToken.label} selected as preview only. Arc CCTP bridge does not mint native ${nativeBridgeToken.symbol}; bridge execution is disabled until a native-token bridge/swap adapter is added.` })
+              setStatus({
+                type: nativeBridgeExecutable ? 'info' : 'warning',
+                msg: nativeBridgeExecutable
+                  ? `${nativeBridgeToken.label} route aktif. ARCOX akan quote swap native ${nativeBridgeToken.symbol} ke USDC, bridge via CCTP, lalu mint USDC di Arc.`
+                  : `${nativeBridgeToken.label} belum executable. Router/pool native route belum tersedia untuk chain ini.`,
+              })
             }}
             style={{marginTop:8,width:'100%',border:'1px solid rgba(245,158,11,0.3)',background:isNativeBridgeToken?'rgba(245,158,11,0.14)':'rgba(15,23,42,0.62)',color:isNativeBridgeToken?'#fbbf24':'#cbd5e1',padding:'9px 10px',borderRadius:8,cursor:'pointer',textAlign:'left',fontSize:12,fontWeight:700}}
           >
             {nativeBridgeToken.label}
-            <div style={{fontSize:10,color:'#94a3b8',fontWeight:500,marginTop:2}}>Preview only - {nativeBridgeToken.note}</div>
+            <div style={{fontSize:10,color:'#94a3b8',fontWeight:500,marginTop:2}}>{nativeBridgeExecutable ? 'Live route - quote before bridge' : 'Preview only'} - {nativeBridgeToken.note}</div>
           </button>
         )}
       </div>
@@ -1104,14 +1319,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
       {/* Info */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>{isNativeBridgeToken ? 'Native route preview' : `CCTP v2 ${isToSolana||isFromSolana?'Fast Transfer':''}`}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Native swap + CCTP v2' : 'Native route preview' : `CCTP v2 ${isToSolana||isFromSolana?'Fast Transfer':''}`}</span></div>
         {!isFromSolana && fromChain==='Arc_Testnet'&&<div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.fundingSource')}</span><span>{source==='circle'?'Circle → EOA → Bridge':'EOA MetaMask'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{isNativeBridgeToken ? '-' : totalDebit} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{isNativeBridgeToken ? '-' : customFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{isNativeBridgeToken ? '-' : cctpFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : 'Belum aktif'}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken?'#64748b':'#10b981'}}>{isNativeBridgeToken ? 'Unsupported' : est} {displayToken}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Quote on bridge' : 'Unsupported' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span style={{color:'#10b981'}}>3x (approve + burn + mint)</span></div>}
         {!isFromSolana && isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span>2x + Solflare 1x</span></div>}
@@ -1138,8 +1353,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         </div>
       )}
 
-      <button onClick={handleBridge} disabled={loading||fromChain===toChain||(!isNativeBridgeToken&&!amount)} className='btn btn-primary'>
-        {loading ? step||`⏳ ${t('common.processing')}` : isNativeBridgeToken ? `Native ${displayToken} bridge unavailable` : amount ? `Bridge ${amount} ${displayToken}` : `Bridge ${displayToken}`}
+      <button onClick={handleBridge} disabled={loading||fromChain===toChain||(!amount)} className='btn btn-primary'>
+        {loading ? step||`⏳ ${t('common.processing')}` : isNativeBridgeToken ? nativeBridgeExecutable ? amount ? `Bridge ${amount} ${displayToken} to Arc` : `Bridge ${displayToken} to Arc` : `Native ${displayToken} bridge unavailable` : amount ? `Bridge ${amount} ${displayToken}` : `Bridge ${displayToken}`}
       </button>
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>
         {source==='circle' && fromChain==='Arc_Testnet' ? t('bridge.flowCircle') :
