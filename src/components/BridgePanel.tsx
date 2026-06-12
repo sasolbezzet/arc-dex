@@ -132,6 +132,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const [status, setStatus] = useState<Status|null>(null)
   const [solanaWallet, setSolanaWallet] = useState<{address:string;provider:any}|null>(null)
   const [solanaUsdcBal, setSolanaUsdcBal] = useState('0')
+  const [nativeGasEstimate, setNativeGasEstimate] = useState('')
   const BRIDGE_TOKENS = ['USDC','cirBTC']
   const [token, setToken] = useState('USDC')
   const TOKEN_DECIMALS: Record<string,number> = { USDC:6, cirBTC:8 }
@@ -218,6 +219,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     if (isFromSolana && !solanaWallet) connectSolana()
     if (isToSolana && !solanaWallet) connectSolana()
   }, [fromChain, toChain])
+
+  useEffect(() => {
+    setNativeGasEstimate('')
+  }, [fromChain, toChain, token, amount])
 
   const buildReceiveMessageCalldata = (message: string, attestation: string) => {
     const msgHex = message.startsWith('0x') ? message.slice(2) : message
@@ -349,26 +354,25 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const minOut = (quote.usdcOut * 9950n) / 10000n
     const estimatedReceive = formatUnits(quote.netUsdc, 6)
     const platformFeeUsdc = formatUnits(quote.platformFee, 6)
-    const ok = window.confirm(
-      `Preview native bridge\n\n` +
-      `Route: ${fromChain} ${displayToken} -> swap USDC -> Arc Testnet\n` +
-      `Input: ${amount} ${displayToken}\n` +
-      `Estimated USDC to Arc: ${estimatedReceive} USDC\n` +
-      `Platform fee: ${platformFeeUsdc} USDC\n` +
-      `Pool fee tier: ${quote.poolFee}\n` +
-      `Slippage guard: 0.5%\n\n` +
-      `Lanjutkan bridge?`
-    )
-    if (!ok) throw new Error('Bridge dibatalkan user setelah preview.')
-
     const routerAddr = NATIVE_SWAP_BRIDGE_ROUTER[fromChain]
     const data = encodeFunctionData({
       abi: NATIVE_SWAP_BRIDGE_ROUTER_ABI,
       functionName: 'swapNativeAndBridgeUsdc',
       args: [26, `0x${encAddr(address)}` as `0x${string}`, `0x${'0'.repeat(64)}`, quote.poolFee, minOut, quote.deadline, 10n, Number(CCTP_FAST_FINALITY_THRESHOLD)],
     })
+    let gasLabel = 'Wallet estimate'
+    try {
+      const gasHex = await window.ethereum.request({
+        method: 'eth_estimateGas',
+        params: [{ from: address, to: routerAddr, data, value: toHex(nativeAmount) }],
+      })
+      gasLabel = `${BigInt(gasHex).toString()} gas`
+      setNativeGasEstimate(gasLabel)
+    } catch {
+      setNativeGasEstimate(gasLabel)
+    }
     setStep('MetaMask: Confirm native bridge...')
-    setStatus({ type:'info', msg:`⏳ MetaMask popup: bridge ${amount} ${displayToken} ke Arc via native router...`, steps:[...localSteps] })
+    setStatus({ type:'info', msg:`⏳ MetaMask popup: ${amount} ${displayToken} → ~${estimatedReceive} USDC on Arc. Fee ${platformFeeUsdc} USDC. Gas ${gasLabel}.`, steps:[...localSteps] })
     const burnTx = await sendEvmTxBuffered({ from:address, to:routerAddr, data, value:toHex(nativeAmount) })
     localSteps.push({ name:'burn', state:'pending', txHash:burnTx })
     setStatus({ type:'info', msg:'⏳ Menunggu swap + burn...', steps:[...localSteps] })
@@ -1297,20 +1301,12 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
             type='button'
             onClick={() => {
               setToken(nativeBridgeToken.token)
-              setStatus({
-                type: nativeRouteLive ? 'info' : 'warning',
-                msg: nativeRouteLive
-                  ? `${nativeBridgeToken.label} route aktif. ARCOX akan quote swap native ${nativeBridgeToken.symbol} ke USDC, bridge via CCTP, lalu mint USDC di Arc.`
-                  : `${nativeBridgeToken.label} belum executable. ${nativeBridgeToken.unavailableReason || 'Router/pool native route belum tersedia untuk chain ini.'}`,
-              })
+              setStatus(nativeRouteLive ? null : { type:'warning', msg:'Route unavailable' })
             }}
             style={{marginTop:8,width:'100%',border:'1px solid rgba(245,158,11,0.3)',background:isNativeBridgeToken?'rgba(245,158,11,0.14)':'rgba(15,23,42,0.62)',color:isNativeBridgeToken?'#fbbf24':'#cbd5e1',padding:'9px 10px',borderRadius:8,cursor:'pointer',textAlign:'left',fontSize:12,fontWeight:700}}
           >
             {nativeBridgeToken.label}
-            <div style={{fontSize:10,color:'#94a3b8',fontWeight:500,marginTop:2}}>{nativeRouteLive ? 'Live route - quote before bridge' : 'Unavailable - route not verified'} - {nativeBridgeToken.note}</div>
-            {!nativeRouteLive && nativeBridgeToken.unavailableReason && (
-              <div style={{fontSize:10,color:'#f87171',fontWeight:500,marginTop:3}}>{nativeBridgeToken.unavailableReason}</div>
-            )}
+            <div style={{fontSize:10,color:nativeRouteLive?'#10b981':'#f87171',fontWeight:600,marginTop:2}}>{nativeRouteLive ? 'Route available' : 'Route unavailable'}</div>
           </button>
         )}
       </div>
@@ -1329,6 +1325,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{isNativeBridgeToken ? '-' : customFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{isNativeBridgeToken ? '-' : cctpFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
+        {isNativeBridgeToken && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gas estimate</span><span>{nativeBridgeExecutable ? nativeGasEstimate || 'Before wallet popup' : 'Route unavailable'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : 'Belum aktif'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Quote on bridge' : 'Unsupported' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
