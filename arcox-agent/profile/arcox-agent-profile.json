@@ -41,6 +41,10 @@
     "native_swap_bridge_deployed": {
       "Ethereum_Sepolia": "0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59",
       "Base_Sepolia": "0x3c5beFa0c208F0732D2c357f26EB897E727da498"
+    },
+    "native_swap_bridge_pending": {
+      "Arbitrum_Sepolia": "No official Uniswap Universal Router deployment found for Arbitrum Sepolia and ARBITRUM_SEPOLIA_UNIVERSAL_ROUTER is not set.",
+      "Solana_Devnet": "Not applicable to the EVM native router. Existing Solana program handles USDC fee-transfer flows, not SOL-native swap-and-bridge."
     }
   }
 }

@@ -66,6 +66,13 @@ Deployment output is written to:
 arcox-agent/deployments/arcox-native-swap-bridge-router.testnet.json
 ```
 
+## Current testnet deployments
+
+- Ethereum Sepolia: `0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59`
+- Base Sepolia: `0x3c5beFa0c208F0732D2c357f26EB897E727da498`
+- Arbitrum Sepolia: pending. The official Uniswap Universal Router deploy-address list does not include Arbitrum Sepolia, and no `ARBITRUM_SEPOLIA_UNIVERSAL_ROUTER` env override is set.
+- Solana Devnet: not applicable for this EVM router. The existing Solana router program `C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH` handles USDC fee transfer flows, not SOL-native swap-and-bridge.
+
 ## Safety
 
 - `amountOutMinimum` must come from a quote with slippage protection.

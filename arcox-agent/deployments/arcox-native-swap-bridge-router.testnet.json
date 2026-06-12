@@ -2,7 +2,7 @@
   "deployer": "0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e",
   "treasury": "0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e",
   "feeBps": 30,
-  "createdAt": "2026-06-12T11:46:37.751Z",
+  "createdAt": "2026-06-12T11:54:43.136Z",
   "deployments": {
     "Base_Sepolia": {
       "address": "0x3c5beFa0c208F0732D2c357f26EB897E727da498",
@@ -25,5 +25,7 @@
       "tokenMessenger": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA"
     }
   },
-  "errors": {}
+  "errors": {
+    "Arbitrum_Sepolia": "[Arbitrum_Sepolia] missing UNIVERSAL_ROUTER env"
+  }
 }
