@@ -12,6 +12,7 @@
     "mcp": "node mcp/server.mjs",
     "compile:router": "node scripts/compile-router.mjs",
     "deploy:router": "node scripts/deploy-router.mjs",
+    "deploy:native-swap-bridge-router": "node scripts/deploy-native-swap-bridge-router.mjs",
     "deploy:solana-router": "node scripts/deploy-solana-router.mjs"
   },
   "dependencies": {
