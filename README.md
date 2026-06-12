@@ -87,6 +87,29 @@ vercel
 
 If the backend moves, update `vercel.json` rewrite destination.
 
+ARCOX Pay webhook endpoints are Vercel serverless functions and should remain on the production frontend domain:
+
+```txt
+https://arc-dex-bice.vercel.app/api/webhooks/nowpayments
+https://arc-dex-bice.vercel.app/api/webhooks/circle
+```
+
+Webhook env:
+
+```bash
+NOWPAYMENTS_API_KEY=
+NOWPAYMENTS_IPN_SECRET=
+NOWPAYMENTS_VERIFY_IPN=false
+NOWPAYMENTS_BASE_URL=https://api.nowpayments.io/v1
+
+CIRCLE_API_KEY=
+CIRCLE_BASE_URL=https://api-sandbox.circle.com
+CIRCLE_ENV=TEST
+CIRCLE_VERIFY_WEBHOOK=false
+```
+
+For initial testing, keep `NOWPAYMENTS_VERIFY_IPN=false` and `CIRCLE_VERIFY_WEBHOOK=false` so test payloads without signatures are accepted. Enable verification only after provider secrets and exact signature headers are configured.
+
 Runtime check:
 
 - Header app menampilkan `API online/offline`.
