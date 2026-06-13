@@ -98,7 +98,6 @@ const SOLANA_MINT_CLIENT_VERSION = 'cctp-v2-solana-mint-20260601-09'
 const CCTP_FAST_FINALITY_THRESHOLD = 1000n
 const INITIAL_FEE_MULTIPLIER = 3n
 const MAX_FEE_MULTIPLIER = 4n
-const EIP7702_PREFIX = '0xef0100'
 const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 30)
 const EVM_FEE_TREASURY = import.meta.env.VITE_ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
 const SOLANA_FEE_TREASURY = import.meta.env.VITE_SOLANA_FEE_TREASURY || '4kAf2Qxf9KnbnKo7ukPMMu8q1UButJYNik4yQtvWhExw'
@@ -393,7 +392,6 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     }
     const gasBal = await evmNativeBalance(address)
     if (gasBal <= nativeAmount) throw new Error(`Saldo ${displayToken} tidak cukup untuk amount + gas.`)
-    await assertNoEip7702Delegation(address)
 
     setStep('Mengambil quote native route...')
     const quote = await quoteNativeBridge(nativeAmount)
@@ -414,8 +412,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       })
       gasLabel = `${BigInt(gasHex).toString()} gas`
       setNativeGasEstimate(gasLabel)
-    } catch {
+    } catch(e:any) {
       setNativeGasEstimate(gasLabel)
+      throw new Error(`Native ETH bridge simulation failed: ${e?.message || 'estimate gas failed'}`)
     }
     setStep('MetaMask: Confirm native bridge...')
     setStatus({ type:'info', msg:`⏳ MetaMask popup: ${amount} ${displayToken} → ~${estimatedReceive} USDC on Arc. Fee ${platformFeeUsdc} USDC. Gas ${gasLabel}.`, steps:[...localSteps] })
@@ -508,7 +507,6 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         throw new Error(`Saldo gas ${fromInfo?.label || fromChain} kosong. Isi ETH testnet di ${fromInfo?.label || fromChain} untuk membayar gas.`)
       }
     }
-    await assertNoEip7702Delegation(address)
     const feeMicro = (amtMicro * BigInt(Math.max(0, Math.floor(PLATFORM_FEE_BPS)))) / 10000n
     const burnMicro = routerAddr ? amtMicro : amtMicro - feeMicro
     if (burnMicro <= 0n) throw new Error('Amount terlalu kecil setelah platform fee.')
@@ -922,19 +920,6 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const sanitizeEvmTransaction = (tx: any) => {
     const allowed = ['from', 'to', 'data', 'value', 'gas', 'gasPrice', 'maxFeePerGas', 'maxPriorityFeePerGas', 'nonce', 'chainId']
     return Object.fromEntries(Object.entries(tx || {}).filter(([key]) => allowed.includes(key)))
-  }
-
-  const assertNoEip7702Delegation = async (walletAddress: string) => {
-    const code = String(await window.ethereum!.request({ method:'eth_getCode', params:[walletAddress, 'latest'] }) || '0x')
-    if (!code || code === '0x') return
-    const lower = code.toLowerCase()
-    if (!lower.startsWith(EIP7702_PREFIX)) return
-    const delegatedTo = `0x${lower.slice(EIP7702_PREFIX.length, EIP7702_PREFIX.length + 40)}`
-    throw new Error(
-      `Wallet ini masih memakai EIP-7702 delegation ke ${delegatedTo}. ` +
-      `ARCOX bridge tidak akan mengirim tx lewat delegated account. ` +
-      `Revoke/disable Smart Account delegation di MetaMask atau gunakan EOA baru tanpa delegation.`
-    )
   }
 
   // ── Solana burn helper ──
