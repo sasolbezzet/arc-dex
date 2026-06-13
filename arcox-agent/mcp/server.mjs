@@ -7,20 +7,27 @@ import { homedir } from 'node:os'
 import { actions, ARCOX_API_URL, ARCOX_WEB_URL, chainSupport, pages, retailRules } from './registry.mjs'
 import {
   agentStatus,
+  checkPaymentStatus,
   completeAgentJob,
   createAgentJob,
+  createPaymentRequest,
   executeConfirmedBridge,
   executeConfirmedSend,
   executeConfirmedSwap,
   fundAgentJob,
+  getPaymentRequest,
   makeAgentResponse,
+  payPaymentRequest,
   quoteBridge,
+  quoteEcoRoutePayment,
+  quotePaymentRequest,
   quoteSend,
   quoteSwap,
   readAgent,
   readJob,
   registerAgentIdentity,
   setAgentJobBudget,
+  simulateCircleWebhook,
   submitAgentJob,
   transactionHistory,
   walletBalances,
@@ -56,9 +63,75 @@ const resources = [
   { uri: 'arcox://rules/retail-safety', name: 'Retail Safety Rules', mimeType: 'application/json' },
   { uri: 'arcox://deployments/router', name: 'Arcox Router Deployments', mimeType: 'application/json' },
   { uri: 'arcox://deployments/native-swap-bridge-router', name: 'Arcox Native Swap Bridge Router Deployments', mimeType: 'application/json' },
+  { uri: 'arcox://docs/catalog', name: 'ARCOX Docs Catalog', mimeType: 'application/json' },
+]
+
+const docsCatalog = [
+  {
+    id: 'overview',
+    title: 'ARCOX Overview',
+    tags: ['dex', 'arc', 'wallet', 'retail'],
+    body: 'ARCOX DEX is a retail Arc Testnet app for swap, bridge, send, receive/payment request, ARCOX Pay invoices, transaction history, and agent workflows. Value-moving actions must quote before execution.',
+  },
+  {
+    id: 'pay',
+    title: 'ARCOX Pay',
+    tags: ['pay', 'invoice', 'payment request', 'usdc'],
+    body: 'ARCOX Pay creates public USDC invoice/payment links on Arc Testnet. It is not private payment and does not charge hidden merchant fees. Invoice payment requires preview and confirmation.',
+  },
+  {
+    id: 'circle-nanopayments',
+    title: 'Circle Gateway Nanopayments Readiness',
+    tags: ['circle', 'gateway', 'nanopayments', 'x402', 'eip-3009'],
+    body: 'Circle Gateway Nanopayments use x402: paid resource request, HTTP 402 response, buyer offchain EIP-3009 authorization, retry with proof, and batched Gateway settlement. ARCOX exposes readiness metadata only; gas-free nanopayments settlement is not live yet.',
+  },
+  {
+    id: 'circle-agents',
+    title: 'Circle for Agents Alignment',
+    tags: ['circle', 'agents', 'x402', 'paid api', 'usdc'],
+    body: 'Circle for Agents positions USDC as payment-as-authentication for agents and paid APIs. ARCOX aligns by exposing quote-before-execute MCP tools, ARCOX Pay invoice/payment request tools, and x402/nanopayments readiness metadata. Current ARCOX execution remains public Arc Testnet USDC and does not claim live gas-free nanopayments.',
+  },
+  {
+    id: 'mcp-safety',
+    title: 'MCP Safety Rules',
+    tags: ['mcp', 'agent', 'safety', 'confirmation'],
+    body: 'Agents must call quote tools first, show preview details to the user, receive a simple explicit confirmation, then execute with previewId and confirmationText. Bulk transactions require one quote and one confirmation per operation.',
+  },
+  {
+    id: 'bridge-retry',
+    title: 'Bridge Retry',
+    tags: ['bridge', 'retry', 'cctp', 'attestation'],
+    body: 'CCTP bridge has approve, burn, attestation, and mint/receive stages. If burn succeeded but mint is pending, check status and retry mint instead of repeating the burn.',
+  },
+  {
+    id: 'dynamic-style-docs',
+    title: 'Dynamic-style MCP Docs Discovery',
+    tags: ['dynamic', 'docs', 'search', 'mcp'],
+    body: 'Following the Dynamic MCP docs pattern, ARCOX exposes arcox_search_docs and arcox_read_doc so agents can discover product docs before choosing tools.',
+  },
 ]
 
 const tools = [
+  {
+    name: 'arcox_search_docs',
+    description: 'Search ARCOX product and MCP documentation. Use this before guessing an unfamiliar ARCOX flow.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_read_doc',
+    description: 'Read a structured ARCOX documentation page by id returned from arcox_search_docs.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
   {
     name: 'arcox_ui_map',
     description: 'Return the full ARCOX DEX page/action map so an agent can understand the Web UI.',
@@ -104,7 +177,7 @@ const tools = [
   },
   {
     name: 'arcox_quote_bridge',
-    description: 'Quote a USDC bridge route, platform fee, estimated receive, and balance before execution. If the user says "circle arc ke solana" or "Circle Wallet Arc to Solana", use source="circle", fromChain="Arc_Testnet", toChain="Solana_Devnet". Circle Wallet bridge source is only valid from Arc Testnet.',
+    description: 'Quote a bridge route before execution. Supports USDC CCTP routes and native ETH from Ethereum/Base Sepolia to Arc via native swap bridge router. Circle Wallet source is only valid for USDC from Arc Testnet.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,7 +193,7 @@ const tools = [
   },
   {
     name: 'arcox_execute_bridge',
-    description: 'Execute a confirmed USDC bridge with the local AGENT_PRIVATE_KEY signer. Requires previewId from arcox_quote_bridge when confirmed=true. If the user says "circle arc ke solana" or "Circle Wallet Arc to Solana", use source="circle", fromChain="Arc_Testnet", toChain="Solana_Devnet". Circle Wallet bridge source is only valid from Arc Testnet.',
+    description: 'Execute a confirmed bridge with the local AGENT_PRIVATE_KEY signer. Requires previewId from arcox_quote_bridge when confirmed=true. Supports USDC CCTP routes and native ETH from Ethereum/Base Sepolia to Arc via native swap bridge router. Native bridge must use source="eoa".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -130,6 +203,7 @@ const tools = [
         token: { type: 'string', default: 'USDC' },
         source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
         previewId: { type: 'string' },
+        confirmationText: { type: 'string' },
         confirmed: { type: 'boolean' },
       },
       required: ['fromChain', 'toChain', 'amount'],
@@ -162,6 +236,7 @@ const tools = [
         token: { type: 'string', default: 'USDC' },
         source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
         previewId: { type: 'string' },
+        confirmationText: { type: 'string' },
         confirmed: { type: 'boolean' },
       },
       required: ['to', 'amount'],
@@ -174,14 +249,112 @@ const tools = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'arcox_create_payment_request',
+    description: 'Create an ARCOX Pay USDC invoice/payment request on Arc Testnet.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        amount: { type: 'string' },
+        token: { type: 'string', default: 'USDC' },
+        merchantAddress: { type: 'string' },
+        orderId: { type: 'string' },
+        memo: { type: 'string' },
+        expiresInMinutes: { type: 'number', default: 15 },
+      },
+      required: ['amount', 'merchantAddress'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_get_payment_request',
+    description: 'Read a full ARCOX Pay invoice/payment request.',
+    inputSchema: {
+      type: 'object',
+      properties: { invoiceId: { type: 'string' } },
+      required: ['invoiceId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_quote_payment_request',
+    description: 'Quote an ARCOX Pay invoice before payment execution. This is required before arcox_pay_payment_request.',
+    inputSchema: {
+      type: 'object',
+      properties: { invoiceId: { type: 'string' } },
+      required: ['invoiceId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_payment_request',
+    description: 'Pay a quoted ARCOX Pay invoice with the local AGENT_PRIVATE_KEY signer. Requires previewId from arcox_quote_payment_request and explicit user confirmation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        invoiceId: { type: 'string' },
+        amount: { type: 'string' },
+        token: { type: 'string' },
+        merchantAddress: { type: 'string' },
+        previewId: { type: 'string' },
+        confirmationText: { type: 'string' },
+        confirmed: { type: 'boolean' },
+      },
+      required: ['invoiceId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_check_payment_status',
+    description: 'Check ARCOX Pay invoice status, tx hash, paidAt, and timeline.',
+    inputSchema: {
+      type: 'object',
+      properties: { invoiceId: { type: 'string' } },
+      required: ['invoiceId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_simulate_circle_webhook',
+    description: 'Dev-only ARCOX Pay Circle Gateway webhook simulator. Requires ENABLE_DEV_TOOLS=true on backend.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        invoiceId: { type: 'string' },
+        eventType: { type: 'string' },
+        txHash: { type: 'string' },
+      },
+      required: ['invoiceId', 'eventType'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_quote_eco_route_payment',
+    description: 'Preview a future Eco route for cross-chain stablecoin invoice payment. Returns mockMode=true when Eco credentials are missing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sourceChain: { type: 'string' },
+        destinationChain: { type: 'string', default: 'arc-testnet' },
+        sourceToken: { type: 'string', default: 'USDC' },
+        destinationToken: { type: 'string', default: 'USDC' },
+        amount: { type: 'string' },
+        recipient: { type: 'string' },
+        invoiceId: { type: 'string' },
+      },
+      required: ['sourceChain', 'amount', 'recipient'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'arcox_quote_swap',
-    description: 'Quote a Circle proxy wallet swap through the ARCOX backend.',
+    description: 'Quote an Arc swap. Default source is EOA agent wallet; set source="circle" only when the user explicitly asks to use the Circle proxy wallet.',
     inputSchema: {
       type: 'object',
       properties: {
         tokenIn: { type: 'string' },
         tokenOut: { type: 'string' },
         amountIn: { type: 'string' },
+        source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
       },
       required: ['tokenIn', 'tokenOut', 'amountIn'],
       additionalProperties: false,
@@ -189,15 +362,17 @@ const tools = [
   },
   {
     name: 'arcox_execute_swap',
-    description: 'Execute a confirmed Circle proxy wallet swap through the ARCOX backend. Requires previewId from arcox_quote_swap when confirmed=true.',
+    description: 'Execute a confirmed Arc swap. Default source is EOA agent wallet signed by local AGENT_PRIVATE_KEY. Set source="circle" only when explicitly quoted for Circle proxy wallet. Requires previewId from arcox_quote_swap when confirmed=true.',
     inputSchema: {
       type: 'object',
       properties: {
         tokenIn: { type: 'string' },
         tokenOut: { type: 'string' },
         amountIn: { type: 'string' },
+        source: { type: 'string', enum: ['eoa', 'circle'], default: 'eoa' },
         previewId: { type: 'string' },
         confirmed: { type: 'boolean' },
+        confirmationText: { type: 'string' },
       },
       required: ['tokenIn', 'tokenOut', 'amountIn'],
       additionalProperties: false,
@@ -229,20 +404,23 @@ const tools = [
 ]
 
 function routerDeployments() {
-  return readDeploymentFile('arcox-router.testnet.json', 'router_deployments_read_failed')
-}
-
-function nativeSwapBridgeRouterDeployments() {
-  return readDeploymentFile('arcox-native-swap-bridge-router.testnet.json', 'native_router_deployments_read_failed')
-}
-
-function readDeploymentFile(fileName, debugEvent) {
-  const path = join(agentRoot, 'deployments', fileName)
+  const path = join(agentRoot, 'deployments', 'arcox-router.testnet.json')
   if (!existsSync(path)) return {}
   try {
     return JSON.parse(readFileSync(path, 'utf8'))
   } catch (error) {
-    debug(debugEvent, { message: error.message })
+    debug('router_deployments_read_failed', { message: error.message })
+    return {}
+  }
+}
+
+function nativeSwapBridgeRouterDeployments() {
+  const path = join(agentRoot, 'deployments', 'arcox-native-swap-bridge-router.testnet.json')
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    debug('native_router_deployments_read_failed', { message: error.message })
     return {}
   }
 }
@@ -254,7 +432,38 @@ function readResource(uri) {
   if (uri === 'arcox://rules/retail-safety') return retailRules
   if (uri === 'arcox://deployments/router') return routerDeployments()
   if (uri === 'arcox://deployments/native-swap-bridge-router') return nativeSwapBridgeRouterDeployments()
+  if (uri === 'arcox://docs/catalog') return docsCatalog
   throw new Error(`Unknown resource: ${uri}`)
+}
+
+function searchDocs(args) {
+  const query = String(args.query || '').trim().toLowerCase()
+  const words = query.split(/\W+/).filter(Boolean)
+  const results = docsCatalog
+    .map((doc) => {
+      const haystack = [doc.id, doc.title, ...(doc.tags || []), doc.body].join(' ').toLowerCase()
+      const score = words.reduce((sum, word) => sum + (haystack.includes(word) ? 1 : 0), 0)
+      return { id: doc.id, title: doc.title, tags: doc.tags, score, snippet: doc.body.slice(0, 220) }
+    })
+    .filter((item) => item.score > 0 || !query)
+    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
+  return {
+    query,
+    results,
+    safeNextStep: results.length
+      ? 'Call arcox_read_doc with the selected id before acting on unfamiliar flows.'
+      : 'No doc match found. Ask the user to clarify the desired ARCOX flow.',
+  }
+}
+
+function readDoc(args) {
+  const id = String(args.id || '').trim().toLowerCase()
+  const doc = docsCatalog.find((item) => item.id === id)
+  if (!doc) throw new Error(`Unknown ARCOX doc id: ${args.id}`)
+  return {
+    ...doc,
+    relatedResources: ['arcox://ui/pages', 'arcox://ui/actions', 'arcox://rules/retail-safety'],
+  }
 }
 
 function findAction(intent, pageHint) {
@@ -353,7 +562,7 @@ async function agentJob(args) {
   throw new Error(`Unsupported agent job operation: ${args.operation}`)
 }
 
-const valueMovingTools = new Set(['arcox_execute_bridge', 'arcox_execute_send', 'arcox_execute_swap'])
+const valueMovingTools = new Set(['arcox_execute_bridge', 'arcox_execute_send', 'arcox_execute_swap', 'arcox_pay_payment_request'])
 const valueMovingJobOps = new Set(['register-agent', 'create-job', 'set-budget', 'fund', 'submit', 'complete'])
 const rateLimitBuckets = new Map()
 const RATE_LIMIT_WINDOW_MS = 60_000
@@ -363,6 +572,7 @@ const dailySpendBuckets = new Map()
 const PREVIEW_TTL_MS = Number(process.env.ARCOX_PREVIEW_TTL_MS || 10 * 60 * 1000)
 const MAX_TX_USDC = Number(process.env.ARCOX_MAX_TX_USDC || '10')
 const DAILY_LIMIT_USDC = Number(process.env.ARCOX_DAILY_LIMIT_USDC || '50')
+const MAX_TX_NATIVE = Number(process.env.ARCOX_MAX_TX_NATIVE || '0.1')
 let activeValueMovingExecution = null
 
 function isValueMovingCall(name, args) {
@@ -392,8 +602,14 @@ function stableJson(value) {
 function spendAmountFor(name, args) {
   if (name.includes('swap')) return Number(args.amountIn || args.amount || 0)
   if (name.includes('send') || name.includes('bridge')) return Number(args.amount || 0)
+  if (name === 'arcox_pay_payment_request') return Number(args.amount || 0)
   if (name === 'arcox_agent_job') return Number(args.amount || 0)
   return 0
+}
+
+function isNativeBridgeToken(value) {
+  const token = canonicalToken(value)
+  return token === 'ETH' || token === 'HYPE' || token === 'SOL' || token === 'ETH_NATIVE' || token === 'HYPE_NATIVE' || token === 'SOL_NATIVE'
 }
 
 function canonicalAmount(value) {
@@ -423,6 +639,7 @@ function canonicalSource(value, fallback = 'eoa') {
 }
 
 function canonicalPreviewAction(name) {
+  if (name === 'arcox_quote_payment_request') return 'arcox_pay_payment_request'
   return name.replace('quote', 'execute')
 }
 
@@ -453,6 +670,16 @@ function canonicalPreviewArgs(name, args) {
       tokenIn: canonicalToken(args.tokenIn),
       tokenOut: canonicalToken(args.tokenOut, ''),
       amountIn: canonicalAmount(args.amountIn || args.amount),
+      source: canonicalSource(args.source),
+    }
+  }
+  if (action === 'arcox_pay_payment_request') {
+    return {
+      action,
+      invoiceId: String(args.invoiceId || ''),
+      amount: canonicalAmount(args.amount),
+      token: canonicalToken(args.token),
+      merchantAddress: String(args.merchantAddress || '').toLowerCase(),
     }
   }
   return { action, ...args }
@@ -462,22 +689,35 @@ function previewHash(name, args) {
   return createHash('sha256').update(stableJson(canonicalPreviewArgs(name, args))).digest('hex')
 }
 
+function isSimpleUserConfirmation(value) {
+  const text = String(value || '').trim().toLowerCase()
+  return ['yes', 'ya', 'y', 'confirm', 'konfirmasi', 'lanjut', 'ok', 'oke'].includes(text)
+}
+
 function attachPreview(name, args, quote) {
   const canonical = canonicalPreviewArgs(name, args)
   const hash = createHash('sha256').update(stableJson(canonical)).digest('hex')
   const previewId = `arcox-preview-${hash.slice(0, 16)}`
-  previewApprovals.set(previewId, { hash, canonical, action: canonicalPreviewAction(name), createdAt: Date.now(), expiresAt: Date.now() + PREVIEW_TTL_MS })
+  const action = canonicalPreviewAction(name)
+  previewApprovals.set(previewId, { hash, canonical, action, createdAt: Date.now(), expiresAt: Date.now() + PREVIEW_TTL_MS })
   return {
     ...quote,
     previewId,
     previewExpiresAt: new Date(Date.now() + PREVIEW_TTL_MS).toISOString(),
+    previewArgs: canonical,
     dryRunRequired: true,
     safetyLimits: {
       maxTxUsdc: MAX_TX_USDC,
       dailyLimitUsdc: DAILY_LIMIT_USDC,
+      maxTxNative: MAX_TX_NATIVE,
     },
     riskChecks: quoteRiskChecks(name, quote),
-    executeInstruction: `After explicit user confirmation for this single operation only, call ${canonicalPreviewAction(name)} with confirmed=true and this exact previewId. For bulk requests, execute one chain at a time and ask for confirmation before each chain.`,
+    confirmationRequired: {
+      required: true,
+      acceptedReplies: ['yes', 'ya', 'confirm', 'konfirmasi', 'lanjut', 'ok'],
+      instruction: 'Show this preview to the user first. Execute only after the user explicitly confirms this preview with a simple approval reply.',
+    },
+    executeInstruction: `After explicit user confirmation for this single operation only, call ${action} with confirmed=true, this exact previewId, and confirmationText set to the user approval reply. For bulk requests, execute one chain at a time and ask for confirmation before each chain.`,
   }
 }
 
@@ -491,7 +731,11 @@ function quoteRiskChecks(name, quote) {
   if (quote?.router) checks.push({ level: 'info', item: 'router', value: quote.router })
   if (quote?.terminalExecution) checks.push({ level: 'info', item: 'execution', value: quote.terminalExecution })
   const amount = spendAmountFor(canonicalPreviewAction(name), { amount: quote?.amount, amountIn: quote?.amountIn })
-  if (MAX_TX_USDC > 0 && amount > MAX_TX_USDC) checks.push({ level: 'error', item: 'maxTx', message: `Amount exceeds ARCOX_MAX_TX_USDC=${MAX_TX_USDC}.` })
+  if (quote?.route === 'native-swap-bridge-router' && MAX_TX_NATIVE > 0 && amount > MAX_TX_NATIVE) {
+    checks.push({ level: 'error', item: 'maxNativeTx', message: `Native amount exceeds ARCOX_MAX_TX_NATIVE=${MAX_TX_NATIVE}.` })
+  } else if (MAX_TX_USDC > 0 && amount > MAX_TX_USDC) {
+    checks.push({ level: 'error', item: 'maxTx', message: `Amount exceeds ARCOX_MAX_TX_USDC=${MAX_TX_USDC}.` })
+  }
   return checks
 }
 
@@ -508,6 +752,9 @@ function enforcePreview(name, args) {
   const expected = createHash('sha256').update(stableJson(canonical)).digest('hex')
   if (expected !== preview.hash) {
     throw new Error(`Execution parameters differ from quote preview. Re-quote before executing. expected=${stableJson(preview.canonical)} received=${stableJson(canonical)}`)
+  }
+  if (!isSimpleUserConfirmation(args.confirmationText)) {
+    throw new Error('Explicit user confirmation required after preview. Ask the user to reply yes/ya/confirm/lanjut, then pass that reply as confirmationText.')
   }
   previewApprovals.delete(previewId)
 }
@@ -528,6 +775,10 @@ function enforceSpendLimits(name, args) {
   if (!isValueMovingCall(name, args)) return
   const amount = spendAmountFor(name, args)
   if (!Number.isFinite(amount) || amount <= 0) return
+  if (name === 'arcox_execute_bridge' && isNativeBridgeToken(args.token)) {
+    if (MAX_TX_NATIVE > 0 && amount > MAX_TX_NATIVE) throw new Error(`Native bridge exceeds ARCOX_MAX_TX_NATIVE=${MAX_TX_NATIVE}. Reduce amount or raise local env limit.`)
+    return
+  }
   if (MAX_TX_USDC > 0 && amount > MAX_TX_USDC) throw new Error(`Transaction exceeds ARCOX_MAX_TX_USDC=${MAX_TX_USDC}. Reduce amount or raise local env limit.`)
   const day = new Date().toISOString().slice(0, 10)
   const key = `local-mcp-client:${day}`
@@ -548,7 +799,7 @@ async function rpcResponse(message) {
           tools: { listChanged: false },
           resources: { subscribe: false, listChanged: false },
         },
-        serverInfo: { name: 'arcox-mcp', version: '0.1.0' },
+        serverInfo: { name: 'arcox-mcp', version: '0.1.5' },
       },
     }
   }
@@ -558,6 +809,8 @@ async function rpcResponse(message) {
     const name = params.name
     const args = params.arguments || {}
     if (isValueMovingCall(name, args)) enforceRateLimit('local-mcp-client')
+    if (name === 'arcox_search_docs') return result(id, searchDocs(args))
+    if (name === 'arcox_read_doc') return result(id, readDoc(args))
     if (name === 'arcox_ui_map') return result(id, { webUrl: ARCOX_WEB_URL, apiUrl: ARCOX_API_URL, pages, actions, chainSupport, retailRules })
     if (name === 'arcox_action_plan') return result(id, actionPlan(args))
     if (name === 'arcox_route_status') return result(id, routeStatus(args))
@@ -576,6 +829,7 @@ async function rpcResponse(message) {
       enforceSpendLimits(name, args)
       return result(id, await runValueMovingTool(name, args, () => executeConfirmedBridge({
           ...args,
+          mcpPreviewVerified: true,
           fromChain: fromChain || args.fromChain,
           toChain: toChain || args.toChain,
           deferMint: args.deferMint ?? !fastSource,
@@ -587,16 +841,44 @@ async function rpcResponse(message) {
     if (name === 'arcox_execute_send') {
       enforcePreview(name, args)
       enforceSpendLimits(name, args)
-      return result(id, await runValueMovingTool(name, args, () => executeConfirmedSend(args)))
+      return result(id, await runValueMovingTool(name, args, () => executeConfirmedSend({ ...args, mcpPreviewVerified: true })))
     }
     if (name === 'arcox_quote_swap') return result(id, attachPreview(name, args, await quoteSwap(args)))
     if (name === 'arcox_execute_swap' && args.confirmed !== true) return result(id, attachPreview('arcox_quote_swap', args, await quoteSwap(args)))
     if (name === 'arcox_execute_swap') {
       enforcePreview(name, args)
       enforceSpendLimits(name, args)
-      return result(id, await runValueMovingTool(name, args, () => executeConfirmedSwap(args)))
+      return result(id, await runValueMovingTool(name, args, () => executeConfirmedSwap({ ...args, mcpPreviewVerified: true })))
     }
-    if (name === 'arcox_transaction_history') return result(id, transactionHistory())
+    if (name === 'arcox_transaction_history') return result(id, await transactionHistory())
+    if (name === 'arcox_create_payment_request') return result(id, await createPaymentRequest(args))
+    if (name === 'arcox_get_payment_request') return result(id, await getPaymentRequest(args))
+    if (name === 'arcox_quote_payment_request') {
+      const quote = await quotePaymentRequest(args)
+      return result(id, attachPreview(name, {
+        invoiceId: quote.invoiceId,
+        amount: quote.amount,
+        token: quote.token,
+        merchantAddress: quote.merchantAddress,
+      }, quote))
+    }
+    if (name === 'arcox_pay_payment_request' && args.confirmed !== true) {
+      const quote = await quotePaymentRequest(args)
+      return result(id, attachPreview('arcox_quote_payment_request', {
+        invoiceId: quote.invoiceId,
+        amount: quote.amount,
+        token: quote.token,
+        merchantAddress: quote.merchantAddress,
+      }, quote))
+    }
+    if (name === 'arcox_pay_payment_request') {
+      enforcePreview(name, args)
+      enforceSpendLimits(name, args)
+      return result(id, await runValueMovingTool(name, args, () => payPaymentRequest({ ...args, mcpPreviewVerified: true })))
+    }
+    if (name === 'arcox_check_payment_status') return result(id, await checkPaymentStatus(args))
+    if (name === 'arcox_simulate_circle_webhook') return result(id, await simulateCircleWebhook(args))
+    if (name === 'arcox_quote_eco_route_payment') return result(id, await quoteEcoRoutePayment(args))
     if (name === 'arcox_agent_job') {
       if (isValueMovingCall(name, args)) enforceSpendLimits(name, args)
       return result(id, await agentJob(args))

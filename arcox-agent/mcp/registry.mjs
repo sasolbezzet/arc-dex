@@ -11,18 +11,18 @@ export const pages = [
     actions: ['quote_swap', 'execute_circle_swap', 'execute_eoa_swap'],
     signing: {
       circle: 'Circle proxy wallet signs through backend wallet infrastructure.',
-      eoa: 'User wallet signs approve/swap directly in wallet popup.',
+      eoa: 'Terminal MCP uses local AGENT_PRIVATE_KEY to sign approve and Circle AppKit adapter execute transactions. Web UI uses user wallet popup.',
     },
     knownCautions: [
       'Circle swap charges platform fee first, then swaps net input.',
-      'EOA swap must never use backend private key.',
+      'EOA MCP swap must never fallback to Circle proxy wallet unless source="circle" is explicitly quoted and confirmed.',
       'If quote is missing, do not execute swap.',
     ],
   },
   {
     id: 'bridge',
     title: 'Bridge',
-    purpose: 'Bridge USDC/cirBTC across supported testnet chains using CCTP where available.',
+    purpose: 'Bridge USDC/cirBTC across supported testnet chains using CCTP where available, plus native ETH to Arc on verified Ethereum/Base Sepolia native routers.',
     userInputs: ['source wallet', 'fromChain', 'toChain', 'token', 'amount'],
     reads: ['estimated receive', 'custom fee', 'CCTP fee', 'forwarding fee', 'router fee', 'steps', 'retry status'],
     actions: ['prepare_circle_to_eoa', 'approve_bridge', 'burn_bridge', 'poll_attestation', 'mint_receive', 'retry_bridge'],
@@ -35,6 +35,7 @@ export const pages = [
       'Pending bridge is normal after burn; user must wait for attestation and mint.',
       'Retry bridge should use burn tx, source chain, and destination chain.',
       'Router fee only applies on deployed EVM router source chains.',
+      'Native bridge must use EOA source. Circle Wallet source supports USDC only.',
     ],
   },
   {
@@ -85,7 +86,7 @@ export const actions = [
     intentExamples: ['estimate swap 10 USDC to EURC', 'berapa dapat EURC dari 5 USDC'],
     requiredSlots: ['source', 'tokenIn', 'tokenOut', 'amountIn'],
     safeExecution: 'read_only',
-    backend: 'POST /api/quote for Circle, AppKit client quote for EOA',
+    backend: 'POST /api/eoa-swap-quote for EOA, POST /api/quote for Circle',
   },
   {
     id: 'execute_circle_swap',
@@ -101,7 +102,7 @@ export const actions = [
     intentExamples: ['swap dari metamask 1 USDC ke EURC'],
     requiredSlots: ['tokenIn', 'tokenOut', 'amountIn', 'confirmedQuote'],
     safeExecution: 'requires_wallet_signature',
-    backend: 'AppKit wallet-signed EOA swap',
+    backend: 'POST /api/eoa-swap-prepare then local AGENT_PRIVATE_KEY signs adapter approve/execute',
   },
   {
     id: 'bridge_usdc',
@@ -133,14 +134,14 @@ export const chainSupport = {
   Arc_Testnet: { bridge: true, router: '0xDf800310443BEB589CEf91A09854203Ea36e43a7', circleWallet: true, aliases: ['arc', 'arc testnet', 'arc_testnet'] },
   Ethereum_Sepolia: { bridge: true, router: '0x53aB114FeE64b177B8D6066056DfD03Ea38D0ef1', nativeSwapBridgeRouter: '0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59', circleWallet: false, aliases: ['ethereum', 'ethereum sepolia', 'eth sepolia', 'sepolia'] },
   Base_Sepolia: { bridge: true, router: '0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc', nativeSwapBridgeRouter: '0x3c5beFa0c208F0732D2c357f26EB897E727da498', circleWallet: false, aliases: ['base', 'base sepolia'] },
-  Arbitrum_Sepolia: { bridge: true, router: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7', nativeSwapBridgeRouter: null, circleWallet: false, aliases: ['arbitrum', 'arbitrum sepolia', 'arb sepolia'], note: 'USDC bridge router is deployed. Native ETH swap-and-bridge router is pending because no Arbitrum Sepolia Universal Router address is configured.' },
+  Arbitrum_Sepolia: { bridge: true, router: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7', nativeSwapBridgeRouter: null, circleWallet: false, aliases: ['arbitrum', 'arbitrum sepolia', 'arb sepolia'], note: 'USDC router is deployed. Native ETH swap-and-bridge is pending until a verified router/liquid WETH-USDC route is configured.' },
   HyperEVM_Testnet: { bridge: true, router: null, circleWallet: false, aliases: ['hyperevm', 'hyper evm', 'hypevm', 'hype', 'hyperevm testnet'] },
   Solana_Devnet: {
     bridge: true,
     router: 'C7XUB3Ep67seiJAzz4Apeeus2AbxbnuqFzvodDWxqoTH',
     circleWallet: false,
     aliases: ['solana', 'solana devnet', 'solana_devnet', 'sol'],
-    note: 'User must use Solana Devnet wallet. Router program is deployed on Solana Devnet for USDC fee-transfer flows; SOL-native swap-and-bridge needs a separate Solana route adapter.',
+    note: 'User must use Solana Devnet wallet. Router program is deployed on Solana Devnet.',
   },
 }
 

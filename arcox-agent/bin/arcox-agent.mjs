@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { createHash } from 'crypto'
-import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { createServer } from 'http'
 import { spawn } from 'child_process'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { homedir } from 'os'
 import {
   createPublicClient,
   createWalletClient,
   decodeEventLog,
+  decodeFunctionResult,
   defineChain,
   erc20Abi,
   formatUnits,
@@ -17,6 +19,7 @@ import {
   keccak256,
   parseUnits,
   toHex,
+  encodeFunctionData,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import bs58 from 'bs58'
@@ -40,6 +43,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AGENT_HOME = dirname(__dirname)
+const loadedEnvFiles = []
 
 loadLocalEnv()
 
@@ -71,15 +75,70 @@ const SEND_ESTIMATE_TIMEOUT_MS = Number(process.env.SEND_ESTIMATE_TIMEOUT_MS || 
 const RPC_TIMEOUT_MS = Number(process.env.RPC_TIMEOUT_MS || '8000')
 const SOLANA_CONFIRM_TIMEOUT_MS = Number(process.env.SOLANA_CONFIRM_TIMEOUT_MS || '45000')
 const PLATFORM_FEE_BPS = Number(process.env.ARCOX_ROUTER_FEE_BPS || '30')
+const ARC_APPKIT_ADAPTER = '0xBBD70b01a1CAbc96d5b7b129Ae1AAabdf50dd40b'
 const SOLANA_FEE_TREASURY = process.env.SOLANA_FEE_TREASURY || '4kAf2Qxf9KnbnKo7ukPMMu8q1UButJYNik4yQtvWhExw'
 const AUTO_MINT_DIR = join(AGENT_HOME, '.arcox-auto-mint')
 const TX_HISTORY_FILE = join(AGENT_HOME, '.arcox-agent-history.json')
+const AUTO_MINT_STALE_MS = Number(process.env.AUTO_MINT_STALE_MS || 5 * 60 * 1000)
+const AUTO_MINT_MAX_RECOVERIES = Number(process.env.AUTO_MINT_MAX_RECOVERIES || 3)
 const ARC_TOKENS = {
   USDC: { address: ARC_USDC, decimals: 6 },
   EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
   USYC: { address: '0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C', decimals: 6 },
   CIRBTC: { address: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', decimals: 8 },
 }
+
+const adapterExecuteAbi = [
+  {
+    type: 'function',
+    name: 'execute',
+    stateMutability: 'payable',
+    inputs: [
+      {
+        name: 'params',
+        type: 'tuple',
+        components: [
+          {
+            name: 'instructions',
+            type: 'tuple[]',
+            components: [
+              { name: 'target', type: 'address' },
+              { name: 'data', type: 'bytes' },
+              { name: 'value', type: 'uint256' },
+              { name: 'tokenIn', type: 'address' },
+              { name: 'amountToApprove', type: 'uint256' },
+              { name: 'tokenOut', type: 'address' },
+              { name: 'minTokenOut', type: 'uint256' },
+            ],
+          },
+          {
+            name: 'tokens',
+            type: 'tuple[]',
+            components: [
+              { name: 'token', type: 'address' },
+              { name: 'beneficiary', type: 'address' },
+            ],
+          },
+          { name: 'execId', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'metadata', type: 'bytes' },
+        ],
+      },
+      {
+        name: 'tokenInputs',
+        type: 'tuple[]',
+        components: [
+          { name: 'permitType', type: 'uint8' },
+          { name: 'token', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'permitCalldata', type: 'bytes' },
+        ],
+      },
+      { name: 'signature', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+]
 
 const arcTestnet = defineChain({
   id: 5042002,
@@ -95,6 +154,7 @@ function rpcTransport(rpcUrl) {
 
 const publicClient = createPublicClient({ chain: arcTestnet, transport: rpcTransport(ARC_RPC) })
 const routerDeployments = loadRouterDeployments()
+const nativeSwapBridgeDeployments = loadNativeSwapBridgeDeployments()
 
 function readAgentHistory() {
   try {
@@ -130,6 +190,52 @@ function normalizeArcTokenKey(value, fallback = 'USDC') {
 function apiArcTokenKey(value, fallback = 'USDC') {
   const tokenKey = normalizeArcTokenKey(value, fallback)
   return tokenKey === 'CIRBTC' ? 'cirBTC' : tokenKey
+}
+
+function swapRouteUnavailableQuote(error) {
+  const message = error?.message || String(error || '')
+  if (!/NO_SWAP_ROUTE|Route swap belum tersedia|No route available|Route or resource not found|Swap route not found|route is not supported/i.test(message)) return null
+  return {
+    available: false,
+    code: 'NO_SWAP_ROUTE',
+    error: 'Route swap belum tersedia dari Circle Stablecoin Service untuk pasangan/jumlah ini. Coba jumlah lebih besar, atau ulangi beberapa menit lagi.',
+    details: message,
+  }
+}
+
+function shortAddress(value = '') {
+  const raw = String(value || '')
+  if (raw.length <= 12) return raw
+  return `${raw.slice(0, 6)}...${raw.slice(-4)}`
+}
+
+function sendPreviewDetails({ source, owner, from, to, token, amount, balance, platformFee, recipientReceives, networkFee, estimate, supported }) {
+  const warnings = []
+  if (!supported) warnings.push(`Saldo ${source} tidak cukup untuk mengirim ${amount} ${token}.`)
+  if (estimate?.error) warnings.push(`Estimasi fee gagal: ${estimate.error}`)
+  return {
+    title: `Send ${amount} ${token}`,
+    summary: `${source === 'circle' ? 'Circle Wallet proxy' : 'EOA agent wallet'} will send ${recipientReceives} ${token} to ${shortAddress(to)} after platform fee ${platformFee} ${token}.`,
+    sourceWallet: source,
+    owner,
+    fromAddress: typeof from === 'string' ? from : from?.address,
+    fromWalletId: typeof from === 'object' ? from?.id : undefined,
+    toAddress: to,
+    token,
+    grossAmount: amount,
+    platformFee,
+    recipientReceives,
+    balanceBefore: balance,
+    estimatedNetworkFee: networkFee,
+    supported: Boolean(supported),
+    warnings,
+    userMustCheck: [
+      'Recipient address is correct.',
+      'Token and amount are correct.',
+      'Platform fee and receive amount are acceptable.',
+      'This action moves funds and cannot be reversed after execution.',
+    ],
+  }
 }
 
 function splitPlatformFeeUnits(amountUnits) {
@@ -171,6 +277,27 @@ async function pushBackendHistory(owner, record) {
     await postJson('/api/tx-history', { metamaskAddress: owner, record: { ...record, owner, source: 'agent-mcp' } }, token)
   } catch (error) {
     console.error('[history] backend sync skipped:', error.message)
+  }
+}
+
+async function pullBackendHistory(owner) {
+  try {
+    if (!owner) return []
+    const account = privateKeyToAccount(privateKey())
+    const token = await backendSession(account)
+    const response = await fetch(`${ARCOX_BACKEND_URL}/api/tx-history`, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(BACKEND_FETCH_TIMEOUT_MS),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+    return Array.isArray(data.history) ? data.history : []
+  } catch (error) {
+    console.error('[history] backend pull skipped:', error.message)
+    return []
   }
 }
 
@@ -302,6 +429,29 @@ const arcoxRouterAbi = [
   },
 ]
 
+const nativeSwapBridgeRouterAbi = [
+  {
+    type: 'function',
+    name: 'swapNativeAndBridgeUsdc',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'destinationDomain', type: 'uint32' },
+      { name: 'mintRecipient', type: 'bytes32' },
+      { name: 'destinationCaller', type: 'bytes32' },
+      { name: 'poolFee', type: 'uint24' },
+      { name: 'amountOutMinimum', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'maxFee', type: 'uint256' },
+      { name: 'minFinalityThreshold', type: 'uint32' },
+    ],
+    outputs: [
+      { name: 'usdcOut', type: 'uint256' },
+      { name: 'platformFee', type: 'uint256' },
+      { name: 'netUsdc', type: 'uint256' },
+    ],
+  },
+]
+
 const agenticCommerceAbi = [
   {
     type: 'function',
@@ -401,18 +551,37 @@ Safety:
 }
 
 function loadLocalEnv() {
-  const agentEnv = join(AGENT_HOME, '.env')
-  const fallbackEnv = join(process.cwd(), '.env')
-  const envPath = existsSync(agentEnv) ? agentEnv : fallbackEnv
-  if (!existsSync(envPath)) return
-  const lines = readFileSync(envPath, 'utf8').split(/\r?\n/)
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue
-    const [key, ...rest] = trimmed.split('=')
-    if (process.env[key]) continue
-    process.env[key] = rest.join('=').replace(/^['"]|['"]$/g, '')
+  const envPaths = [
+    process.env.ARCOX_AGENT_ENV,
+    join(process.cwd(), '.env'),
+    join(homedir(), '.arcox', '.env'),
+    join(AGENT_HOME, '.env'),
+  ].filter(Boolean)
+  for (const envPath of envPaths) {
+    if (!existsSync(envPath)) continue
+    loadedEnvFiles.push(envPath)
+    const lines = readFileSync(envPath, 'utf8').split(/\r?\n/)
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue
+      const [key, ...rest] = trimmed.split('=')
+      if (process.env[key]) continue
+      process.env[key] = rest.join('=').replace(/^['"]|['"]$/g, '')
+    }
   }
+}
+
+function envSecurityWarnings() {
+  const warnings = []
+  for (const envPath of loadedEnvFiles) {
+    try {
+      const mode = statSync(envPath).mode & 0o777
+      if ((mode & 0o077) !== 0) {
+        warnings.push(`${envPath} permissions are ${mode.toString(8)}. Run: chmod 600 ${envPath}`)
+      }
+    } catch {}
+  }
+  return warnings
 }
 
 function loadRouterDeployments() {
@@ -425,14 +594,36 @@ function loadRouterDeployments() {
   }
 }
 
+function loadNativeSwapBridgeDeployments() {
+  const path = join(AGENT_HOME, 'deployments', 'arcox-native-swap-bridge-router.testnet.json')
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')).deployments || {}
+  } catch {
+    return {}
+  }
+}
+
 function envRouterName(chainId) {
   return `ARCOX_ROUTER_${String(chainId).toUpperCase()}`
+}
+
+function envNativeSwapBridgeRouterName(chainId) {
+  return `ARCOX_NATIVE_SWAP_BRIDGE_ROUTER_${String(chainId).toUpperCase()}`
 }
 
 export function routerFor(chainId) {
   const envValue = process.env[envRouterName(chainId)]
   if (envValue && /^0x[0-9a-fA-F]{40}$/.test(envValue)) return getAddress(envValue)
   const deployed = routerDeployments[chainId]?.address
+  if (deployed && /^0x[0-9a-fA-F]{40}$/.test(deployed)) return getAddress(deployed)
+  return ''
+}
+
+export function nativeSwapBridgeRouterFor(chainId) {
+  const envValue = process.env[envNativeSwapBridgeRouterName(chainId)]
+  if (envValue && /^0x[0-9a-fA-F]{40}$/.test(envValue)) return getAddress(envValue)
+  const deployed = nativeSwapBridgeDeployments[chainId]?.address
   if (deployed && /^0x[0-9a-fA-F]{40}$/.test(deployed)) return getAddress(deployed)
   return ''
 }
@@ -453,11 +644,31 @@ function command() {
 
 function writeAutoMintStatus(jobId, data) {
   mkdirSync(AUTO_MINT_DIR, { recursive: true })
-  writeFileSync(join(AUTO_MINT_DIR, `${jobId}.json`), JSON.stringify({ updatedAt: new Date().toISOString(), ...data }, null, 2))
+  const saved = { ...data, updatedAt: new Date().toISOString() }
+  writeFileSync(join(AUTO_MINT_DIR, `${jobId}.json`), JSON.stringify(saved, null, 2))
+  return saved
 }
 
 function autoMintJobId(burnTx) {
   return String(burnTx || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 72)
+}
+
+function spawnAutoMintWorker({ burnTx, from, to, owner }) {
+  const child = spawn(process.execPath, [
+    fileURLToPath(import.meta.url),
+    'auto-mint-bridge',
+    '--burn-tx', burnTx,
+    '--from-chain', from,
+    '--to-chain', to,
+    '--owner', owner,
+  ], {
+    cwd: AGENT_HOME,
+    env: process.env,
+    detached: true,
+    stdio: 'ignore',
+  })
+  child.unref()
+  return child.pid
 }
 
 function scheduleAutoMint({ burnTx, fromInfo, toInfo, owner }) {
@@ -471,22 +682,10 @@ function scheduleAutoMint({ burnTx, fromInfo, toInfo, owner }) {
     from: fromInfo.id,
     to: toInfo.id,
   })
-  const child = spawn(process.execPath, [
-    fileURLToPath(import.meta.url),
-    'auto-mint-bridge',
-    '--burn-tx', burnTx,
-    '--from-chain', fromInfo.id,
-    '--to-chain', toInfo.id,
-    '--owner', owner,
-  ], {
-    cwd: AGENT_HOME,
-    env: process.env,
-    detached: true,
-    stdio: 'ignore',
-  })
-  child.unref()
+  const pid = spawnAutoMintWorker({ burnTx, from: fromInfo.id, to: toInfo.id, owner })
   return {
     jobId,
+    pid,
     statusFile: join(AUTO_MINT_DIR, `${jobId}.json`),
   }
 }
@@ -603,7 +802,7 @@ function extractFirstAddress(text) {
 }
 
 function extractAmountToken(text) {
-  const match = String(text || '').match(/(\d+(?:\.\d+)?)\s*(USDC|EURC|USYC|cirBTC)/i)
+  const match = String(text || '').match(/(\d+(?:\.\d+)?)\s*(USDC|EURC|USYC|cirBTC|ETH|HYPE|SOL)/i)
   if (!match) return { amount: '', token: 'USDC' }
   return { amount: match[1], token: match[2].toUpperCase() === 'CIRBTC' ? 'CIRBTC' : match[2].toUpperCase() }
 }
@@ -663,6 +862,34 @@ async function postJson(path, body, token = '', timeoutMs = BACKEND_FETCH_TIMEOU
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+async function patchJson(path, body, token = '', timeoutMs = BACKEND_FETCH_TIMEOUT_MS) {
+  const response = await fetch(`${ARCOX_BACKEND_URL}${path}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+async function backendGet(path, token = '', timeoutMs = BACKEND_FETCH_TIMEOUT_MS) {
+  const response = await fetch(`${ARCOX_BACKEND_URL}${path}`, {
+    headers: {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     signal: AbortSignal.timeout(timeoutMs),
   })
   const data = await response.json().catch(() => ({}))
@@ -751,6 +978,21 @@ async function writeContractBuffered({ chainInfo, address, abi, functionName, ar
     await sleep(1200)
     const retryFees = await bufferedFees(sourceClient, 4n)
     return walletClient.writeContract({ address, abi, functionName, args, ...retryFees })
+  }
+}
+
+async function sendTransactionBuffered({ chainInfo, to, data, value = 0n }) {
+  const sourceClient = clientFor(chainInfo)
+  const { walletClient, account } = walletFor(chainInfo)
+  const fees = await bufferedFees(sourceClient, 3n)
+  try {
+    return await walletClient.sendTransaction({ account, to, data, value, ...fees })
+  } catch (error) {
+    const msg = error?.message || ''
+    if (!/max fee per gas less than block base fee|underpriced|fee/i.test(msg)) throw error
+    await sleep(1200)
+    const retryFees = await bufferedFees(sourceClient, 4n)
+    return walletClient.sendTransaction({ account, to, data, value, ...retryFees })
   }
 }
 
@@ -988,13 +1230,209 @@ async function solanaUsdcBalance(owner = solanaKeypair().publicKey) {
   return { ata: ata.toBase58(), amount: bal?.value?.uiAmountString || '0' }
 }
 
+function normalizeBridgeTokenKey(value, fallback = 'USDC') {
+  const upper = String(value || fallback).trim().toUpperCase()
+  if (upper === 'ETH_NATIVE') return 'ETH'
+  if (upper === 'HYPE_NATIVE') return 'HYPE'
+  if (upper === 'SOL_NATIVE') return 'SOL'
+  return normalizeArcTokenKey(upper || fallback)
+}
+
+function nativeTokenForChain(chainInfo) {
+  return String(chainInfo?.chain?.nativeCurrency?.symbol || (chainInfo?.solana ? 'SOL' : '')).toUpperCase()
+}
+
+function isNativeBridgeIntent(token, fromInfo, toInfo) {
+  if (!fromInfo || !toInfo || toInfo.id !== 'Arc_Testnet') return false
+  const bridgeToken = normalizeBridgeTokenKey(token)
+  if (!['ETH', 'HYPE', 'SOL'].includes(bridgeToken)) return false
+  return bridgeToken === nativeTokenForChain(fromInfo)
+}
+
+function assertNativeBridgeSupported({ token, source, fromInfo, toInfo }) {
+  const bridgeToken = normalizeBridgeTokenKey(token)
+  if (source === 'circle') throw new Error('Native bridge is only supported from the local EOA agent wallet. Circle Wallet source supports USDC only.')
+  if (!isNativeBridgeIntent(bridgeToken, fromInfo, toInfo)) {
+    throw new Error(`Native ${bridgeToken} bridge is only supported from its source chain to Arc Testnet.`)
+  }
+  if (fromInfo.solana) throw new Error('SOL-native bridge is not enabled in MCP. Current Solana route supports USDC only.')
+  const router = nativeSwapBridgeRouterFor(fromInfo.id)
+  if (!router) throw new Error(`Native ${bridgeToken} bridge router is not deployed for ${fromInfo.id}.`)
+  return router
+}
+
+async function quoteNativeBridgeRoute(intent, owner, fromInfo, toInfo, source = 'eoa') {
+  const token = normalizeBridgeTokenKey(intent.token)
+  const router = assertNativeBridgeSupported({ token, source, fromInfo, toInfo })
+  if (!intent.amount || Number(intent.amount) <= 0) throw new Error(`Native ${token} bridge quote needs a positive amount.`)
+  const nativeAmount = parseUnits(String(intent.amount), 18)
+  const sourceClient = clientFor(fromInfo)
+  const nativeBalance = await sourceClient.getBalance({ address: owner }).catch(() => 0n)
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 900)
+  const quotes = []
+  for (const poolFee of [500, 3000, 10000]) {
+    try {
+      const data = encodeFunctionData({
+        abi: nativeSwapBridgeRouterAbi,
+        functionName: 'swapNativeAndBridgeUsdc',
+        args: [toInfo.domain, bytes32Address(owner), `0x${'0'.repeat(64)}`, poolFee, 1n, deadline, 10n, 1000],
+      })
+      const result = await sourceClient.call({ account: owner, to: router, data, value: nativeAmount })
+      const decoded = decodeFunctionResult({ abi: nativeSwapBridgeRouterAbi, functionName: 'swapNativeAndBridgeUsdc', data: result.data })
+      quotes.push({ poolFee, usdcOut: decoded[0], platformFee: decoded[1], netUsdc: decoded[2], deadline })
+    } catch {}
+  }
+  quotes.sort((a, b) => a.netUsdc === b.netUsdc ? 0 : a.netUsdc > b.netUsdc ? -1 : 1)
+  const best = quotes[0]
+  if (!best || best.netUsdc <= 0n) throw new Error(`No native ${token} route quote succeeded on ${fromInfo.id}. Pool liquidity may be unavailable.`)
+  return {
+    status: 'quote',
+    action: 'bridge',
+    route: 'native-swap-bridge-router',
+    source: 'eoa-agent-wallet',
+    owner,
+    from: fromInfo.id,
+    to: toInfo.id,
+    token,
+    outputToken: 'USDC',
+    amount: String(intent.amount),
+    nativeBalance: formatUnits(nativeBalance, 18),
+    router,
+    poolFee: best.poolFee,
+    quotedUsdcOut: formatUnits(best.usdcOut, 6),
+    platformFee: formatUnits(best.platformFee, 6),
+    estimatedReceive: formatUnits(best.netUsdc, 6),
+    feeBps: PLATFORM_FEE_BPS,
+    approvalRequired: false,
+    supported: nativeBalance > nativeAmount,
+    terminalExecution: 'supported_native_swap_bridge',
+    safeNextStep: 'Ask the user to confirm before calling arcox_execute_bridge with confirmed=true. The agent will send native token to the router, swap to USDC, burn via CCTP, then mint USDC on Arc.',
+  }
+}
+
+async function executeNativeBridge(intent, owner, fromInfo, toInfo) {
+  const quote = await quoteNativeBridgeRoute(intent, owner, fromInfo, toInfo, 'eoa')
+  if (!quote.supported) throw new Error(`Insufficient ${quote.token} on ${fromInfo.id}. Balance ${quote.nativeBalance}, need ${intent.amount} plus gas.`)
+  const nativeAmount = parseUnits(String(intent.amount), 18)
+  const sourceClient = clientFor(fromInfo)
+  const destinationClient = clientFor(toInfo)
+  const minOut = (parseUnits(quote.quotedUsdcOut, 6) * 9950n) / 10000n
+  const data = encodeFunctionData({
+    abi: nativeSwapBridgeRouterAbi,
+    functionName: 'swapNativeAndBridgeUsdc',
+    args: [toInfo.domain, bytes32Address(owner), `0x${'0'.repeat(64)}`, quote.poolFee, minOut, BigInt(Math.floor(Date.now() / 1000) + 900), 10n, 1000],
+  })
+  console.error(`[bridge:native] route ${fromInfo.id} ${quote.token} -> USDC -> ${toInfo.id}`)
+  const burnHash = await sendTransactionBuffered({ chainInfo: fromInfo, to: quote.router, data, value: nativeAmount })
+  const burnReceipt = await waitForReceipt(sourceClient, burnHash, intent.deferMint ? BRIDGE_RECEIPT_WAIT_MS : 0)
+  if (!burnReceipt) {
+    return pendingBridgeStepResult({
+      status: 'pending_burn',
+      route: 'native-swap-bridge-router',
+      router: quote.router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: quote.estimatedReceive,
+      burnHash,
+      safeNextStep: `Native swap+burn belum confirmed sebelum timeout MCP. Cek tx ${burnHash}, lalu retry mint jika burn sudah confirmed.`,
+    })
+  }
+  if (intent.deferMint) {
+    const attestation = await waitAttestationBeforeAutoMint(fromInfo, burnHash)
+    if (!attestation) {
+      return pendingBridgeMintResult({
+        route: 'native-swap-bridge-router',
+        router: quote.router,
+        fromInfo,
+        toInfo,
+        owner,
+        amount: quote.estimatedReceive,
+        burnHash,
+        safeNextStep: `Native swap+burn selesai. Attestation belum siap setelah ${Math.round(AUTO_MINT_GRACE_WAIT_MS / 1000)} detik; agent auto-mint worker dijadwalkan.`,
+      })
+    }
+    const mintHash = await writeContractBuffered({
+      chainInfo: toInfo,
+      address: toInfo.messageTransmitter,
+      abi: messageTransmitterAbi,
+      functionName: 'receiveMessage',
+      args: [attestation.message, attestation.attestation],
+    })
+    const mintReceipt = await waitForReceipt(destinationClient, mintHash, MCP_MINT_RECEIPT_WAIT_MS)
+    return {
+      status: mintReceipt ? 'submitted' : 'pending_mint_receipt',
+      action: 'bridge',
+      route: 'native-swap-bridge-router',
+      router: quote.router,
+      from: fromInfo.id,
+      to: toInfo.id,
+      owner,
+      amount: String(intent.amount),
+      token: quote.token,
+      outputToken: 'USDC',
+      estimatedReceive: quote.estimatedReceive,
+      platformFee: quote.platformFee,
+      burnTx: burnHash,
+      mintTx: mintHash,
+      burnExplorer: fromInfo.explorer + burnHash,
+      mintExplorer: toInfo.explorer + mintHash,
+      safeNextStep: mintReceipt ? 'Attestation siap dalam grace wait; mint USDC di Arc selesai.' : 'Mint transaction submitted, but receipt was not confirmed before MCP timeout.',
+    }
+  }
+  const attestation = await pollAttestation(fromInfo.domain, burnHash, fromInfo, {
+    maxWaitMs: intent.maxAttestationWaitMs,
+    returnNullOnTimeout: Boolean(intent.maxAttestationWaitMs),
+  })
+  if (!attestation) {
+    return pendingBridgeMintResult({
+      route: 'native-swap-bridge-router',
+      router: quote.router,
+      fromInfo,
+      toInfo,
+      owner,
+      amount: quote.estimatedReceive,
+      burnHash,
+      safeNextStep: 'Attestation belum siap sebelum batas waktu MCP. Agent auto-mint worker dijadwalkan.',
+    })
+  }
+  const mintHash = await writeContractBuffered({
+    chainInfo: toInfo,
+    address: toInfo.messageTransmitter,
+    abi: messageTransmitterAbi,
+    functionName: 'receiveMessage',
+    args: [attestation.message, attestation.attestation],
+  })
+  const mintReceipt = await waitForReceipt(destinationClient, mintHash, MCP_MINT_RECEIPT_WAIT_MS)
+  return {
+    status: mintReceipt ? 'submitted' : 'pending_mint_receipt',
+    action: 'bridge',
+    route: 'native-swap-bridge-router',
+    router: quote.router,
+    from: fromInfo.id,
+    to: toInfo.id,
+    owner,
+    amount: String(intent.amount),
+    token: quote.token,
+    outputToken: 'USDC',
+    estimatedReceive: quote.estimatedReceive,
+    platformFee: quote.platformFee,
+    burnTx: burnHash,
+    mintTx: mintHash,
+    burnExplorer: fromInfo.explorer + burnHash,
+    mintExplorer: toInfo.explorer + mintHash,
+  }
+}
+
 export async function executeBridge(intent, owner) {
-  if ((intent.token || 'USDC') !== 'USDC') throw new Error('CLI bridge adapter currently supports USDC only.')
   if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Bridge command needs amount, example: bridge 5 USDC from Arbitrum Sepolia to Arc')
   const fromInfo = cctpChains[intent.fromChain]
   const toInfo = cctpChains[intent.toChain]
   if (!fromInfo || !toInfo) throw new Error('Unsupported bridge route. Use Arc, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, or HyperEVM Testnet.')
   if (fromInfo.id === toInfo.id) throw new Error('Bridge source and destination must be different.')
+  const bridgeToken = normalizeBridgeTokenKey(intent.token)
+  if (isNativeBridgeIntent(bridgeToken, fromInfo, toInfo)) return executeNativeBridge({ ...intent, token: bridgeToken }, owner, fromInfo, toInfo)
+  if (bridgeToken !== 'USDC') throw new Error('MCP bridge supports USDC, plus native ETH from Ethereum/Base Sepolia to Arc when a native router is deployed.')
   if (fromInfo.solana) return executeSolanaToEvm(intent, owner, fromInfo, toInfo)
   if (toInfo.solana) return executeEvmToSolana(intent, owner, fromInfo, toInfo)
 
@@ -1598,8 +2036,11 @@ export async function executeSend(intent, owner) {
 }
 
 export async function executeSwap(intent, owner) {
-  const tokenIn = intent.tokenIn || 'USDC'
-  const tokenOut = intent.tokenOut || ''
+  const tokenIn = normalizeArcTokenKey(intent.tokenIn || 'USDC')
+  const tokenOut = normalizeArcTokenKey(intent.tokenOut || '', '')
+  const apiTokenIn = apiArcTokenKey(tokenIn)
+  const apiTokenOut = apiArcTokenKey(tokenOut, '')
+  const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
   if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Swap command needs amount, example: swap 10 USDC to EURC')
   if (!ARC_TOKENS[tokenIn]) throw new Error(`Unsupported swap input token: ${tokenIn}`)
   if (!ARC_TOKENS[tokenOut]) throw new Error('Swap command needs output token, example: swap 10 USDC to EURC')
@@ -1607,22 +2048,36 @@ export async function executeSwap(intent, owner) {
 
   const account = privateKeyToAccount(privateKey())
   const token = await backendSession(account)
-  const walletData = await postJson('/api/wallet', { metamaskAddress: owner }, token)
-  const quote = await postJson('/api/quote', { metamaskAddress: owner, tokenIn, tokenOut, amountIn: intent.amount }, token)
+  const walletData = source === 'circle' ? await postJson('/api/wallet', { metamaskAddress: owner }, token) : null
+  let quote
+  try {
+    quote = await postJson(source === 'circle' ? '/api/quote' : '/api/eoa-swap-quote', {
+      metamaskAddress: owner,
+      tokenIn: apiTokenIn,
+      tokenOut: apiTokenOut,
+      amountIn: intent.amount,
+    }, token)
+  } catch (error) {
+    quote = swapRouteUnavailableQuote(error)
+    if (!quote) throw error
+  }
   if (quote.available === false) {
     return {
       status: 'route_unavailable',
       action: 'swap',
-      source: 'circle-wallet-proxy',
+      source: source === 'circle' ? 'circle-wallet-proxy' : 'eoa-agent-wallet',
       owner,
-      wallet: walletData.wallet,
+      tokenIn,
+      tokenOut,
+      wallet: walletData?.wallet,
       quote,
     }
   }
+  if (source === 'eoa') return executeEoaPreparedSwap({ owner, tokenIn, tokenOut, apiTokenIn, apiTokenOut, amount: intent.amount, quote, authToken: token })
   let swap
   try {
     swap = await withTimeout(
-      postJson('/api/swap', { metamaskAddress: owner, tokenIn, tokenOut, amountIn: intent.amount }, token, SWAP_EXECUTION_TIMEOUT_MS),
+      postJson('/api/swap', { metamaskAddress: owner, tokenIn: apiTokenIn, tokenOut: apiTokenOut, amountIn: intent.amount }, token, SWAP_EXECUTION_TIMEOUT_MS),
       SWAP_EXECUTION_TIMEOUT_MS,
       `Circle swap backend did not respond within ${SWAP_EXECUTION_TIMEOUT_MS}ms. Check balances/history before retrying.`,
     )
@@ -1632,6 +2087,8 @@ export async function executeSwap(intent, owner) {
       action: 'swap',
       source: 'circle-wallet-proxy',
       owner,
+      tokenIn,
+      tokenOut,
       wallet: walletData.wallet,
       quote,
       error: error.message,
@@ -1643,10 +2100,118 @@ export async function executeSwap(intent, owner) {
     action: 'swap',
     source: 'circle-wallet-proxy',
     owner,
+    tokenIn,
+    tokenOut,
     wallet: walletData.wallet,
     quote,
     result: swap.result,
     note: 'Circle wallet swap is executed by backend proxy wallet after local agent signs ARCOX login message.',
+  }
+}
+
+async function executeEoaPreparedSwap({ owner, tokenIn, tokenOut, apiTokenIn, apiTokenOut, amount, quote, authToken }) {
+  const { walletClient } = wallet()
+  const prepared = await postJson('/api/eoa-swap-prepare', {
+    metamaskAddress: owner,
+    tokenIn: apiTokenIn,
+    tokenOut: apiTokenOut,
+    amountIn: amount,
+  }, authToken, SWAP_EXECUTION_TIMEOUT_MS)
+  const adapterContract = getAddress(prepared.adapterContract || ARC_APPKIT_ADAPTER)
+  const tokenInAddress = getAddress(prepared.tokenInAddress || ARC_TOKENS[tokenIn].address)
+  const amountBaseUnits = BigInt(prepared.amountBaseUnits)
+  const approveTx = await walletClient.writeContract({
+    address: tokenInAddress,
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [adapterContract, amountBaseUnits],
+  })
+  await publicClient.waitForTransactionReceipt({ hash: approveTx })
+  const executionParams = normalizeAdapterExecutionParams(prepared.executionParams)
+  const tokenInputs = [{
+    permitType: 0,
+    token: tokenInAddress,
+    amount: amountBaseUnits,
+    permitCalldata: '0x',
+  }]
+  const data = encodeFunctionData({
+    abi: adapterExecuteAbi,
+    functionName: 'execute',
+    args: [executionParams, tokenInputs, prepared.signature],
+  })
+  const gas = prepared.gasLimit ? (BigInt(prepared.gasLimit) * 120n) / 100n : undefined
+  const swapTx = await walletClient.sendTransaction({
+    to: adapterContract,
+    data,
+    ...(gas ? { gas } : {}),
+  })
+  await publicClient.waitForTransactionReceipt({ hash: swapTx })
+  let feeTx = ''
+  let platformFeeError = ''
+  const feeAmount = String(prepared.platformFee?.amount || '0')
+  const feeUnits = parseUnits(feeAmount, ARC_TOKENS[tokenIn].decimals)
+  if (feeUnits > 0n) {
+    try {
+      feeTx = await walletClient.writeContract({
+        address: tokenInAddress,
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [getAddress(prepared.platformFee?.treasury || process.env.ARCOX_FEE_TREASURY || owner), feeUnits],
+      })
+      await publicClient.waitForTransactionReceipt({ hash: feeTx })
+    } catch (error) {
+      platformFeeError = error.message
+    }
+  }
+  return {
+    status: 'submitted',
+    action: 'swap',
+    source: 'eoa-agent-wallet',
+    route: 'circle-stablecoin-service-adapter',
+    owner,
+    tokenIn,
+    tokenOut,
+    quote,
+    approveTx,
+    result: {
+      txHash: swapTx,
+      transactionHash: swapTx,
+      explorerUrl: EXPLORER_TX + swapTx,
+      tokenIn,
+      tokenOut,
+      amountIn: prepared.amountIn,
+      amountOut: prepared.amountOut,
+      grossAmountIn: prepared.grossAmountIn,
+      platformFee: {
+        ...prepared.platformFee,
+        txHash: feeTx || undefined,
+        error: platformFeeError || undefined,
+      },
+    },
+    note: platformFeeError
+      ? `EOA swap executed through Circle Stablecoin Service adapter, but platform fee transfer failed: ${platformFeeError}`
+      : 'EOA swap executed through Circle Stablecoin Service adapter with local AGENT_PRIVATE_KEY signer.',
+  }
+}
+
+function normalizeAdapterExecutionParams(params = {}) {
+  return {
+    instructions: (params.instructions || []).map(item => ({
+      target: getAddress(item.target),
+      data: item.data,
+      value: BigInt(item.value),
+      tokenIn: getAddress(item.tokenIn),
+      amountToApprove: BigInt(item.amountToApprove),
+      tokenOut: getAddress(item.tokenOut),
+      minTokenOut: BigInt(item.minTokenOut),
+    })),
+    tokens: (params.tokens || []).map(item => ({
+      token: getAddress(item.token),
+      beneficiary: getAddress(item.beneficiary),
+    })),
+    execId: BigInt(params.execId),
+    deadline: BigInt(params.deadline),
+    metadata: params.metadata || '0x',
   }
 }
 
@@ -1660,11 +2225,20 @@ async function runPrompt() {
     prompt,
     intent,
     approval_required: true,
-    approval_mode: 'CLI --yes confirmation with local AGENT_PRIVATE_KEY signer',
+    approval_mode: 'MCP quote + previewId + explicit user confirmation',
     note: 'Private key stays in the local .env file. ARCOX DEX only receives status/metadata if you choose to report it.',
   }
   if (!hasFlag('yes')) {
     console.log(JSON.stringify({ ...preview, status: 'preview_only', next: 'Review this plan. Re-run with --yes to execute supported onchain actions.' }, null, 2))
+    return
+  }
+  if (['send', 'bridge', 'swap'].includes(intent.action)) {
+    console.log(JSON.stringify({
+      ...preview,
+      status: 'mcp_confirmation_required',
+      safe_next_step: 'Value-moving ARCOX actions must use MCP quote first, then execute with confirmed=true and the exact previewId after explicit user confirmation.',
+      blocked_action: intent.action,
+    }, null, 2))
     return
   }
   if (intent.action === 'send') {
@@ -1797,7 +2371,7 @@ export async function agentStatus() {
     publicClient.getBalance({ address: account.address }),
     publicClient.readContract({ address: ARC_USDC, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
   ])
-  return { address: account.address, arcGasUsdc: formatUnits(nativeBalance, 18), usdc: formatUnits(usdcBalance, 6), rpc: ARC_RPC }
+  return { address: account.address, arcGasUsdc: formatUnits(nativeBalance, 18), usdc: formatUnits(usdcBalance, 6), rpc: ARC_RPC, envSecurityWarnings: envSecurityWarnings() }
 }
 
 async function arcTokenBalances(address) {
@@ -1845,14 +2419,15 @@ export async function quoteBridge(intent) {
   const fromChain = normalizeChainName(intent.fromChain) || intent.fromChain
   const toChain = normalizeChainName(intent.toChain) || intent.toChain
   const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
-  const token = normalizeArcTokenKey(intent.token)
-  if (token !== 'USDC') throw new Error('MCP bridge currently supports USDC only.')
+  const token = normalizeBridgeTokenKey(intent.token)
   if (!intent.amount || Number(intent.amount) <= 0) throw new Error('Bridge quote needs a positive amount.')
   const fromInfo = cctpChains[fromChain]
   const toInfo = cctpChains[toChain]
   if (!fromInfo || !toInfo) throw new Error('Unsupported bridge route.')
   if (fromInfo.id === toInfo.id) throw new Error('Bridge source and destination must be different.')
   if (source === 'circle' && fromInfo.id !== 'Arc_Testnet') throw new Error('Circle Wallet bridge source is only supported from Arc Testnet. Use source="eoa" for other source chains.')
+  if (isNativeBridgeIntent(token, fromInfo, toInfo)) return quoteNativeBridgeRoute({ ...intent, token }, account.address, fromInfo, toInfo, source)
+  if (token !== 'USDC') throw new Error('MCP bridge supports USDC, plus native ETH from Ethereum/Base Sepolia to Arc when a native router is deployed.')
   if (fromInfo.solana) {
     if (source === 'circle') throw new Error('Circle Wallet source is not available for Solana source routes.')
     const solana = solanaKeypair()
@@ -1951,22 +2526,41 @@ export async function quoteSend(intent) {
       postJson('/api/send-estimate', { metamaskAddress: account.address, toAddress: getAddress(intent.to), amount: String(intent.amount), token: apiTokenKey, source: 'circle' }, authToken, SEND_ESTIMATE_TIMEOUT_MS).catch(error => ({ error: error.message })),
     ])
     const balance = circleBalances?.[apiTokenKey] || circleBalances?.[tokenKey] || '0'
+    const to = getAddress(intent.to)
+    const platformFee = estimate?.platformFee?.amount || '0'
+    const recipientReceives = estimate?.recipientReceives || String(intent.amount)
+    const networkFee = estimate?.fee || estimate?.estimatedFee || '0'
+    const supported = Number(balance) >= Number(intent.amount)
     return {
       status: 'quote',
       action: 'send',
       source: 'circle-wallet-proxy',
       owner: account.address,
       from: walletData.wallet,
-      to: getAddress(intent.to),
+      to,
       token: tokenKey,
       amount: String(intent.amount),
       balance,
-      platformFee: estimate?.platformFee?.amount || '0',
-      recipientReceives: estimate?.recipientReceives || String(intent.amount),
-      networkFee: estimate?.fee || estimate?.estimatedFee || '0',
-      supported: Number(balance) >= Number(intent.amount),
+      platformFee,
+      recipientReceives,
+      networkFee,
+      supported,
       approvalRequired: true,
       estimate,
+      preview: sendPreviewDetails({
+        source: 'circle',
+        owner: account.address,
+        from: walletData.wallet,
+        to,
+        token: tokenKey,
+        amount: String(intent.amount),
+        balance,
+        platformFee,
+        recipientReceives,
+        networkFee,
+        estimate,
+        supported,
+      }),
       safeNextStep: 'Ask the user to confirm before calling arcox_execute_send with source="circle" and confirmed=true.',
     }
   }
@@ -1980,38 +2574,73 @@ export async function quoteSend(intent) {
   ])
   const fee = routerQuote ? BigInt(routerQuote[0] ?? 0) : 0n
   const netAmount = routerQuote ? BigInt(routerQuote[1] ?? amount) : amount
+  const to = getAddress(intent.to)
+  const balanceText = formatUnits(balance, token.decimals)
+  const platformFee = formatUnits(fee, token.decimals)
+  const recipientReceives = formatUnits(netAmount, token.decimals)
+  const supported = balance >= amount
   return {
     status: 'quote',
     action: 'send',
     source: 'eoa-agent-wallet',
     owner: account.address,
-    to: getAddress(intent.to),
+    to,
     token: tokenKey,
     amount: String(intent.amount),
-    balance: formatUnits(balance, token.decimals),
+    balance: balanceText,
     router: router || null,
-    platformFee: formatUnits(fee, token.decimals),
-    recipientReceives: formatUnits(netAmount, token.decimals),
-    supported: balance >= amount,
+    platformFee,
+    recipientReceives,
+    supported,
     approvalRequired: true,
+    preview: sendPreviewDetails({
+      source: 'eoa',
+      owner: account.address,
+      from: account.address,
+      to,
+      token: tokenKey,
+      amount: String(intent.amount),
+      balance: balanceText,
+      platformFee,
+      recipientReceives,
+      networkFee: 'wallet-signed gas',
+      supported,
+    }),
     safeNextStep: 'Ask the user to confirm before calling arcox_execute_send with source="eoa" and confirmed=true.',
   }
 }
 
 export async function quoteSwap(intent) {
-  const tokenIn = String(intent.tokenIn || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenIn || 'USDC').toUpperCase()
-  const tokenOut = String(intent.tokenOut || '').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenOut || '').toUpperCase()
+  const tokenIn = normalizeArcTokenKey(intent.tokenIn || 'USDC')
+  const tokenOut = normalizeArcTokenKey(intent.tokenOut || '', '')
+  const apiTokenIn = apiArcTokenKey(tokenIn)
+  const apiTokenOut = apiArcTokenKey(tokenOut, '')
   const amountIn = String(intent.amountIn || intent.amount || '')
+  const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
   if (!amountIn) throw new Error('Swap quote needs amountIn.')
   if (!ARC_TOKENS[tokenIn]) throw new Error(`Unsupported swap input token: ${tokenIn}`)
   if (!ARC_TOKENS[tokenOut]) throw new Error(`Unsupported swap output token: ${tokenOut}`)
   const { account } = wallet()
   const token = await backendSession(account)
-  const quote = await postJson('/api/quote', { metamaskAddress: account.address, tokenIn, tokenOut, amountIn }, token)
+  let quote
+  try {
+    quote = await postJson(source === 'circle' ? '/api/quote' : '/api/eoa-swap-quote', {
+      metamaskAddress: account.address,
+      tokenIn: apiTokenIn,
+      tokenOut: apiTokenOut,
+      amountIn,
+    }, token)
+  } catch (error) {
+    quote = swapRouteUnavailableQuote(error)
+    if (!quote) throw error
+  }
   return {
     status: 'quote',
     action: 'swap',
-    source: 'circle-wallet-proxy',
+    source: source === 'circle' ? 'circle-wallet-proxy' : 'eoa-agent-wallet',
+    terminalExecution: source === 'eoa'
+      ? 'Local AGENT_PRIVATE_KEY signs approve and Circle AppKit adapter execute transactions.'
+      : 'ARCOX backend executes from the Circle proxy wallet after local login signature.',
     owner: account.address,
     tokenIn,
     tokenOut,
@@ -2024,6 +2653,7 @@ export async function quoteSwap(intent) {
 
 export async function executeConfirmedBridge(intent) {
   if (intent.confirmed !== true) return quoteBridge(intent)
+  if (intent.mcpPreviewVerified !== true) throw new Error('MCP preview verification required before bridge execution.')
   const fromChain = normalizeChainName(intent.fromChain) || intent.fromChain
   const toChain = normalizeChainName(intent.toChain) || intent.toChain
   const { account } = wallet()
@@ -2044,7 +2674,7 @@ export async function executeConfirmedBridge(intent) {
   }
   const result = await executeBridge({
     ...intent,
-    token: normalizeArcTokenKey(intent.token),
+    token: normalizeBridgeTokenKey(intent.token),
     fromChain,
     toChain,
     maxAttestationWaitMs: intent.maxAttestationWaitMs || MCP_FAST_ATTESTATION_WAIT_MS,
@@ -2074,6 +2704,7 @@ export async function executeConfirmedBridge(intent) {
 
 export async function executeConfirmedSend(intent) {
   if (intent.confirmed !== true) return quoteSend(intent)
+  if (intent.mcpPreviewVerified !== true) throw new Error('MCP preview verification required before send execution.')
   const { account } = wallet()
   const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
   let result
@@ -2122,10 +2753,13 @@ export async function executeConfirmedSend(intent) {
 
 export async function executeConfirmedSwap(intent) {
   if (intent.confirmed !== true) return quoteSwap(intent)
+  if (intent.mcpPreviewVerified !== true) throw new Error('MCP preview verification required before swap execution.')
   const { account } = wallet()
+  const source = String(intent.source || intent.walletSource || 'eoa').toLowerCase() === 'circle' ? 'circle' : 'eoa'
   const result = await executeSwap({
     ...intent,
     amount: String(intent.amountIn || intent.amount),
+    source,
     tokenIn: String(intent.tokenIn || 'USDC').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenIn || 'USDC').toUpperCase(),
     tokenOut: String(intent.tokenOut || '').toUpperCase() === 'CIRBTC' ? 'CIRBTC' : String(intent.tokenOut || '').toUpperCase(),
   }, account.address)
@@ -2136,15 +2770,142 @@ export async function executeConfirmedSwap(intent) {
     amount: String(intent.amountIn || intent.amount),
     token: result.result?.tokenIn || intent.tokenIn || 'USDC',
     status: result.status === 'submitted' ? 'success' : 'pending',
-    walletSource: 'circle',
+    walletSource: source,
+    approveTx: result.approveTx,
     tx: result.result?.txHash || result.result?.transactionHash,
     explorer: result.result?.explorerUrl,
     note: result.status === 'submitted'
-      ? 'Swap executed from Circle Wallet proxy by MCP agent.'
+      ? (source === 'circle' ? 'Swap executed from Circle Wallet proxy by MCP agent.' : 'Swap executed from EOA agent wallet by MCP agent.')
       : result.safeNextStep || result.error || 'Swap backend did not return a final transaction.',
   }, account.address)
   await pushBackendHistory(account.address, rec)
   return result
+}
+
+function paymentInvoiceSummary(invoice) {
+  return {
+    invoiceId: invoice.invoiceId,
+    orderId: invoice.orderId,
+    amount: invoice.amount,
+    token: invoice.token,
+    network: invoice.network,
+    merchantAddress: invoice.merchantAddress,
+    memo: invoice.memo,
+    status: invoice.status,
+    paymentUrl: invoice.paymentUrl,
+    txHash: invoice.txHash,
+    paidAt: invoice.paidAt,
+    expiresAt: invoice.expiresAt,
+    timeline: invoice.timeline || [],
+  }
+}
+
+function assertPayableInvoice(invoice) {
+  if (!invoice?.invoiceId) throw new Error('Invoice not found.')
+  if (invoice.status === 'paid') throw new Error('Invoice already paid.')
+  if (invoice.status === 'expired') throw new Error('Invoice expired.')
+  if (invoice.status === 'cancelled' || invoice.status === 'failed') throw new Error(`Invoice status is ${invoice.status}.`)
+  if (Date.now() > new Date(invoice.expiresAt).getTime()) throw new Error('Invoice expired.')
+  if (invoice.token !== 'USDC' || invoice.network !== 'arc-testnet') throw new Error('Only USDC invoices on arc-testnet are supported.')
+}
+
+export async function createPaymentRequest(input = {}) {
+  const invoice = await postJson('/api/invoices', {
+    orderId: input.orderId,
+    amount: String(input.amount || ''),
+    token: input.token || 'USDC',
+    network: input.network || 'arc-testnet',
+    merchantAddress: getAddress(input.merchantAddress),
+    memo: input.memo,
+    expiresInMinutes: input.expiresInMinutes || 15,
+  })
+  return paymentInvoiceSummary(invoice)
+}
+
+export async function getPaymentRequest(input = {}) {
+  const invoiceId = String(input.invoiceId || '')
+  if (!invoiceId) throw new Error('invoiceId is required.')
+  return paymentInvoiceSummary(await backendGet(`/api/invoices/${encodeURIComponent(invoiceId)}`))
+}
+
+export async function quotePaymentRequest(input = {}) {
+  const invoice = await getPaymentRequest(input)
+  assertPayableInvoice(invoice)
+  const { account } = wallet()
+  const balance = await publicClient.readContract({ address: ARC_USDC, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n)
+  const amountUnits = parseUnits(invoice.amount, 6)
+  return {
+    ...invoice,
+    payerAddress: account.address,
+    payerUsdcBalance: formatUnits(balance, 6),
+    supported: balance >= amountUnits,
+    requiresUserConfirmation: true,
+    feePolicy: 'No hidden ARCOX Pay invoice fee. Agent sends invoice amount directly to merchant address.',
+    userMustCheck: [
+      'Invoice id is correct.',
+      'Merchant address is correct.',
+      'Amount and token are correct.',
+      'This action moves funds and cannot be reversed after execution.',
+    ],
+  }
+}
+
+export async function payPaymentRequest(input = {}) {
+  if (input.confirmed !== true) return quotePaymentRequest(input)
+  if (input.mcpPreviewVerified !== true) throw new Error('MCP preview verification required before invoice payment.')
+  const invoice = await getPaymentRequest(input)
+  assertPayableInvoice(invoice)
+  if (input.amount && String(input.amount) !== String(invoice.amount)) throw new Error('Invoice amount changed after quote.')
+  if (input.token && normalizeArcTokenKey(input.token) !== invoice.token) throw new Error('Invoice token changed after quote.')
+  if (input.merchantAddress && getAddress(input.merchantAddress) !== invoice.merchantAddress) throw new Error('Invoice merchantAddress changed after quote.')
+  const { account, walletClient } = wallet()
+  const amountUnits = parseUnits(invoice.amount, 6)
+  const balance = await publicClient.readContract({ address: ARC_USDC, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n)
+  if (balance < amountUnits) throw new Error('Insufficient USDC balance for invoice payment.')
+  const txHash = await walletClient.writeContract({
+    address: ARC_USDC,
+    abi: erc20Abi,
+    functionName: 'transfer',
+    args: [getAddress(invoice.merchantAddress), amountUnits],
+  })
+  await patchJson(`/api/invoices/${encodeURIComponent(invoice.invoiceId)}`, { status: 'pending', txHash, payerAddress: account.address })
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 30_000 }).catch(() => null)
+  const finalInvoice = receipt?.status === 'success'
+    ? await postJson(`/api/invoices/${encodeURIComponent(invoice.invoiceId)}/mark-paid`, { txHash, payerAddress: account.address })
+    : await getPaymentRequest({ invoiceId: invoice.invoiceId })
+  const rec = recordAgentHistory({
+    action: 'send',
+    from: account.address,
+    to: invoice.merchantAddress,
+    amount: invoice.amount,
+    token: invoice.token,
+    status: receipt?.status === 'success' ? 'success' : 'pending',
+    walletSource: 'eoa',
+    tx: txHash,
+    explorer: `${EXPLORER_TX}${txHash}`,
+    note: `ARCOX Pay invoice ${invoice.invoiceId} paid by MCP agent.`,
+  }, account.address)
+  await pushBackendHistory(account.address, rec)
+  return {
+    status: receipt?.status === 'success' ? 'paid' : 'pending',
+    invoice: paymentInvoiceSummary(finalInvoice),
+    txHash,
+    explorer: `${EXPLORER_TX}${txHash}`,
+  }
+}
+
+export async function checkPaymentStatus(input = {}) {
+  const invoiceId = String(input.invoiceId || '')
+  if (!invoiceId) throw new Error('invoiceId is required.')
+  return backendGet(`/api/invoices/${encodeURIComponent(invoiceId)}/status`)
+}
+
+export async function simulateCircleWebhook(input = {}) {
+  return postJson('/api/dev/simulate-webhook', input)
+}
+
+export async function quoteEcoRoutePayment(input = {}) {
+  return postJson('/api/eco/route-preview', input)
 }
 
 function readAutoMintStatuses() {
@@ -2163,11 +2924,88 @@ function readAutoMintStatuses() {
   return autoMint
 }
 
-function syncAutoMintHistory() {
+function findByBurnTx(items, burnTx) {
+  const target = String(burnTx || '').toLowerCase()
+  if (!target) return null
+  return items.find(item => String(item?.burnTx || '').toLowerCase() === target) || null
+}
+
+function mergeHistoryById(localHistory, remoteHistory) {
+  const byId = new Map()
+  for (const item of [...localHistory, ...remoteHistory]) {
+    if (!item?.id) continue
+    byId.set(item.id, item)
+  }
+  return [...byId.values()].sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0)).slice(0, 100)
+}
+
+function syncCompletedAutoMintStatus(job, completed) {
+  if (!job?.burnTx || !completed?.mintTx) return job
+  const next = {
+    ...job,
+    status: job.result?.mintTx ? 'complete' : 'complete_external',
+    result: {
+      ...(job.result || {}),
+      status: 'submitted',
+      action: job.action || 'auto-mint-bridge',
+      owner: completed.owner || job.owner,
+      from: completed.from || job.from,
+      to: completed.to || job.to,
+      burnTx: completed.burnTx || job.burnTx,
+      mintTx: completed.mintTx,
+      mintExplorer: completed.mintExplorerUrl || completed.mintExplorer || job.result?.mintExplorer,
+    },
+    note: job.result?.mintTx ? job.note : 'Mint completed outside auto-mint worker; status synchronized from backend history.',
+  }
+  return writeAutoMintStatus(autoMintJobId(job.burnTx), next)
+}
+
+function recoverStaleAutoMint(job) {
+  if (!job?.burnTx || !['scheduled', 'running', 'rescheduled'].includes(job.status)) return job
+  const updatedAt = Date.parse(job.updatedAt || '')
+  if (!Number.isFinite(updatedAt) || Date.now() - updatedAt < AUTO_MINT_STALE_MS) return job
+  const recoveries = Number(job.recoveries || 0)
+  if (recoveries >= AUTO_MINT_MAX_RECOVERIES) return { ...job, status: 'stale', safeNextStep: 'Auto-mint worker reached recovery limit. Use retry bridge with the burn tx.' }
+  const pid = spawnAutoMintWorker({ burnTx: job.burnTx, from: job.from, to: job.to, owner: job.owner })
+  const next = {
+    ...job,
+    status: 'rescheduled',
+    recoveries: recoveries + 1,
+    lastRecoveryAt: new Date().toISOString(),
+    pid,
+  }
+  return writeAutoMintStatus(autoMintJobId(job.burnTx), next)
+}
+
+async function syncAutoMintHistory() {
   const history = readAgentHistory()
-  const autoMint = readAutoMintStatuses()
+  const owner = history.find(item => item.owner)?.owner || (() => {
+    try { return wallet().account.address } catch { return '' }
+  })()
+  const remoteHistory = await pullBackendHistory(owner)
+  let autoMint = readAutoMintStatuses()
   let changed = false
-  const merged = history.map(item => {
+  const localWithRemote = history.map(item => {
+    const remote = findByBurnTx(remoteHistory, item.burnTx)
+    if (remote?.status === 'success' && remote.mintTx && item.status !== 'success') {
+      changed = true
+      return {
+        ...item,
+        status: 'success',
+        mintTx: remote.mintTx,
+        mintExplorerUrl: remote.mintExplorerUrl || remote.mintExplorer,
+        note: remote.note || `${item.note || ''}\nMint completed and synchronized from backend history.`,
+        error: '',
+      }
+    }
+    return item
+  })
+  autoMint = autoMint.map(job => {
+    const remote = findByBurnTx(remoteHistory, job.burnTx)
+    if (remote?.status === 'success' && remote.mintTx) return syncCompletedAutoMintStatus(job, remote)
+    return recoverStaleAutoMint(job)
+  })
+  const merged = localWithRemote.map(item => {
     const status = autoMint.find(job => String(job.burnTx || '').toLowerCase() === String(item.burnTx || '').toLowerCase())
     if (!status?.result?.mintTx || item.status === 'success') return item
     changed = true
@@ -2181,12 +3019,13 @@ function syncAutoMintHistory() {
     pushBackendHistory(updated.owner || status.owner || '', updated)
     return updated
   })
-  if (changed) writeAgentHistory(merged)
-  return { history: merged, autoMint }
+  const finalHistory = mergeHistoryById(merged, remoteHistory.filter(item => item.source === 'agent-mcp'))
+  if (changed || finalHistory.length !== history.length) writeAgentHistory(finalHistory)
+  return { history: finalHistory, autoMint }
 }
 
-export function transactionHistory() {
-  const { history, autoMint } = syncAutoMintHistory()
+export async function transactionHistory() {
+  const { history, autoMint } = await syncAutoMintHistory()
   return { status: 'history', source: 'agent-local', history, autoMint }
 }
 
@@ -2288,7 +3127,7 @@ async function serve() {
     }
     if (req.method === 'GET' && req.url === '/history') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      return res.end(JSON.stringify(transactionHistory(), null, 2))
+      return res.end(JSON.stringify(await transactionHistory(), null, 2))
     }
     if (req.method === 'GET' && req.url === '/balances') {
       try {
