@@ -75,6 +75,7 @@ const SEND_ESTIMATE_TIMEOUT_MS = Number(process.env.SEND_ESTIMATE_TIMEOUT_MS || 
 const RPC_TIMEOUT_MS = Number(process.env.RPC_TIMEOUT_MS || '8000')
 const SOLANA_CONFIRM_TIMEOUT_MS = Number(process.env.SOLANA_CONFIRM_TIMEOUT_MS || '45000')
 const PLATFORM_FEE_BPS = Number(process.env.ARCOX_ROUTER_FEE_BPS || '30')
+const EVM_FEE_TREASURY = process.env.ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
 const ARC_APPKIT_ADAPTER = '0xBBD70b01a1CAbc96d5b7b129Ae1AAabdf50dd40b'
 const SOLANA_FEE_TREASURY = process.env.SOLANA_FEE_TREASURY || '4kAf2Qxf9KnbnKo7ukPMMu8q1UButJYNik4yQtvWhExw'
 const AUTO_MINT_DIR = join(AGENT_HOME, '.arcox-auto-mint')
@@ -312,7 +313,7 @@ const cctpChains = {
     explorer: 'https://testnet.arcscan.app/tx/',
     rpc: ARC_RPC,
     chain: arcTestnet,
-    fast: true,
+    fast: false,
   },
   Ethereum_Sepolia: {
     id: 'Ethereum_Sepolia',
@@ -324,7 +325,7 @@ const cctpChains = {
     explorer: 'https://sepolia.etherscan.io/tx/',
     rpc: process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com',
     chain: defineChain({ id: 11155111, name: 'Ethereum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com'] } }, blockExplorers: { default: { name: 'Etherscan', url: 'https://sepolia.etherscan.io' } } }),
-    fast: true,
+    fast: false,
   },
   Base_Sepolia: {
     id: 'Base_Sepolia',
@@ -336,7 +337,7 @@ const cctpChains = {
     explorer: 'https://sepolia.basescan.org/tx/',
     rpc: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
     chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org'] } }, blockExplorers: { default: { name: 'BaseScan', url: 'https://sepolia.basescan.org' } } }),
-    fast: true,
+    fast: false,
   },
   Arbitrum_Sepolia: {
     id: 'Arbitrum_Sepolia',
@@ -348,7 +349,7 @@ const cctpChains = {
     explorer: 'https://sepolia.arbiscan.io/tx/',
     rpc: process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com',
     chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com'] } }, blockExplorers: { default: { name: 'Arbiscan', url: 'https://sepolia.arbiscan.io' } } }),
-    fast: true,
+    fast: false,
   },
   HyperEVM_Testnet: {
     id: 'HyperEVM_Testnet',
@@ -1255,6 +1256,7 @@ function assertNativeBridgeSupported({ token, source, fromInfo, toInfo }) {
   if (!isNativeBridgeIntent(bridgeToken, fromInfo, toInfo)) {
     throw new Error(`Native ${bridgeToken} bridge is only supported from its source chain to Arc Testnet.`)
   }
+  throw new Error(`Native ${bridgeToken} bridge bundle is disabled. Swap ${bridgeToken} to USDC first, then bridge USDC to Arc with the legacy direct CCTP flow.`)
   if (fromInfo.solana) throw new Error('SOL-native bridge is not enabled in MCP. Current Solana route supports USDC only.')
   const router = nativeSwapBridgeRouterFor(fromInfo.id)
   if (!router) throw new Error(`Native ${bridgeToken} bridge router is not deployed for ${fromInfo.id}.`)
@@ -1439,24 +1441,38 @@ export async function executeBridge(intent, owner) {
   const amount = parseUnits(intent.amount, 6)
   const sourceClient = clientFor(fromInfo)
   const destinationClient = clientFor(toInfo)
+  const useLegacyInboundUsdc = fromInfo.id !== 'Arc_Testnet' && toInfo.id === 'Arc_Testnet'
   const tokenBalance = await sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [owner] })
   if (tokenBalance < amount) {
     throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
   }
 
-  const router = routerFor(fromInfo.id)
-  if (!router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
+  const router = useLegacyInboundUsdc ? null : routerFor(fromInfo.id)
+  if (!useLegacyInboundUsdc && !router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
   const spender = router || fromInfo.tokenMessenger
+  const platformFee = useLegacyInboundUsdc ? splitPlatformFeeUnits(amount) : null
+  const burnAmount = platformFee?.netUnits || amount
 
   console.error(`[bridge] route ${fromInfo.id} -> ${toInfo.id}`)
   console.error(`[bridge] check allowance for ${router ? 'ArcoxRouter' : 'CCTP TokenMessenger'}`)
+  if (platformFee?.feeUnits > 0n) {
+    console.error(`[bridge] transfer platform fee ${formatUnits(platformFee.feeUnits, 6)} USDC before direct CCTP burn`)
+    const feeHash = await writeContractBuffered({
+      chainInfo: fromInfo,
+      address: fromInfo.usdc,
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [getAddress(EVM_FEE_TREASURY), platformFee.feeUnits],
+    })
+    await waitForReceipt(sourceClient, feeHash, intent.deferMint ? BRIDGE_RECEIPT_WAIT_MS : 0)
+  }
   const approval = await ensureAllowance({
     sourceClient,
     fromInfo,
     owner,
     tokenAddress: fromInfo.usdc,
     spender,
-    amount,
+    amount: router ? amount : burnAmount,
     deferMint: intent.deferMint,
   })
   if (!approval.confirmed) {
@@ -1475,7 +1491,7 @@ export async function executeBridge(intent, owner) {
 
   console.error(`[bridge] burn ${intent.amount} USDC ${router ? 'via ArcoxRouter fee route' : 'direct CCTP fallback'}`)
   const maxFee = 10n
-  const minFinalityThreshold = 1000
+  const minFinalityThreshold = useLegacyInboundUsdc ? 2000 : 1000
   const burnHash = router
     ? await writeContractBuffered({
       chainInfo: fromInfo,
@@ -1489,7 +1505,7 @@ export async function executeBridge(intent, owner) {
       address: fromInfo.tokenMessenger,
       abi: tokenMessengerAbi,
       functionName: 'depositForBurn',
-      args: [amount, toInfo.domain, bytes32Address(owner), fromInfo.usdc, `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
+      args: [burnAmount, toInfo.domain, bytes32Address(owner), fromInfo.usdc, `0x${'0'.repeat(64)}`, maxFee, minFinalityThreshold],
     })
   const burnReceipt = await waitForReceipt(sourceClient, burnHash, intent.deferMint ? BRIDGE_RECEIPT_WAIT_MS : 0)
   if (!burnReceipt) {
@@ -1607,7 +1623,7 @@ export async function executeBridge(intent, owner) {
     from: fromInfo.id,
     to: toInfo.id,
     owner,
-    amount: intent.amount,
+    amount: platformFee ? formatUnits(burnAmount, 6) : intent.amount,
     token: 'USDC',
     approveTx: approval.approveHash,
     burnTx: burnHash,
@@ -2458,8 +2474,9 @@ export async function quoteBridge(intent) {
   }
   const amount = parseUnits(String(intent.amount), 6)
   const sourceClient = clientFor(fromInfo)
-  const router = routerFor(fromInfo.id)
-  if (!router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
+  const useLegacyInboundUsdc = fromInfo.id !== 'Arc_Testnet' && toInfo.id === 'Arc_Testnet'
+  const router = useLegacyInboundUsdc ? null : routerFor(fromInfo.id)
+  if (!useLegacyInboundUsdc && !router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
   const solanaRecipient = toInfo.solana ? solanaKeypair().publicKey.toBase58() : null
   const [eoaBalance, routerQuote] = await Promise.all([
     sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }).catch(() => 0n),
@@ -2478,8 +2495,9 @@ export async function quoteBridge(intent) {
       balance = parseUnits(String(balances.USDC || '0'), 6)
     }
   }
-  const fee = routerQuote ? BigInt(routerQuote[0] ?? 0) : 0n
-  const netAmount = routerQuote ? BigInt(routerQuote[1] ?? amount) : amount
+  const directFee = useLegacyInboundUsdc ? splitPlatformFeeUnits(amount) : null
+  const fee = directFee ? directFee.feeUnits : routerQuote ? BigInt(routerQuote[0] ?? 0) : 0n
+  const netAmount = directFee ? directFee.netUnits : routerQuote ? BigInt(routerQuote[1] ?? amount) : amount
   return {
     status: 'quote',
     action: 'bridge',
@@ -2492,6 +2510,7 @@ export async function quoteBridge(intent) {
     amount: String(intent.amount),
     balance: formatUnits(balance, 6),
     router: router || null,
+    route: useLegacyInboundUsdc ? 'legacy-direct-cctp-with-fee-transfer' : router ? 'arcox-router' : 'direct-cctp-fallback',
     platformFee: formatUnits(fee, 6),
     estimatedReceive: formatUnits(netAmount, 6),
     supported: balance >= amount,
