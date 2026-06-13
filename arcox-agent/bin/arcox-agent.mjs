@@ -324,7 +324,7 @@ const cctpChains = {
     explorer: 'https://sepolia.etherscan.io/tx/',
     rpc: process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com',
     chain: defineChain({ id: 11155111, name: 'Ethereum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com'] } }, blockExplorers: { default: { name: 'Etherscan', url: 'https://sepolia.etherscan.io' } } }),
-    fast: false,
+    fast: true,
   },
   Base_Sepolia: {
     id: 'Base_Sepolia',
@@ -336,7 +336,7 @@ const cctpChains = {
     explorer: 'https://sepolia.basescan.org/tx/',
     rpc: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
     chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org'] } }, blockExplorers: { default: { name: 'BaseScan', url: 'https://sepolia.basescan.org' } } }),
-    fast: false,
+    fast: true,
   },
   Arbitrum_Sepolia: {
     id: 'Arbitrum_Sepolia',
@@ -348,7 +348,7 @@ const cctpChains = {
     explorer: 'https://sepolia.arbiscan.io/tx/',
     rpc: process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com',
     chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com'] } }, blockExplorers: { default: { name: 'Arbiscan', url: 'https://sepolia.arbiscan.io' } } }),
-    fast: false,
+    fast: true,
   },
   HyperEVM_Testnet: {
     id: 'HyperEVM_Testnet',
@@ -360,7 +360,7 @@ const cctpChains = {
     explorer: 'https://app.hyperliquid-testnet.xyz/explorer/tx/',
     rpc: process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm',
     chain: defineChain({ id: 998, name: 'HyperEVM Testnet', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: [process.env.HYPEREVM_TESTNET_RPC || 'https://rpc.hyperliquid-testnet.xyz/evm'] } }, blockExplorers: { default: { name: 'Hyperliquid', url: 'https://app.hyperliquid-testnet.xyz/explorer' } } }),
-    fast: false,
+    fast: true,
   },
   Solana_Devnet: {
     id: 'Solana_Devnet',
@@ -2502,9 +2502,9 @@ export async function quoteBridge(intent) {
     safeNextStep: source === 'circle'
       ? 'Ask the user to confirm before calling arcox_execute_bridge with source="circle" and confirmed=true. Agent will first send USDC from Circle Wallet to EOA, then bridge from EOA.'
       : toInfo.solana
-        ? 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Arc source routes should complete burn, attestation, and Solana mint in the same MCP call.'
+        ? 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Fast CCTP routes should complete burn, attestation, and Solana mint in the same MCP call.'
         : fromInfo.fast
-          ? 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Arc source routes should complete burn, attestation, and mint in the same MCP call.'
+          ? 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Fast CCTP routes should complete burn, attestation, and mint in the same MCP call.'
           : 'Ask the user to confirm before calling arcox_execute_bridge with source="eoa" and confirmed=true. Slow source routes may return auto_mint_scheduled while the background worker waits for attestation.',
   }
 }
