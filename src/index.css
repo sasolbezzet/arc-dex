@@ -184,6 +184,14 @@ select.input { cursor:pointer; }
 .api-example-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .api-example { min-width: 0; }
 .api-example strong { display: block; color: #e2e8f0; font-size: 12px; margin-bottom: 6px; }
+.flow-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.flow-step { min-width: 0; border: 1px solid rgba(148,163,184,0.14); background: rgba(2,6,12,0.52); border-radius: 8px; padding: 10px; display: grid; gap: 6px; }
+.flow-step span { color: #fbbf24; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.flow-step strong { color: #e2e8f0; font-size: 12px; overflow-wrap: anywhere; line-height: 1.35; }
+.flow-step small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.button-row.wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+.button-row.wrap .btn { flex: 1 1 180px; min-width: 0; }
+.inline-warning { border: 1px solid rgba(245,158,11,0.26); background: rgba(245,158,11,0.09); color: #fde68a; border-radius: 8px; padding: 9px 10px; font-size: 12px; line-height: 1.45; }
 
 @media (max-width: 520px) {
   .page-content { padding: 14px 10px 44px; }
@@ -229,7 +237,7 @@ select.input { cursor:pointer; }
   .docs-code { font-size: 10px; padding: 9px; }
   .pay-shell, .sandbox-hero, .sandbox-card { padding: 14px; }
   .pay-title-row { flex-direction: column; }
-  .pay-grid, .sandbox-grid, .api-example-grid { grid-template-columns: minmax(0, 1fr); }
+  .pay-grid, .sandbox-grid, .api-example-grid, .flow-steps { grid-template-columns: minmax(0, 1fr); }
   .pay-actions { grid-template-columns: minmax(0, 1fr); }
   .pay-actions .header-link-button, .pay-preview .header-link-button { width: 100%; }
   .pay-timeline-item { grid-template-columns: minmax(0, 1fr); }

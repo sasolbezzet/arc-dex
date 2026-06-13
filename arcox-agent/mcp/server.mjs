@@ -18,6 +18,14 @@ import {
   getPaymentRequest,
   makeAgentResponse,
   payPaymentRequest,
+  payCreateNowpaymentsSandboxPayment,
+  payGetPaymentStatus,
+  payListRecentPayments,
+  paySimulateBaseTreasurySend,
+  paySimulateBridgeToBase,
+  paySimulateNowpaymentsFinished,
+  paySimulateNowpaymentsStatus,
+  paySimulateUserArcPayment,
   quoteBridge,
   quoteEcoRoutePayment,
   quotePaymentRequest,
@@ -342,6 +350,108 @@ const tools = [
         invoiceId: { type: 'string' },
       },
       required: ['sourceChain', 'amount', 'recipient'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_create_nowpayments_sandbox_payment',
+    description: 'Create a NOWPayments sandbox payment for ARCOX Pay USDC Base simulation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        amount: { type: 'string' },
+        price_currency: { type: 'string', default: 'usd' },
+        pay_currency: { type: 'string', default: 'usdcbase' },
+        order_id: { type: 'string' },
+        description: { type: 'string' },
+        user_id: { type: 'string' },
+        case: { type: 'string' },
+      },
+      required: ['amount'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_get_payment_status',
+    description: 'Read ARCOX Pay NOWPayments sandbox payment status.',
+    inputSchema: {
+      type: 'object',
+      properties: { payment_id: { type: 'string' } },
+      required: ['payment_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_simulate_user_arc_payment',
+    description: 'Sandbox only: mark user Arc payment to ARCOX Arc Treasury as funded.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        payment_id: { type: 'string' },
+        user_wallet_address: { type: 'string' },
+        amount: { type: 'string' },
+        arc_tx_hash: { type: 'string' },
+      },
+      required: ['payment_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_simulate_bridge_to_base',
+    description: 'Sandbox only: simulate ARCOX Arc Treasury to Base Treasury rebalance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        payment_id: { type: 'string' },
+        bridge_tx_hash: { type: 'string' },
+      },
+      required: ['payment_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_simulate_base_treasury_send',
+    description: 'Sandbox only: simulate Base Treasury sending USDC Base to NOWPayments pay_address.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        payment_id: { type: 'string' },
+        base_tx_hash: { type: 'string' },
+      },
+      required: ['payment_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_simulate_nowpayments_finished',
+    description: 'Sandbox only: simulate NOWPayments IPN payment_status=finished.',
+    inputSchema: {
+      type: 'object',
+      properties: { payment_id: { type: 'string' } },
+      required: ['payment_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_simulate_nowpayments_status',
+    description: 'Sandbox only: simulate a NOWPayments status event.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        payment_id: { type: 'string' },
+        order_id: { type: 'string' },
+        payment_status: { type: 'string', enum: ['waiting', 'confirming', 'confirmed', 'finished', 'failed', 'expired'] },
+      },
+      required: ['payment_id', 'payment_status'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_pay_list_recent_payments',
+    description: 'List recent ARCOX Pay NOWPayments sandbox payments.',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', default: 10 } },
       additionalProperties: false,
     },
   },
@@ -879,6 +989,14 @@ async function rpcResponse(message) {
     if (name === 'arcox_check_payment_status') return result(id, await checkPaymentStatus(args))
     if (name === 'arcox_simulate_circle_webhook') return result(id, await simulateCircleWebhook(args))
     if (name === 'arcox_quote_eco_route_payment') return result(id, await quoteEcoRoutePayment(args))
+    if (name === 'arcox_pay_create_nowpayments_sandbox_payment') return result(id, await payCreateNowpaymentsSandboxPayment(args))
+    if (name === 'arcox_pay_get_payment_status') return result(id, await payGetPaymentStatus(args))
+    if (name === 'arcox_pay_simulate_user_arc_payment') return result(id, await paySimulateUserArcPayment(args))
+    if (name === 'arcox_pay_simulate_bridge_to_base') return result(id, await paySimulateBridgeToBase(args))
+    if (name === 'arcox_pay_simulate_base_treasury_send') return result(id, await paySimulateBaseTreasurySend(args))
+    if (name === 'arcox_pay_simulate_nowpayments_finished') return result(id, await paySimulateNowpaymentsFinished(args))
+    if (name === 'arcox_pay_simulate_nowpayments_status') return result(id, await paySimulateNowpaymentsStatus(args))
+    if (name === 'arcox_pay_list_recent_payments') return result(id, await payListRecentPayments(args))
     if (name === 'arcox_agent_job') {
       if (isValueMovingCall(name, args)) enforceSpendLimits(name, args)
       return result(id, await agentJob(args))

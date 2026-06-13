@@ -47,6 +47,7 @@ Tools:
 - `arcox_execute_send`: executes a confirmed Arc token send. Without `confirmed: true`, it returns a quote only.
 - `arcox_quote_swap`: quotes a Circle proxy wallet swap through the ARCOX backend.
 - `arcox_execute_swap`: executes a confirmed Circle proxy wallet swap. Without `confirmed: true`, it returns a quote only.
+- `arcox_pay_create_nowpayments_sandbox_payment`, `arcox_pay_get_payment_status`, and `arcox_pay_simulate_*`: create and test the ARCOX Pay NOWPayments sandbox flow without moving real funds.
 - `arcox_agent_job`: plans and executes Agentic Economy operations: register agent, create/read job, set budget, fund, submit, and complete.
 
 Execution safety:

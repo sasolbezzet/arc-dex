@@ -71,3 +71,46 @@ export function quoteEcoRoute(input: Record<string, unknown>) {
 export function getNanopaymentsCapabilities() {
   return request('/api/nanopayments/capabilities')
 }
+
+export type NowpaymentsSandboxPayment = {
+  id: string
+  payment_id: string
+  provider_payment_id?: string | null
+  order_id: string
+  amount: string
+  price_amount: string
+  price_currency: string
+  pay_currency: string
+  pay_amount?: string | null
+  pay_address?: string | null
+  payment_status: string
+  internal_status: string
+  arc_treasury_address?: string | null
+  base_treasury_address?: string | null
+  nowpayments_destination_address?: string | null
+  arc_tx_hash?: string | null
+  bridge_tx_hash?: string | null
+  base_tx_hash?: string | null
+  invoice_url?: string | null
+  payment_url?: string | null
+  raw_provider_response?: unknown
+  metadata_json?: any
+  created_at: string
+  updated_at: string
+}
+
+export function createNowpaymentsSandboxPayment(input: Record<string, unknown>): Promise<{ ok: boolean; mockMode: boolean; payment: NowpaymentsSandboxPayment }> {
+  return request('/api/payments/nowpayments/create', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export function getNowpaymentsPaymentStatus(paymentId: string): Promise<{ ok: boolean; payment: NowpaymentsSandboxPayment }> {
+  return request(`/api/payments/nowpayments/${encodeURIComponent(paymentId)}/status`)
+}
+
+export function simulateNowpaymentsStep(path: string, input: Record<string, unknown>): Promise<{ ok: boolean; payment?: NowpaymentsSandboxPayment; event?: unknown }> {
+  return request(`/api/payments/nowpayments/simulate/${path}`, { method: 'POST', body: JSON.stringify(input) })
+}
+
+export function simulateNowpaymentsStatus(input: Record<string, unknown>): Promise<{ ok: boolean; payment?: NowpaymentsSandboxPayment; event?: unknown }> {
+  return request('/api/payments/nowpayments/simulate', { method: 'POST', body: JSON.stringify(input) })
+}

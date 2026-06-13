@@ -98,9 +98,18 @@ Webhook env:
 
 ```bash
 NOWPAYMENTS_API_KEY=
+NOWPAYMENTS_PUBLIC_KEY=
 NOWPAYMENTS_IPN_SECRET=
 NOWPAYMENTS_VERIFY_IPN=false
-NOWPAYMENTS_BASE_URL=https://api.nowpayments.io/v1
+NOWPAYMENTS_BASE_URL=https://api-sandbox.nowpayments.io/v1
+NOWPAYMENTS_MODE=sandbox
+
+ARCOX_PAY_BASE_URL=https://arc-dex-bice.vercel.app
+ARCOX_DEFAULT_PAY_CURRENCY=usdcbase
+ARCOX_DEFAULT_PRICE_CURRENCY=usd
+ARCOX_ARC_TREASURY_ADDRESS=
+ARCOX_BASE_TREASURY_ADDRESS=
+ARCOX_SANDBOX_NOWPAYMENTS_DESTINATION_ADDRESS=0xSANDBOX_NOWPAYMENTS_DESTINATION
 
 CIRCLE_API_KEY=
 CIRCLE_BASE_URL=https://api-sandbox.circle.com
@@ -109,6 +118,8 @@ CIRCLE_VERIFY_WEBHOOK=false
 ```
 
 For initial testing, keep `NOWPAYMENTS_VERIFY_IPN=false` and `CIRCLE_VERIFY_WEBHOOK=false` so test payloads without signatures are accepted. Enable verification only after provider secrets and exact signature headers are configured.
+
+ARCOX Pay NOWPayments sandbox guide: `docs/arcox-pay-nowpayments-sandbox.md`. Open `/pay/sandbox` to create a sandbox payment, view the 3-wallet flow, simulate Arc funding, simulate Arc to Base rebalance, simulate Base Treasury send to NOWPayments `pay_address`, and finish via NOWPayments IPN.
 
 Runtime check:
 

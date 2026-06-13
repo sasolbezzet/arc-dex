@@ -1,4 +1,5 @@
 import { getHeader, hmacHex, methodNotAllowed, parseJsonSafe, readRawBody, safeEqualHex, sendJson, stableStringify } from '../_webhook-utils.mjs'
+import { applyNowpaymentsEvent, paymentResponse } from '../_arcox-pay-store.mjs'
 
 const PROVIDER = 'nowpayments'
 
@@ -31,26 +32,14 @@ export default async function handler(req, res) {
     }
   }
 
-  const event = {
-    payment_id: payload.payment_id,
-    payment_status: payload.payment_status,
-    order_id: payload.order_id,
-    price_amount: payload.price_amount,
-    price_currency: payload.price_currency,
-    pay_amount: payload.pay_amount,
-    pay_currency: payload.pay_currency,
-    actually_paid: payload.actually_paid,
-    pay_address: payload.pay_address,
-    purchase_id: payload.purchase_id,
-    outcome_amount: payload.outcome_amount,
-    outcome_currency: payload.outcome_currency,
-  }
+  const result = applyNowpaymentsEvent(payload)
+  const event = result.event
 
-  console.log('[webhook:nowpayments] parsed event', event)
+  console.log('[webhook:nowpayments] parsed event', { ...event, duplicate: result.duplicate })
 
   // TODO: save NOWPayments webhook payload into payment_events/webhook_events table.
-  // TODO: update ARCOX payment status by payment_id/order_id.
   // TODO: if payment_status is finished/confirmed, mark order as paid and unlock ARCOX service.
+  // TODO: update ARCOX merchant callback when production settlement is enabled.
 
   return sendJson(res, 200, {
     ok: true,
@@ -59,5 +48,7 @@ export default async function handler(req, res) {
     payment_id: event.payment_id || null,
     payment_status: event.payment_status || null,
     order_id: event.order_id || null,
+    duplicate: result.duplicate,
+    payment: result.payment ? paymentResponse(result.payment) : null,
   })
 }

@@ -1,101 +1,113 @@
-import { useState } from 'react'
-import { createInvoice, getInvoiceStatus, getNanopaymentsCapabilities, quoteEcoRoute, simulateCircleWebhook } from '../payApi'
-import type { ArcoxInvoice } from '../payApi'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  createNowpaymentsSandboxPayment,
+  getNanopaymentsCapabilities,
+  getNowpaymentsPaymentStatus,
+  quoteEcoRoute,
+  simulateNowpaymentsStatus,
+  simulateNowpaymentsStep,
+} from '../payApi'
+import type { NowpaymentsSandboxPayment } from '../payApi'
 
-const EXAMPLES = [
-  ['POST /api/invoices', { orderId: 'ORDER-123', amount: '10', token: 'USDC', network: 'arc-testnet', merchantAddress: '0xMerchantAddress', memo: 'AI agent setup service', expiresInMinutes: 15 }],
-  ['GET /api/invoices/:invoiceId', { invoiceId: 'inv_123' }],
-  ['PATCH /api/invoices/:invoiceId', { status: 'pending', txHash: '0x...' }],
-  ['GET /api/invoices/:invoiceId/status', { invoiceId: 'inv_123' }],
-  ['POST /api/webhooks/circle-gateway', { notificationId: 'evt_123', eventType: 'gateway.mint.finalized', data: { invoiceId: 'inv_123', txHash: '0x...' } }],
-  ['POST /api/dev/simulate-webhook', { invoiceId: 'inv_123', eventType: 'gateway.mint.finalized', txHash: '0x...' }],
-  ['GET /api/nanopayments/capabilities', { protocol: 'x402', paymentRail: 'circle-gateway-nanopayments', live: false }],
+const TEST_COMMANDS = [
+  ['NOWPayments health', 'curl -i https://arc-dex-bice.vercel.app/api/webhooks/nowpayments'],
+  ['NOWPayments create', 'curl -i -X POST https://arc-dex-bice.vercel.app/api/payments/nowpayments/create -H "Content-Type: application/json" -d \'{"amount":1,"price_currency":"usd","pay_currency":"usdcbase","order_id":"ARCOX-TEST-001","description":"ARCOX Pay USDC Base sandbox test","user_id":"demo_user"}\''],
+  ['Circle health', 'curl -i https://arc-dex-bice.vercel.app/api/webhooks/circle'],
+  ['Circle HEAD', 'curl -I https://arc-dex-bice.vercel.app/api/webhooks/circle'],
 ]
 
 export function PaySandbox() {
+  const defaultOrderId = useMemo(() => `ARCOX-TEST-${Date.now()}`, [])
   const [form, setForm] = useState({
-    orderId: 'ORDER-123',
-    amount: '10',
-    token: 'USDC',
-    merchantAddress: '',
-    memo: 'AI agent setup service',
-    expiresInMinutes: '15',
+    amount: '1',
+    price_currency: 'usd',
+    pay_currency: 'usdcbase',
+    order_id: defaultOrderId,
+    description: 'ARCOX Pay USDC Base sandbox test',
+    user_id: 'demo_user',
   })
-  const [invoice, setInvoice] = useState<ArcoxInvoice | null>(null)
-  const [draftPreview, setDraftPreview] = useState(false)
-  const [statusId, setStatusId] = useState('')
-  const [statusResult, setStatusResult] = useState<any>(null)
-  const [webhook, setWebhook] = useState({ invoiceId: '', eventType: 'gateway.mint.finalized', txHash: '0x1230000000000000000000000000000000000000000000000000000000000123' })
-  const [webhookResult, setWebhookResult] = useState<any>(null)
-  const [eco, setEco] = useState({ sourceChain: 'base-sepolia', destinationChain: 'arc-testnet', sourceToken: 'USDC', destinationToken: 'USDC', amount: '10', invoiceId: '' })
+  const [payment, setPayment] = useState<NowpaymentsSandboxPayment | null>(null)
+  const [rawResult, setRawResult] = useState<any>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState('')
+  const [userWallet, setUserWallet] = useState('0xUSER')
   const [ecoResult, setEcoResult] = useState<any>(null)
   const [nanopaymentsResult, setNanopaymentsResult] = useState<any>(null)
-  const [error, setError] = useState('')
 
-  const updateForm = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+  const paymentId = payment?.id || ''
+  const isPending = payment && !['paid', 'finished', 'failed', 'expired'].includes(String(payment.payment_status || payment.internal_status).toLowerCase())
 
-  const previewInvoice = () => {
-    setError('')
-    if (!form.amount) {
-      setError('Amount is required.')
-      return
-    }
-    if (!form.merchantAddress) {
-      setError('Receiver wallet / merchant address is required.')
-      return
-    }
-    setDraftPreview(true)
-  }
+  useEffect(() => {
+    if (!paymentId || !isPending) return
+    const timer = window.setInterval(() => {
+      getNowpaymentsPaymentStatus(paymentId).then(result => {
+        setPayment(result.payment)
+        setRawResult(result)
+      }).catch(() => {})
+    }, 8000)
+    return () => window.clearInterval(timer)
+  }, [paymentId, isPending])
 
-  const create = async () => {
+  const update = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+
+  async function run(label: string, fn: () => Promise<any>) {
     try {
+      setBusy(label)
       setError('')
-      const next = await createInvoice({ ...form, expiresInMinutes: Number(form.expiresInMinutes || 15) })
-      setInvoice(next)
-      setStatusId(next.invoiceId)
-      setWebhook(prev => ({ ...prev, invoiceId: next.invoiceId }))
-      setEco(prev => ({ ...prev, invoiceId: next.invoiceId }))
+      const result = await fn()
+      setRawResult(result)
+      if (result.payment) setPayment(result.payment)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create invoice failed.')
-    }
-  }
-
-  const checkStatus = async () => {
-    try {
-      setError('')
-      setStatusResult(await getInvoiceStatus(statusId))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Status check failed.')
+      setError(e instanceof Error ? e.message : `${label} failed`)
+    } finally {
+      setBusy('')
     }
   }
 
-  const simulate = async () => {
-    try {
-      setError('')
-      const result = await simulateCircleWebhook(webhook)
-      setWebhookResult(result)
-      if (result.invoice) setInvoice(result.invoice)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Webhook simulation failed. ENABLE_DEV_TOOLS may be disabled.')
-    }
-  }
+  const createPayment = () => run('create', async () => createNowpaymentsSandboxPayment({ ...form, amount: Number(form.amount) }))
+  const checkStatus = () => paymentId && run('status', async () => getNowpaymentsPaymentStatus(paymentId))
+  const simArc = () => paymentId && run('arc', async () => simulateNowpaymentsStep('user-arc-payment', {
+    payment_id: paymentId,
+    user_wallet_address: userWallet,
+    amount: form.amount,
+    arc_tx_hash: `0xmockarc${Date.now().toString(16)}`,
+  }))
+  const simBridge = () => paymentId && run('bridge', async () => simulateNowpaymentsStep('bridge-to-base', {
+    payment_id: paymentId,
+    bridge_tx_hash: `0xmockbridge${Date.now().toString(16)}`,
+  }))
+  const simBaseSend = () => paymentId && run('base-send', async () => simulateNowpaymentsStep('base-treasury-send', {
+    payment_id: paymentId,
+    base_tx_hash: `0xmockbase${Date.now().toString(16)}`,
+  }))
+  const simFinished = () => paymentId && run('finish', async () => simulateNowpaymentsStep('finish', { payment_id: paymentId }))
+  const simFailed = () => payment && run('failed', async () => simulateNowpaymentsStatus({
+    payment_id: payment.provider_payment_id || payment.id,
+    order_id: payment.order_id,
+    payment_status: 'failed',
+  }))
+  const previewEco = () => run('eco', async () => {
+    const result = await quoteEcoRoute({
+      sourceChain: 'base',
+      destinationChain: 'arc-testnet',
+      sourceToken: 'USDC',
+      destinationToken: 'USDC',
+      amount: form.amount,
+      recipient: payment?.arc_treasury_address || 'ARCOX Arc Treasury',
+      invoiceId: payment?.id,
+    })
+    setEcoResult(result)
+    return result
+  })
+  const loadNanopayments = () => run('nanopayments', async () => {
+    const result = await getNanopaymentsCapabilities()
+    setNanopaymentsResult(result)
+    return result
+  })
 
-  const previewEco = async () => {
-    try {
-      setError('')
-      setEcoResult(await quoteEcoRoute({ ...eco, recipient: form.merchantAddress }))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Eco preview failed.')
-    }
-  }
-
-  const loadNanopayments = async () => {
-    try {
-      setError('')
-      setNanopaymentsResult(await getNanopaymentsCapabilities())
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Nanopayments readiness check failed.')
-    }
+  const copy = async (value?: string | null) => {
+    if (!value) return
+    await navigator.clipboard?.writeText(value)
   }
 
   return (
@@ -103,104 +115,99 @@ export function PaySandbox() {
       <section className='glass sandbox-hero'>
         <div className='docs-kicker'>ARCOX Pay</div>
         <h2>ARCOX Pay Sandbox</h2>
-        <p>A developer sandbox for testing ARCOX Pay invoices, USDC payment links, webhook events, and API responses on Arc Testnet.</p>
+        <p>USDC-first sandbox for NOWPayments invoices, treasury routing simulation, Circle webhook listening, MCP payment tools, and x402 readiness on Arc Testnet.</p>
+        <div className='inline-warning'>Sandbox/testing only. Do not send mainnet funds unless production mode is enabled.</div>
       </section>
 
       {error && <div className='inline-error'>{error}</div>}
 
       <section className='sandbox-grid'>
         <div className='glass sandbox-card'>
-          <h3>Create Payment Request</h3>
-          <p className='pay-muted'>For merchants: enter the receiver wallet first. The payer cannot edit this address on checkout.</p>
-          <Field label='Order ID' value={form.orderId} onChange={v => updateForm('orderId', v)} />
-          <Field label='Amount' value={form.amount} onChange={v => updateForm('amount', v)} />
-          <Field label='Token' value={form.token} onChange={v => updateForm('token', v)} />
-          <Field label='Receiver Wallet / Merchant Address' value={form.merchantAddress} onChange={v => { updateForm('merchantAddress', v); setDraftPreview(false) }} />
-          <Field label='Receive Network' value='arc-testnet' onChange={() => {}} disabled />
-          <Field label='Memo' value={form.memo} onChange={v => updateForm('memo', v)} />
-          <Field label='Expires In Minutes' value={form.expiresInMinutes} onChange={v => updateForm('expiresInMinutes', v)} />
-          <button className='btn btn-primary' onClick={previewInvoice}>Preview Invoice</button>
-          {draftPreview && (
-            <div className='pay-preview'>
-              <h3>Invoice Preview</h3>
+          <h3>Create NOWPayments Sandbox Payment</h3>
+          <Field label='Amount' value={form.amount} onChange={v => update('amount', v)} />
+          <Field label='Price Currency' value={form.price_currency} onChange={v => update('price_currency', v)} />
+          <Field label='Pay Currency' value={form.pay_currency} onChange={v => update('pay_currency', v)} />
+          <Field label='Order ID' value={form.order_id} onChange={v => update('order_id', v)} />
+          <Field label='Description' value={form.description} onChange={v => update('description', v)} />
+          <Field label='User ID' value={form.user_id} onChange={v => update('user_id', v)} />
+          <button className='btn btn-primary' onClick={createPayment} disabled={busy === 'create'}>Create NOWPayments Sandbox Payment</button>
+        </div>
+
+        <div className='glass sandbox-card wide'>
+          <h3>3-Wallet Flow</h3>
+          <div className='flow-steps'>
+            <FlowStep title='User Wallet' value={userWallet} extra='Pays USDC on Arc / mock Arc testnet' />
+            <FlowStep title='ARCOX Arc Treasury' value={payment?.arc_treasury_address || 'Set ARCOX_ARC_TREASURY_ADDRESS'} extra='Receives user payment' />
+            <FlowStep title='ARCOX Base Treasury' value={payment?.base_treasury_address || 'Set ARCOX_BASE_TREASURY_ADDRESS'} extra='Simulates USDC Base liquidity' />
+            <FlowStep title='NOWPayments pay_address' value={payment?.nowpayments_destination_address || payment?.pay_address || 'Created by NOWPayments'} extra='Destination returned by provider' />
+          </div>
+          <Field label='User Wallet for Simulation' value={userWallet} onChange={setUserWallet} />
+        </div>
+
+        <div className='glass sandbox-card wide'>
+          <h3>Payment Detail</h3>
+          {payment ? (
+            <>
               <div className='pay-grid'>
-                <Info label='Buyer pays' value={`${form.amount || '0'} USDC`} />
-                <Info label='Merchant receives' value={`${form.amount || '0'} USDC on Arc Testnet`} />
-                <Info label='Receiver wallet' value={form.merchantAddress || '-'} mono />
-                <Info label='Order ID' value={form.orderId || '-'} />
-                <Info label='Memo' value={form.memo || '-'} />
-                <Info label='Expires in' value={`${form.expiresInMinutes || '15'} minutes`} />
+                <Info label='Order ID' value={payment.order_id} />
+                <Info label='Internal Payment ID' value={payment.id} mono />
+                <Info label='Provider Payment ID' value={payment.provider_payment_id || '-'} mono />
+                <Info label='Payment Status' value={payment.payment_status} />
+                <Info label='Internal Status' value={payment.internal_status} />
+                <Info label='Pay Amount' value={`${payment.pay_amount || payment.amount} ${payment.pay_currency}`} />
+                <Info label='Pay Address' value={payment.pay_address || '-'} mono />
+                <Info label='Arc Tx' value={payment.arc_tx_hash || '-'} mono />
+                <Info label='Bridge Tx' value={payment.bridge_tx_hash || '-'} mono />
+                <Info label='Base Tx' value={payment.base_tx_hash || '-'} mono />
               </div>
-              <button className='btn btn-primary' onClick={create}>Create Payment Link</button>
-            </div>
+              <div className='button-row wrap'>
+                <button className='btn btn-secondary' onClick={checkStatus}>Check Status</button>
+                <button className='btn btn-secondary' onClick={simArc}>Simulate User Paid Arc Treasury</button>
+                <button className='btn btn-secondary' onClick={simBridge}>Simulate Bridge Arc to Base</button>
+                <button className='btn btn-secondary' onClick={simBaseSend}>Simulate Base Treasury Sent to NOWPayments</button>
+                <button className='btn btn-primary' onClick={simFinished}>Simulate NOWPayments Finished</button>
+                <button className='btn btn-secondary' onClick={simFailed}>Simulate Failed</button>
+                <button className='btn btn-secondary' onClick={() => copy(payment.pay_address)}>Copy Payment Address</button>
+                <button className='btn btn-secondary' onClick={() => copy(payment.payment_url || payment.invoice_url)}>Copy Payment URL</button>
+              </div>
+            </>
+          ) : (
+            <p className='pay-muted'>Create a sandbox payment to see provider IDs, pay address, treasury addresses, and simulation controls.</p>
           )}
-          {invoice && (
-            <div className='json-box'>
-              <a href={invoice.paymentUrl} className='header-link-button'>Lihat preview pembayaran</a>
-              <pre>{JSON.stringify(invoice, null, 2)}</pre>
-            </div>
-          )}
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>Payment Status Checker</h3>
-          <Field label='Invoice ID' value={statusId} onChange={setStatusId} />
-          <button className='btn btn-primary' onClick={checkStatus}>Check Status</button>
-          {statusResult && <pre className='json-box'>{JSON.stringify(statusResult, null, 2)}</pre>}
-        </div>
-
-        <div className='glass sandbox-card'>
-          <h3>Webhook Simulator</h3>
-          <Field label='Invoice ID' value={webhook.invoiceId} onChange={v => setWebhook(prev => ({ ...prev, invoiceId: v }))} />
-          <Field label='Event Type' value={webhook.eventType} onChange={v => setWebhook(prev => ({ ...prev, eventType: v }))} />
-          <Field label='Tx Hash' value={webhook.txHash} onChange={v => setWebhook(prev => ({ ...prev, txHash: v }))} />
-          <button className='btn btn-primary' onClick={simulate}>Simulate Webhook</button>
-          {webhookResult && <pre className='json-box'>{JSON.stringify(webhookResult, null, 2)}</pre>}
-        </div>
-
-        <div className='glass sandbox-card'>
-          <h3>Pay Cross-Chain Preview</h3>
-          <p className='pay-muted'>Preview how a buyer can pay from another chain while the merchant receives USDC on Arc. Receiver is taken from the invoice/merchant field.</p>
-          <Field label='Source Chain' value={eco.sourceChain} onChange={v => setEco(prev => ({ ...prev, sourceChain: v }))} />
-          <Field label='Destination Chain' value={eco.destinationChain} onChange={v => setEco(prev => ({ ...prev, destinationChain: v }))} />
-          <Field label='Source Token' value={eco.sourceToken} onChange={v => setEco(prev => ({ ...prev, sourceToken: v }))} />
-          <Field label='Destination Token' value={eco.destinationToken} onChange={v => setEco(prev => ({ ...prev, destinationToken: v }))} />
-          <Field label='Amount' value={eco.amount} onChange={v => setEco(prev => ({ ...prev, amount: v }))} />
-          <Field label='Receiver Wallet' value={form.merchantAddress} onChange={v => updateForm('merchantAddress', v)} />
-          <Field label='Invoice ID' value={eco.invoiceId} onChange={v => setEco(prev => ({ ...prev, invoiceId: v }))} />
+          <h3>Eco / Cross-Chain Preview</h3>
+          <p className='pay-muted'>Preview future pay cross-chain routing. This is adapter/mock readiness, not hidden execution.</p>
           <button className='btn btn-primary' onClick={previewEco}>Preview Eco Route</button>
           {ecoResult && <pre className='json-box'>{JSON.stringify(ecoResult, null, 2)}</pre>}
         </div>
 
         <div className='glass sandbox-card'>
           <h3>Circle Nanopayments Readiness</h3>
-          <p>Preview ARCOX x402 readiness for future Circle Gateway Nanopayments. This does not make gas-free nanopayments live.</p>
+          <p className='pay-muted'>Checks x402/Gateway readiness metadata. Gas-free nanopayments are not live.</p>
           <button className='btn btn-primary' onClick={loadNanopayments}>Check Readiness</button>
           {nanopaymentsResult && <pre className='json-box'>{JSON.stringify(nanopaymentsResult, null, 2)}</pre>}
         </div>
-      </section>
 
-      <section className='sandbox-grid'>
         <div className='glass sandbox-card wide'>
-          <h3>API Viewer</h3>
+          <h3>Raw Response</h3>
+          <details open>
+            <summary>Provider/API JSON</summary>
+            <pre className='json-box'>{JSON.stringify(rawResult || payment || {}, null, 2)}</pre>
+          </details>
+        </div>
+
+        <div className='glass sandbox-card wide'>
+          <h3>API Test Commands</h3>
           <div className='api-example-grid'>
-            {EXAMPLES.map(([title, payload]) => (
-              <div className='api-example' key={String(title)}>
-                <strong>{String(title)}</strong>
-                <pre>{JSON.stringify(payload, null, 2)}</pre>
+            {TEST_COMMANDS.map(([title, command]) => (
+              <div className='api-example' key={title}>
+                <strong>{title}</strong>
+                <pre>{command}</pre>
               </div>
             ))}
           </div>
-        </div>
-
-        <div className='glass sandbox-card'>
-          <h3>Docs / Links</h3>
-          {['ARCOX Pay docs', 'ARCOX MCP docs', 'ARCOX API docs', 'Circle Gateway docs', 'Circle Gateway Nanopayments docs', 'Eco docs', 'x402 docs', 'Privacy roadmap'].map(item => <p key={item}>{item}</p>)}
-        </div>
-
-        <div className='glass sandbox-card'>
-          <h3>Glossary</h3>
-          <p><strong>Merchant</strong> receives payment. <strong>Buyer</strong> pays invoice. <strong>Invoice</strong> is a payment request. <strong>Payment link</strong> opens checkout. <strong>USDC</strong> is the token. <strong>Arc</strong> is the testnet network. <strong>Webhook</strong> updates status. <strong>Circle Gateway</strong> lifecycle events are supported. <strong>Nanopayments</strong> are x402 readiness only. <strong>Eco Routes</strong> are mock mode. <strong>x402</strong> is disabled by default. <strong>MCP agent</strong> uses quote-before-execute. <strong>Privacy roadmap</strong> is future only.</p>
         </div>
       </section>
     </div>
@@ -221,6 +228,16 @@ function Info({ label, value, mono }: { label: string; value: string; mono?: boo
     <div className='pay-info'>
       <span>{label}</span>
       <strong className={mono ? 'mono' : ''}>{value}</strong>
+    </div>
+  )
+}
+
+function FlowStep({ title, value, extra }: { title: string; value: string; extra: string }) {
+  return (
+    <div className='flow-step'>
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{extra}</small>
     </div>
   )
 }

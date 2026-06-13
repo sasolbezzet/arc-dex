@@ -61,6 +61,7 @@ const SOLANA_TOKEN_MESSENGER_PROGRAM = 'CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdg
 const SOLANA_MESSAGE_TRANSMITTER_PROGRAM = 'CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC'
 const ARCOX_WEB_URL = process.env.ARCOX_WEB_URL || process.env.ARCOX_API_URL || 'https://arc-dex-bice.vercel.app'
 const ARCOX_BACKEND_URL = process.env.ARCOX_BACKEND_URL || 'https://43.163.98.128.nip.io'
+const ARCOX_PAY_API_URL = process.env.ARCOX_PAY_API_URL || ARCOX_WEB_URL
 const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired']
@@ -890,6 +891,28 @@ async function backendGet(path, token = '', timeoutMs = BACKEND_FETCH_TIMEOUT_MS
       Accept: 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+async function payPostJson(path, body, timeoutMs = BACKEND_FETCH_TIMEOUT_MS) {
+  const response = await fetch(`${ARCOX_PAY_API_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+async function payGetJson(path, timeoutMs = BACKEND_FETCH_TIMEOUT_MS) {
+  const response = await fetch(`${ARCOX_PAY_API_URL}${path}`, {
+    headers: { Accept: 'application/json' },
     signal: AbortSignal.timeout(timeoutMs),
   })
   const data = await response.json().catch(() => ({}))
@@ -2906,6 +2929,65 @@ export async function simulateCircleWebhook(input = {}) {
 
 export async function quoteEcoRoutePayment(input = {}) {
   return postJson('/api/eco/route-preview', input)
+}
+
+export async function payCreateNowpaymentsSandboxPayment(input = {}) {
+  return payPostJson('/api/payments/nowpayments/create', {
+    amount: input.amount,
+    price_currency: input.price_currency || 'usd',
+    pay_currency: input.pay_currency || 'usdcbase',
+    order_id: input.order_id,
+    description: input.description,
+    user_id: input.user_id,
+    case: input.case,
+  })
+}
+
+export async function payGetPaymentStatus(input = {}) {
+  const paymentId = String(input.payment_id || input.paymentId || '')
+  if (!paymentId) throw new Error('payment_id is required.')
+  return payGetJson(`/api/payments/nowpayments/${encodeURIComponent(paymentId)}/status`)
+}
+
+export async function paySimulateUserArcPayment(input = {}) {
+  return payPostJson('/api/payments/nowpayments/simulate/user-arc-payment', {
+    payment_id: input.payment_id || input.paymentId,
+    user_wallet_address: input.user_wallet_address,
+    amount: input.amount,
+    arc_tx_hash: input.arc_tx_hash,
+  })
+}
+
+export async function paySimulateBridgeToBase(input = {}) {
+  return payPostJson('/api/payments/nowpayments/simulate/bridge-to-base', {
+    payment_id: input.payment_id || input.paymentId,
+    bridge_tx_hash: input.bridge_tx_hash,
+  })
+}
+
+export async function paySimulateBaseTreasurySend(input = {}) {
+  return payPostJson('/api/payments/nowpayments/simulate/base-treasury-send', {
+    payment_id: input.payment_id || input.paymentId,
+    base_tx_hash: input.base_tx_hash,
+  })
+}
+
+export async function paySimulateNowpaymentsFinished(input = {}) {
+  return payPostJson('/api/payments/nowpayments/simulate/finish', {
+    payment_id: input.payment_id || input.paymentId,
+  })
+}
+
+export async function paySimulateNowpaymentsStatus(input = {}) {
+  return payPostJson('/api/payments/nowpayments/simulate', {
+    payment_id: input.payment_id || input.paymentId,
+    order_id: input.order_id,
+    payment_status: input.payment_status,
+  })
+}
+
+export async function payListRecentPayments(input = {}) {
+  return payGetJson(`/api/payments/nowpayments/recent?limit=${encodeURIComponent(String(input.limit || 10))}`)
 }
 
 function readAutoMintStatuses() {
