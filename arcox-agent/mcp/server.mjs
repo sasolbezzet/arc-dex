@@ -820,7 +820,7 @@ async function rpcResponse(message) {
     if (name === 'arcox_execute_bridge') {
       const fromChain = normalizeMcpChain(args.fromChain)
       const toChain = normalizeMcpChain(args.toChain)
-      const fastSource = ['Arc_Testnet', 'Ethereum_Sepolia', 'Base_Sepolia', 'Arbitrum_Sepolia', 'HyperEVM_Testnet', 'Solana_Devnet'].includes(fromChain)
+      const fastSource = fromChain === 'Arc_Testnet' || fromChain === 'Solana_Devnet'
       if (args.confirmed !== true) {
         const quoteArgs = { ...args, fromChain: fromChain || args.fromChain, toChain: toChain || args.toChain }
         return result(id, attachPreview('arcox_quote_bridge', quoteArgs, await quoteBridge(quoteArgs)))

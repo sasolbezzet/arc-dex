@@ -313,7 +313,7 @@ const cctpChains = {
     explorer: 'https://testnet.arcscan.app/tx/',
     rpc: ARC_RPC,
     chain: arcTestnet,
-    fast: true,
+    fast: false,
   },
   Ethereum_Sepolia: {
     id: 'Ethereum_Sepolia',
@@ -325,7 +325,7 @@ const cctpChains = {
     explorer: 'https://sepolia.etherscan.io/tx/',
     rpc: process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com',
     chain: defineChain({ id: 11155111, name: 'Ethereum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ETHEREUM_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com'] } }, blockExplorers: { default: { name: 'Etherscan', url: 'https://sepolia.etherscan.io' } } }),
-    fast: true,
+    fast: false,
   },
   Base_Sepolia: {
     id: 'Base_Sepolia',
@@ -337,7 +337,7 @@ const cctpChains = {
     explorer: 'https://sepolia.basescan.org/tx/',
     rpc: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
     chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org'] } }, blockExplorers: { default: { name: 'BaseScan', url: 'https://sepolia.basescan.org' } } }),
-    fast: true,
+    fast: false,
   },
   Arbitrum_Sepolia: {
     id: 'Arbitrum_Sepolia',
@@ -349,7 +349,7 @@ const cctpChains = {
     explorer: 'https://sepolia.arbiscan.io/tx/',
     rpc: process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com',
     chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [process.env.ARBITRUM_SEPOLIA_RPC || 'https://arbitrum-sepolia.publicnode.com'] } }, blockExplorers: { default: { name: 'Arbiscan', url: 'https://sepolia.arbiscan.io' } } }),
-    fast: true,
+    fast: false,
   },
   HyperEVM_Testnet: {
     id: 'HyperEVM_Testnet',
@@ -1256,6 +1256,7 @@ function assertNativeBridgeSupported({ token, source, fromInfo, toInfo }) {
   if (!isNativeBridgeIntent(bridgeToken, fromInfo, toInfo)) {
     throw new Error(`Native ${bridgeToken} bridge is only supported from its source chain to Arc Testnet.`)
   }
+  throw new Error(`Native ${bridgeToken} bridge bundle is disabled. Swap ${bridgeToken} to USDC first, then bridge USDC to Arc with the legacy direct CCTP flow.`)
   if (fromInfo.solana) throw new Error('SOL-native bridge is not enabled in MCP. Current Solana route supports USDC only.')
   const router = nativeSwapBridgeRouterFor(fromInfo.id)
   if (!router) throw new Error(`Native ${bridgeToken} bridge router is not deployed for ${fromInfo.id}.`)
@@ -1440,7 +1441,7 @@ export async function executeBridge(intent, owner) {
   const amount = parseUnits(intent.amount, 6)
   const sourceClient = clientFor(fromInfo)
   const destinationClient = clientFor(toInfo)
-  const useLegacyInboundUsdc = false
+  const useLegacyInboundUsdc = fromInfo.id !== 'Arc_Testnet' && toInfo.id === 'Arc_Testnet'
   const tokenBalance = await sourceClient.readContract({ address: fromInfo.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [owner] })
   if (tokenBalance < amount) {
     throw new Error(`Insufficient USDC on ${fromInfo.id}. Balance ${formatUnits(tokenBalance, 6)} USDC, need ${intent.amount}.`)
@@ -2473,7 +2474,7 @@ export async function quoteBridge(intent) {
   }
   const amount = parseUnits(String(intent.amount), 6)
   const sourceClient = clientFor(fromInfo)
-  const useLegacyInboundUsdc = false
+  const useLegacyInboundUsdc = fromInfo.id !== 'Arc_Testnet' && toInfo.id === 'Arc_Testnet'
   const router = useLegacyInboundUsdc ? null : routerFor(fromInfo.id)
   if (!useLegacyInboundUsdc && !router) throw new Error(`ArcoxRouter is not deployed for ${fromInfo.id}; refusing direct bridge without platform fee.`)
   const solanaRecipient = toInfo.solana ? solanaKeypair().publicKey.toBase58() : null
