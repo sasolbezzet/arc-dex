@@ -48,6 +48,10 @@ const NATIVE_SWAP_BRIDGE_ROUTER: Record<string,string> = {
   Ethereum_Sepolia: '0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59',
   Base_Sepolia: '0x3c5beFa0c208F0732D2c357f26EB897E727da498',
 }
+const NATIVE_QUOTE_RPC: Record<string,string> = {
+  Ethereum_Sepolia: 'https://ethereum-sepolia-rpc.publicnode.com',
+  Base_Sepolia: 'https://sepolia.base.org',
+}
 const ARCOX_ROUTER_ABI = [{
   type: 'function',
   name: 'bridgeUsdcWithFee',
@@ -133,6 +137,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const [solanaWallet, setSolanaWallet] = useState<{address:string;provider:any}|null>(null)
   const [solanaUsdcBal, setSolanaUsdcBal] = useState('0')
   const [nativeGasEstimate, setNativeGasEstimate] = useState('')
+  const [nativeQuote, setNativeQuote] = useState<{estimatedReceive:string;platformFee:string;poolFee:number}|null>(null)
+  const [nativeQuoteLoading, setNativeQuoteLoading] = useState(false)
   const BRIDGE_TOKENS = ['USDC','cirBTC']
   const [token, setToken] = useState('USDC')
   const TOKEN_DECIMALS: Record<string,number> = { USDC:6, cirBTC:8 }
@@ -158,7 +164,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     : '-'
   const routerFee = !isFromSolana && (ARCOX_ROUTER[fromChain] || token !== 'USDC') ? platformFee : isFromSolana && token === 'USDC' ? platformFee : '-'
   const platformFeeLabel = isNativeBridgeToken
-    ? nativeBridgeExecutable ? 'Quote before bridge' : 'Tidak tersedia'
+    ? nativeBridgeExecutable ? nativeQuote ? `${nativeQuote.platformFee} USDC` : nativeQuoteLoading ? 'Calculating...' : '-' : 'Route unavailable'
     : routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
   const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
   const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)-parseFloat(routerFee==='-'?'0':routerFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
@@ -222,7 +228,30 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
   useEffect(() => {
     setNativeGasEstimate('')
+    setNativeQuote(null)
   }, [fromChain, toChain, token, amount])
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!address || !amount || !nativeBridgeExecutable || Number(amount) <= 0) return
+      setNativeQuoteLoading(true)
+      try {
+        const quote = await quoteNativeBridge(parseUnits(amount, 18), true)
+        if (!cancelled) setNativeQuote({
+          estimatedReceive: formatUnits(quote.netUsdc, 6),
+          platformFee: formatUnits(quote.platformFee, 6),
+          poolFee: quote.poolFee,
+        })
+      } catch {
+        if (!cancelled) setNativeQuote(null)
+      } finally {
+        if (!cancelled) setNativeQuoteLoading(false)
+      }
+    }
+    const timer = setTimeout(run, 450)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [address, amount, fromChain, toChain, token, nativeBridgeExecutable])
 
   const buildReceiveMessageCalldata = (message: string, attestation: string) => {
     const msgHex = message.startsWith('0x') ? message.slice(2) : message
@@ -300,8 +329,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amountLabel} ${tokenLabel} → ${destinationChain}`, steps:[...localSteps] })
   }
 
-  const quoteNativeBridge = async (nativeAmount: bigint) => {
-    if (!address || !window.ethereum) throw new Error('Wallet belum terhubung.')
+  const quoteNativeBridge = async (nativeAmount: bigint, usePublicRpc = false) => {
+    if (!address) throw new Error('Wallet belum terhubung.')
     const routerAddr = NATIVE_SWAP_BRIDGE_ROUTER[fromChain]
     if (!routerAddr) throw new Error(`Native bridge router belum tersedia untuk ${fromChain}.`)
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 900)
@@ -314,11 +343,26 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           functionName: 'swapNativeAndBridgeUsdc',
           args: [26, mintRecipient as `0x${string}`, `0x${'0'.repeat(64)}`, poolFee, 1n, deadline, 10n, Number(CCTP_FAST_FINALITY_THRESHOLD)],
         })
-        const result = await window.ethereum.request({
-          method:'eth_call',
-          params:[{ from:address, to:routerAddr, data, value:toHex(nativeAmount) }, 'latest'],
-        })
-        const decoded = decodeFunctionResult({ abi:NATIVE_SWAP_BRIDGE_ROUTER_ABI, functionName:'swapNativeAndBridgeUsdc', data:result })
+        let result: string
+        if (usePublicRpc) {
+          const rpc = NATIVE_QUOTE_RPC[fromChain]
+          if (!rpc) throw new Error('RPC quote unavailable')
+          const response = await fetch(rpc, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc:'2.0', id:1, method:'eth_call', params:[{ from:address, to:routerAddr, data, value:toHex(nativeAmount) }, 'latest'] }),
+          })
+          const body = await response.json()
+          if (body.error || !body.result) throw new Error(body.error?.message || 'RPC quote failed')
+          result = body.result
+        } else {
+          if (!window.ethereum) throw new Error('Wallet belum terhubung.')
+          result = await window.ethereum.request({
+            method:'eth_call',
+            params:[{ from:address, to:routerAddr, data, value:toHex(nativeAmount) }, 'latest'],
+          })
+        }
+        const decoded = decodeFunctionResult({ abi:NATIVE_SWAP_BRIDGE_ROUTER_ABI, functionName:'swapNativeAndBridgeUsdc', data:result as `0x${string}` })
         quotes.push({ poolFee, usdcOut:decoded[0] as bigint, platformFee:decoded[1] as bigint, netUsdc:decoded[2] as bigint, deadline })
       } catch {}
     }
@@ -1327,7 +1371,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
         {isNativeBridgeToken && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gas estimate</span><span>{nativeBridgeExecutable ? nativeGasEstimate || 'Before wallet popup' : 'Route unavailable'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : 'Belum aktif'}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Quote on bridge' : 'Unsupported' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? nativeQuote ? `~${nativeQuote.estimatedReceive}` : nativeQuoteLoading ? 'Calculating...' : 'Enter amount' : 'Route unavailable' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>
+        {isNativeBridgeToken && nativeQuote && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Pool fee</span><span>{nativeQuote.poolFee}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span style={{color:'#10b981'}}>3x (approve + burn + mint)</span></div>}
         {!isFromSolana && isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span>2x + Solflare 1x</span></div>}
