@@ -1,19 +1,11 @@
-// App Kit SDK helpers — integrasi bridge Arc ↔ Solana (Devnet).
-// Dokumentasi: https://docs.arc.io/app-kit/bridge
-// Mode "Browser wallet": MetaMask (EVM) + Solflare/Phantom (Solana).
-//
-// CCTP v2 flow: approve → burn → fetchAttestation → mint
-//   - Burn   : popup MetaMask / Solflare (user tanda-tangan)
-//   - Attestation: polling Iris API Circle
-//   - Mint   : "permissionless relay" — tidak perlu popup wallet
-//              (Circle Orbit Forwarder relay attestation ke on-chain)
+// App Kit SDK helpers for Arc swap only.
+// Bridge flows are implemented manually in BridgePanel with wallet-signed
+// approve/burn/mint transactions, without AppKit bridge delegation.
 
-import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
-import { ArcTestnet, SolanaDevnet } from '@circle-fin/bridge-kit'
+import { AppKit, SwapChain } from '@circle-fin/app-kit'
+import { ArcTestnet } from '@circle-fin/bridge-kit'
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
-import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
-import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 
@@ -84,46 +76,12 @@ function getKit(): AppKit {
   return kitInstance
 }
 
-export type AppKitChain =
-  | 'Arc_Testnet'
-  | 'Ethereum_Sepolia'
-  | 'Base_Sepolia'
-  | 'Arbitrum_Sepolia'
-  | 'Solana_Devnet'
-
 // ── EVM adapter ─────────────────────────────────────────────────
 export async function buildEvmAdapter() {
   if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
   return await createViemAdapterFromProvider({
     provider: window.ethereum,
     capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet] },
-  } as any)
-}
-
-// ── Solana adapter ──────────────────────────────────────────────
-export async function buildSolanaAdapter() {
-  const auto = autoDetectSolanaProvider()
-  if (!auto) {
-    throw new Error('Wallet Solana tidak terdeteksi. Install Solflare atau Phantom.')
-  }
-
-  const raw = auto.kind === 'phantom' ? getPhantomProvider()! : getSolflareProvider()!
-  if (!raw) throw new Error(`Wallet ${auto.kind} tidak ditemukan.`)
-
-  if (!raw.isConnected) {
-    await raw.connect()
-  }
-
-  // Bungkus provider — expose .address (string base58) yang adapter butuhkan.
-  const provider = auto.kind === 'phantom' ? wrapPhantom(raw) : wrapSolflare(raw)
-
-  return await createSolanaKitAdapterFromProvider({
-    provider,
-    getRpc: () => createSolanaRpc(SOLANA_DEVNET_RPC),
-    capabilities: {
-      addressContext: 'user-controlled',
-      supportedChains: [SolanaDevnet],
-    },
   } as any)
 }
 
@@ -188,48 +146,6 @@ export async function getUsdcBalance(pubkey: string): Promise<number> {
   } catch {
     return 0
   }
-}
-
-// ── Bridge ──────────────────────────────────────────────────────
-export interface BridgeArgs {
-  from: AppKitChain
-  to: AppKitChain
-  amount: string
-  speed?: 'FAST' | 'SLOW'
-  recipient?: string
-}
-
-export async function bridgeWithAppKit(args: BridgeArgs): Promise<unknown> {
-  const kit = getKit()
-  const fromIsSolana = args.from === 'Solana_Devnet'
-  const toIsSolana   = args.to   === 'Solana_Devnet'
-
-  if (fromIsSolana && toIsSolana) {
-    throw new Error('Bridge Solana ke Solana tidak didukung.')
-  }
-
-  const evmAdapter   = await buildEvmAdapter()
-  const solanaAdapter = await buildSolanaAdapter()
-
-  const speed: TransferSpeed = args.speed === 'SLOW' ? TransferSpeed.SLOW : TransferSpeed.FAST
-
-  const fromCtx: any = {
-    adapter: fromIsSolana ? solanaAdapter : evmAdapter,
-    chain:   args.from,
-  }
-  const toCtx: any = {
-    adapter: toIsSolana ? solanaAdapter : evmAdapter,
-    chain:   args.to,
-  }
-  if (args.recipient) toCtx.recipientAddress = args.recipient
-
-  return await kit.bridge({
-    from: fromCtx,
-    to:   toCtx,
-    amount: args.amount,
-    token:  'USDC',
-    config: { transferSpeed: speed },
-  } as any)
 }
 
 export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: string; amountIn: string; kitKey: string }): Promise<any> {
