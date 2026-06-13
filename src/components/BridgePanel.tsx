@@ -21,8 +21,8 @@ const EVM_CHAINS = [
 const SOLANA_CHAIN = { id: 'Solana_Devnet', label: 'Solana Devnet (Solana)' }
 const ALL_DST_CHAINS = [...EVM_CHAINS, SOLANA_CHAIN]
 const NATIVE_TO_ARC: Record<string,{ token:string; symbol:string; label:string; note:string; unavailableReason?:string }> = {
-  Ethereum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Ethereum native ETH', note:'Native ETH bundle route disabled. Swap ETH to USDC first, then bridge USDC with legacy CCTP.', unavailableReason:'Native ETH bundle route disabled. Use separate ETH to USDC swap, then bridge USDC to Arc.' },
-  Base_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Base native ETH', note:'Native ETH bundle route disabled. Swap ETH to USDC first, then bridge USDC with legacy CCTP.', unavailableReason:'Native ETH bundle route disabled. Use separate ETH to USDC swap, then bridge USDC to Arc.' },
+  Ethereum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Ethereum native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.' },
+  Base_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Base native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.' },
   Arbitrum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Arbitrum native ETH', note:'ETH is the gas token on Arbitrum Sepolia.', unavailableReason:'Waiting for a verified router/liquid WETH-USDC route on Arbitrum Sepolia.' },
   HyperEVM_Testnet: { token:'HYPE_NATIVE', symbol:'HYPE', label:'HyperEVM native HYPE', note:'HYPE is the gas token on HyperEVM Testnet.', unavailableReason:'Native HYPE route is not enabled until a wrapped-HYPE router and CCTP-compatible USDC pool are verified.' },
   Solana_Devnet: { token:'SOL_NATIVE', symbol:'SOL', label:'Solana native SOL', note:'SOL is the gas token on Solana Devnet.', unavailableReason:'SOL-native swap-and-bridge needs a Solana route/program; current Solana bridge supports USDC only.' },
@@ -45,6 +45,8 @@ const ARCOX_ROUTER: Record<string,string> = {
   Arbitrum_Sepolia: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7',
 }
 const NATIVE_SWAP_BRIDGE_ROUTER: Record<string,string> = {
+  Ethereum_Sepolia: '0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59',
+  Base_Sepolia: '0x3c5beFa0c208F0732D2c357f26EB897E727da498',
 }
 const NATIVE_QUOTE_RPC: Record<string,string> = {
   Ethereum_Sepolia: 'https://ethereum-sepolia-rpc.publicnode.com',
@@ -454,7 +456,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     let historyId: string|null = null
     const srcInfo = CCTP_SRC[fromChain]
     const burnToken = token === 'cirBTC' && srcInfo?.cirbtc ? srcInfo.cirbtc : srcInfo?.usdc || ''
-    const useLegacyInboundUsdc = token === 'USDC' && toChain === 'Arc_Testnet' && fromChain !== 'Arc_Testnet' && !isFromSolana
+    const useLegacyInboundUsdc = false
     const routerAddr = token === 'USDC' && !isFromSolana && !useLegacyInboundUsdc ? ARCOX_ROUTER[fromChain] : ''
     if (token === 'USDC' && !isFromSolana && !useLegacyInboundUsdc && !routerAddr) {
       throw new Error(`ArcoxRouter belum tersedia untuk source ${fromChain}; bridge USDC direct ditolak agar platform fee tidak terlewati.`)
@@ -539,7 +541,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     let burnData: string
     const maxFeeMicro = 10n
-    const finalityThreshold = useLegacyInboundUsdc ? 2000n : CCTP_FAST_FINALITY_THRESHOLD
+    const finalityThreshold = CCTP_FAST_FINALITY_THRESHOLD
     let routerMintRecipient = `0x${encAddr(address)}`
     if (isToSolana && sw) {
       const { PublicKey } = await import('@solana/web3.js')
@@ -902,15 +904,21 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   }
   const sendEvmTxBuffered = async (tx: any): Promise<string> => {
     const firstFees = await getBufferedEvmFees(tx, INITIAL_FEE_MULTIPLIER)
+    const cleanTx = sanitizeEvmTransaction(tx)
     try {
-      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
+      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...cleanTx, ...firstFees }] })
     } catch(e:any) {
       const msg = e?.message || ''
       if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw e
       await new Promise(r => setTimeout(r, 1200))
       const retryFees = await getBufferedEvmFees(tx, MAX_FEE_MULTIPLIER)
-      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
+      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...cleanTx, ...retryFees }] })
     }
+  }
+
+  const sanitizeEvmTransaction = (tx: any) => {
+    const allowed = ['from', 'to', 'data', 'value', 'gas', 'gasPrice', 'maxFeePerGas', 'maxPriorityFeePerGas', 'nonce', 'chainId']
+    return Object.fromEntries(Object.entries(tx || {}).filter(([key]) => allowed.includes(key)))
   }
 
   // ── Solana burn helper ──
