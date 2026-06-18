@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { encodeFunctionData, formatUnits, parseUnits } from 'viem'
 
 type IntelType = 'address' | 'report' | 'tx' | 'contract' | 'entity' | 'token' | 'search'
+declare global { interface Window { ethereum?: any } }
 
 const PRICES: Record<IntelType, string> = {
   address: '0.005',
@@ -20,6 +22,8 @@ export function IntelPanel() {
   const [requirement, setRequirement] = useState<any>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [paymentTx, setPaymentTx] = useState('')
+  const [paymentPaid, setPaymentPaid] = useState<{ paymentId: string; txHash: string } | null>(null)
 
   const path = useMemo(() => {
     const encoded = encodeURIComponent(value.trim())
@@ -32,7 +36,7 @@ export function IntelPanel() {
     return `/api/intel/search?q=${encoded}`
   }, [type, value, chain])
 
-  async function analyze(mockPaid = false) {
+  async function analyze(mockPaid = false, proof?: { paymentId: string; txHash: string }) {
     if (!value.trim()) {
       setError('Input is required.')
       return
@@ -41,19 +45,70 @@ export function IntelPanel() {
     setError('')
     try {
       const response = await fetch(path, {
-        headers: mockPaid ? { 'X-PAYMENT': 'mock-paid' } : {},
+        headers: {
+          ...(mockPaid ? { 'X-PAYMENT': 'mock-paid' } : {}),
+          ...((proof || paymentPaid) ? { 'X-PAYMENT-ID': (proof || paymentPaid)!.paymentId, 'X-PAYMENT-TX': (proof || paymentPaid)!.txHash } : {}),
+        },
       })
       const data = await response.json().catch(() => ({}))
       if (response.status === 402) {
         setRequirement(data.x402)
         setResult(null)
+        setPaymentPaid(null)
         return
       }
       if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
       setRequirement(null)
+      setPaymentPaid(null)
       setResult(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Intel request failed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function payX402() {
+    if (!requirement) return
+    const eth = (window as any).ethereum
+    if (!eth) {
+      setError('MetaMask is required for real x402 testnet payment.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      await switchArc(eth, requirement)
+      const accounts = await eth.request({ method: 'eth_requestAccounts' })
+      const from = accounts?.[0]
+      if (!from) throw new Error('Wallet is not connected.')
+      const balance = await readUsdcBalance(eth, from, requirement.tokenAddress)
+      const amountUnits = parseUnits(requirement.amount, 6)
+      if (balance < amountUnits) throw new Error(`Insufficient Arc USDC. Balance ${formatUnits(balance, 6)} USDC, need ${requirement.amount}.`)
+      const data = encodeFunctionData({
+        abi: [{
+          type: 'function',
+          name: 'transfer',
+          stateMutability: 'nonpayable',
+          inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }],
+          outputs: [{ name: '', type: 'bool' }],
+        }],
+        functionName: 'transfer',
+        args: [requirement.recipient, amountUnits],
+      })
+      const txHash = await eth.request({ method: 'eth_sendTransaction', params: [{ from, to: requirement.tokenAddress, data }] })
+      setPaymentTx(txHash)
+      const verify = await fetch('/api/x402/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paymentId: requirement.paymentId, txHash, payerAddress: from }),
+      })
+      const dataVerify = await verify.json().catch(() => ({}))
+      if (!verify.ok || !dataVerify.ok) throw new Error(dataVerify.error || `x402 verify failed: HTTP ${verify.status}`)
+      setPaymentPaid({ paymentId: requirement.paymentId, txHash })
+      await analyze(false, { paymentId: requirement.paymentId, txHash })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'x402 payment failed.')
     } finally {
       setLoading(false)
     }
@@ -101,11 +156,20 @@ export function IntelPanel() {
               <p className='pay-muted'>This analysis costs {requirement.amount} {requirement.asset} on {requirement.network}.</p>
               <div className='pay-grid'>
                 <Info label='Recipient' value={requirement.recipient || '-'} mono />
+                <Info label='Token' value={requirement.tokenAddress || '-'} mono />
+                <Info label='Chain ID' value={String(requirement.chainId || 5042002)} />
                 <Info label='Payment ID' value={requirement.paymentId || '-'} mono />
                 <Info label='Resource' value={requirement.resource || '-'} mono />
                 <Info label='Expires' value={`${requirement.expiresInSeconds || 300}s`} />
               </div>
-              <button className='btn btn-secondary' onClick={() => analyze(true)}>Simulate x402 Paid</button>
+              {paymentTx && <div className='inline-warning'>Payment tx: <span className='mono'>{paymentTx}</span></div>}
+              {requirement.mockMode ? (
+                <button className='btn btn-secondary' onClick={() => analyze(true)}>Simulate x402 Paid</button>
+              ) : (
+                <button className='btn btn-primary' onClick={payX402} disabled={loading || !requirement.recipient || requirement.recipient.startsWith('configure_')}>
+                  {loading ? 'Processing payment...' : 'Pay with USDC on Arc'}
+                </button>
+              )}
             </>
           ) : (
             <p className='pay-muted'>If backend x402 is enabled, the first request returns HTTP 402 with price, recipient, resource, and payment ID.</p>
@@ -119,6 +183,41 @@ export function IntelPanel() {
       </section>
     </div>
   )
+}
+
+async function switchArc(eth: any, requirement: any) {
+  const chainId = `0x${Number(requirement.chainId || 5042002).toString(16)}`
+  try {
+    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] })
+  } catch (e: any) {
+    if (e?.code !== 4902 && e?.code !== -32603) throw e
+    await eth.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId,
+        chainName: 'Arc Testnet',
+        nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
+        rpcUrls: ['https://rpc.testnet.arc.network/'],
+        blockExplorerUrls: ['https://testnet.arcscan.app'],
+      }],
+    })
+  }
+}
+
+async function readUsdcBalance(eth: any, owner: string, tokenAddress: string) {
+  const data = encodeFunctionData({
+    abi: [{
+      type: 'function',
+      name: 'balanceOf',
+      stateMutability: 'view',
+      inputs: [{ name: 'account', type: 'address' }],
+      outputs: [{ name: '', type: 'uint256' }],
+    }],
+    functionName: 'balanceOf',
+    args: [owner as `0x${string}`],
+  })
+  const result = await eth.request({ method: 'eth_call', params: [{ to: tokenAddress as `0x${string}`, data }, 'latest'] })
+  return BigInt(result || '0x0')
 }
 
 function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {

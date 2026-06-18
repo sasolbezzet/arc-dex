@@ -171,9 +171,15 @@ async function executeEoaSwap(prepared: any, adapterContract: string, from: stri
     functionName: 'execute',
     args: [executionParams, tokenInputs, prepared.signature],
   })
-  const gasLimit = prepared.gasLimit ? (BigInt(prepared.gasLimit) * 120n) / 100n : 0n
+  const gasLimit = prepared.gasLimit ? (BigInt(prepared.gasLimit) * 150n) / 100n : 0n
   const tx: Record<string, unknown> = { from, to: adapterContract, data }
   if (gasLimit > 0n) tx.gas = toHex(gasLimit)
+  try {
+    await window.ethereum.request({ method: 'eth_call', params: [tx, 'latest'] })
+  } catch (error: any) {
+    const message = error?.data?.message || error?.message || 'Swap simulation reverted before submit.'
+    throw new Error(`Swap route would revert before submit: ${message}`)
+  }
   return window.ethereum.request({ method: 'eth_sendTransaction', params: [tx] })
 }
 

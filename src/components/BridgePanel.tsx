@@ -6,6 +6,7 @@ import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 import { useI18n } from '../i18n'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
 import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } from 'viem'
+import { describeBridgeRoute, type BridgeRegistryToken } from '../domain/bridgeRouteRegistry'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -139,9 +140,16 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const [nativeGasEstimate, setNativeGasEstimate] = useState('')
   const [nativeQuote, setNativeQuote] = useState<{estimatedReceive:string;platformFee:string;poolFee:number}|null>(null)
   const [nativeQuoteLoading, setNativeQuoteLoading] = useState(false)
-  const BRIDGE_TOKENS = ['USDC','cirBTC']
+  const BRIDGE_TOKENS = ['USDC','EURC','cirBTC']
   const [token, setToken] = useState('USDC')
-  const TOKEN_DECIMALS: Record<string,number> = { USDC:6, cirBTC:8 }
+  const [receiveToken, setReceiveToken] = useState<BridgeRegistryToken>('USDC')
+  const TOKEN_DECIMALS: Record<string,number> = { USDC:6, EURC:6, cirBTC:8 }
+  const routeInfo = describeBridgeRoute({
+    sourceChain: fromChain,
+    destinationChain: toChain,
+    sourceToken: (token === 'EURC' || token === 'cirBTC' ? token : 'USDC') as BridgeRegistryToken,
+    receiveToken,
+  })
   const nativeBridgeToken = toChain === 'Arc_Testnet' ? NATIVE_TO_ARC[fromChain] : null
   const isNativeBridgeToken = Boolean(nativeBridgeToken && token === nativeBridgeToken.token)
   const nativeBridgeExecutable = Boolean(isNativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc_Testnet')
@@ -162,7 +170,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const platformFee = amount
     ? (parseFloat(amount) * (PLATFORM_FEE_BPS / 10000)).toFixed(6)
     : '-'
-  const routerFee = !isFromSolana && (ARCOX_ROUTER[fromChain] || token !== 'USDC') ? platformFee : isFromSolana && token === 'USDC' ? platformFee : '-'
+  const routerFee = !isFromSolana && ARCOX_ROUTER[fromChain] ? platformFee : isFromSolana && token === 'USDC' ? platformFee : '-'
   const platformFeeLabel = isNativeBridgeToken
     ? nativeBridgeExecutable ? nativeQuote ? `${nativeQuote.platformFee} USDC` : nativeQuoteLoading ? 'Calculating...' : '-' : 'Route unavailable'
     : routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
@@ -1240,6 +1248,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       setLoading(false); setStep('')
       return
     }
+    if (!routeInfo.routeAvailable) {
+      setStatus({ type:'warning', msg: routeInfo.unavailableReason || 'Route unavailable' })
+      return
+    }
     // Pre-connect Solana wallet — tanpa return, jadi 1x klik langsung bridge
     let _solWallet = solanaWallet
     if ((isFromSolana || isToSolana) && !_solWallet) {
@@ -1355,6 +1367,16 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         )}
       </div>
 
+      <div>
+        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Receive token</label>
+        <CompactTokenPicker
+          value={receiveToken}
+          width={104}
+          options={BRIDGE_TOKENS as BridgeRegistryToken[]}
+          onChange={t=>{setReceiveToken(t as BridgeRegistryToken);setStatus(null)}}
+        />
+      </div>
+
       {/* Amount */}
       <div>
         <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.amount', { token: displayToken })}</label>
@@ -1363,6 +1385,20 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
       {/* Info */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
+        {!isNativeBridgeToken && (
+          <div style={{border:'1px solid rgba(99,102,241,0.25)',background:'rgba(99,102,241,0.08)',borderRadius:8,padding:8,display:'flex',flexDirection:'column',gap:4}}>
+            <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
+              <span style={{color:'#94a3b8'}}>Selected route</span>
+              <span style={{color:routeInfo.routeAvailable?'#10b981':'#f87171',fontWeight:700}}>{routeInfo.routeAvailable ? 'Available' : 'Unavailable'}</span>
+            </div>
+            <div style={{color:'#cbd5e1'}}>{routeInfo.sourceToken} on {fromChain} → {receiveToken} on {toChain}</div>
+            <div style={{fontSize:11,color:'#94a3b8'}}>
+              {routeInfo.routeAvailable
+                ? `Step-by-step fallback: ${routeInfo.swapAvailable && token !== 'USDC' ? 'swap → ' : ''}approve → burn → attestation → mint${routeInfo.destinationSwapAvailable && receiveToken !== 'USDC' ? ' → swap' : ''}. Multicall is ${routeInfo.multicallAvailable ? 'enabled' : 'not required for availability'}.`
+                : routeInfo.unavailableReason}
+            </div>
+          </div>
+        )}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Native swap + CCTP v2' : 'Native route preview' : `CCTP v2 ${isToSolana||isFromSolana?'Fast Transfer':''}`}</span></div>
         {!isFromSolana && fromChain==='Arc_Testnet'&&<div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.fundingSource')}</span><span>{source==='circle'?'Circle → EOA → Bridge':'EOA MetaMask'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{isNativeBridgeToken ? '-' : totalDebit} {displayToken}</span></div>
@@ -1399,8 +1435,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         </div>
       )}
 
-      <button onClick={handleBridge} disabled={loading||fromChain===toChain||(!amount)} className='btn btn-primary'>
-        {loading ? step||`⏳ ${t('common.processing')}` : isNativeBridgeToken ? nativeBridgeExecutable ? amount ? `Bridge ${amount} ${displayToken} to Arc` : `Bridge ${displayToken} to Arc` : `Native ${displayToken} bridge unavailable` : amount ? `Bridge ${amount} ${displayToken}` : `Bridge ${displayToken}`}
+      <button onClick={handleBridge} disabled={loading||fromChain===toChain||(!amount)||(!isNativeBridgeToken && !routeInfo.routeAvailable)||Boolean(isNativeBridgeToken && !nativeBridgeExecutable)} className='btn btn-primary'>
+        {loading ? step||`⏳ ${t('common.processing')}` : isNativeBridgeToken ? nativeBridgeExecutable ? amount ? `Bridge ${amount} ${displayToken} to Arc` : `Bridge ${displayToken} to Arc` : 'Route unavailable' : amount ? `Bridge ${amount} ${token} to ${receiveToken}` : `Bridge ${token}`}
       </button>
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>
         {source==='circle' && fromChain==='Arc_Testnet' ? t('bridge.flowCircle') :

@@ -51,7 +51,9 @@ export function describeBridgeRoute(input: {
   const burnAvailable = Boolean(usdcAddressSource)
   const mintAvailable = Boolean(usdcAddressDestination)
   const cirbtcUnavailable = input.sourceToken === 'cirBTC' || input.receiveToken === 'cirBTC'
+  const sameChain = input.sourceChain === input.destinationChain
   const routeAvailable = Boolean(
+    !sameChain &&
     sourceTokenAddress &&
     destinationTokenAddress &&
     burnAvailable &&
@@ -76,7 +78,17 @@ export function describeBridgeRoute(input: {
       ? undefined
       : cirbtcUnavailable
         ? 'cirBTC testnet bridge route is unavailable until valid testnet addresses/liquidity exist.'
-        : 'Route unavailable for selected source token, destination chain, or receive token.',
+        : sameChain
+          ? 'Source and destination chain must be different.'
+          : !sourceTokenAddress
+            ? 'Source token is not available on the selected testnet chain.'
+            : !destinationTokenAddress
+              ? 'Receive token is not available on the selected testnet chain.'
+              : !swapAvailable
+                ? 'Source-token swap is not enabled for this bridge execution yet; use Swap first, then bridge USDC.'
+                : !destinationSwapAvailable
+                  ? 'Destination-token swap is not enabled for this bridge execution yet; bridge USDC, then swap on destination.'
+                  : 'Route unavailable for selected source token, destination chain, or receive token.',
   }
 }
 
