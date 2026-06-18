@@ -7,6 +7,7 @@ import { useI18n } from '../i18n'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
 import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } from 'viem'
 import { describeBridgeRoute, type BridgeRegistryToken } from '../domain/bridgeRouteRegistry'
+import { quoteEoaSwap, swapFromEoa } from '../services/swapService'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -459,13 +460,14 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const sw = _solWallet?.provider ? _solWallet : solanaWallet
     if (!address || !amount || !window.ethereum) return
     const amtNum = parseFloat(amount)
-    const amtMicro = parseUnits(amount, tokenDec)
     const localSteps: BridgeStep[] = []
     let historyId: string|null = null
     const srcInfo = CCTP_SRC[fromChain]
-    const burnToken = token === 'cirBTC' && srcInfo?.cirbtc ? srcInfo.cirbtc : srcInfo?.usdc || ''
-    const routerAddr = token === 'USDC' && !isFromSolana ? ARCOX_ROUTER[fromChain] : ''
-    if (token === 'USDC' && !isFromSolana && !routerAddr) {
+    let bridgeAmount = amount
+    let bridgeTokenLabel = token
+    let burnToken = srcInfo?.usdc || ''
+    let routerAddr = !isFromSolana ? ARCOX_ROUTER[fromChain] : ''
+    if (!isFromSolana && !routerAddr) {
       throw new Error(`ArcoxRouter belum tersedia untuk source ${fromChain}; bridge USDC direct ditolak agar platform fee tidak terlewati.`)
     }
 
@@ -513,17 +515,55 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         throw new Error(`Saldo gas ${fromInfo?.label || fromChain} kosong. Isi ETH testnet di ${fromInfo?.label || fromChain} untuk membayar gas.`)
       }
     }
+    if (token !== 'USDC') {
+      if (fromChain !== 'Arc_Testnet') {
+        throw new Error('Swap sebelum bridge hanya tersedia di Arc Testnet. Untuk chain ini, bridge USDC langsung.')
+      }
+      if (receiveToken !== 'USDC') {
+        throw new Error('Route non-USDC ke non-USDC belum dieksekusi otomatis. Gunakan receive token USDC dulu.')
+      }
+      setStep(`Swap ${token} ke USDC...`)
+      setStatus({ type:'info', msg:`⏳ MetaMask: swap ${amount} ${token} ke USDC sebelum bridge...`, steps:[...localSteps] })
+      const swapQuote = await quoteEoaSwap({ metamaskAddress: address, tokenIn: token, tokenOut: 'USDC', amountIn: amount })
+      if (swapQuote?.available === false) throw new Error(swapQuote.error || `Route swap ${token} → USDC belum tersedia.`)
+      const swapResult = await swapFromEoa({ metamaskAddress: address, tokenIn: token, tokenOut: 'USDC', amountIn: amount })
+      const swapTx = swapResult?.txHash || swapResult?.transactionHash
+      bridgeAmount = String(swapResult?.amountOut || swapQuote?.amountOut || '')
+      if (!bridgeAmount || Number(bridgeAmount) <= 0) throw new Error(`Swap ${token} → USDC selesai tetapi amount output tidak valid.`)
+      bridgeTokenLabel = 'USDC'
+      burnToken = srcInfo.usdc
+      routerAddr = ARCOX_ROUTER[fromChain]
+      localSteps.push({ name:'swap-to-usdc', state:'success', txHash:swapTx, explorerUrl:swapResult?.explorerUrl })
+      txHistory.add({
+        id: `swap-${Date.now()}-${(swapTx || 'usdc').slice(-6)}`,
+        ts: Date.now(),
+        action: 'swap',
+        source: 'web-ui',
+        walletSource: source,
+        from: token,
+        to: 'USDC',
+        amount,
+        token,
+        status: 'success',
+        tx: swapTx,
+        explorer: swapResult?.explorerUrl,
+        note: `Pre-bridge swap. Output ${bridgeAmount} USDC.`,
+      })
+      setStatus({ type:'info', msg:`✓ Swap selesai: ~${bridgeAmount} USDC.\n⏳ Lanjut bridge USDC...`, steps:[...localSteps] })
+    }
+
+    const amtMicro = parseUnits(bridgeAmount, 6)
     const feeMicro = (amtMicro * BigInt(Math.max(0, Math.floor(PLATFORM_FEE_BPS)))) / 10000n
     const burnMicro = routerAddr ? amtMicro : amtMicro - feeMicro
     if (burnMicro <= 0n) throw new Error('Amount terlalu kecil setelah platform fee.')
     const srcBal = await evmTokenBalance(burnToken, address)
     if (srcBal < amtMicro) {
-      const have = Number(srcBal) / 10 ** tokenDec
-      throw new Error(`Saldo ${token} di ${fromInfo?.label || fromChain} tidak cukup. Terdeteksi ${have.toFixed(6)} ${token}, butuh ${amount}.`)
+      const have = Number(srcBal) / 10 ** 6
+      throw new Error(`Saldo ${bridgeTokenLabel} di ${fromInfo?.label || fromChain} tidak cukup. Terdeteksi ${have.toFixed(6)} ${bridgeTokenLabel}, butuh ${bridgeAmount}.`)
     }
     if (!routerAddr && feeMicro > 0n) {
-      setStep(`MetaMask: Platform fee ${token}...`)
-      setStatus({ type:'info', msg:`⏳ MetaMask popup: transfer platform fee ${token}...`, steps:[...localSteps] })
+      setStep(`MetaMask: Platform fee ${bridgeTokenLabel}...`)
+      setStatus({ type:'info', msg:`⏳ MetaMask popup: transfer platform fee ${bridgeTokenLabel}...`, steps:[...localSteps] })
       const feeTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0xa9059cbb'+encAddr(EVM_FEE_TREASURY)+enc256(feeMicro) })
       localSteps.push({ name:'platform-fee', state:'pending', txHash:feeTx })
       await waitEvmTx(feeTx)
@@ -532,8 +572,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     }
 
     // Approve
-    setStep(`MetaMask: Approve ${token} (1/2)...`)
-    setStatus({ type:'info', msg:`⏳ MetaMask popup 1/2: Approve ${token}${routerAddr ? ' ke ArcoxRouter' : ''}...`, steps:[...localSteps] })
+    setStep(`MetaMask: Approve ${bridgeTokenLabel} (1/2)...`)
+    setStatus({ type:'info', msg:`⏳ MetaMask popup 1/2: Approve ${bridgeTokenLabel}${routerAddr ? ' ke ArcoxRouter' : ''}...`, steps:[...localSteps] })
     const approveSpender = routerAddr || srcInfo.tokenMessenger
     const approveTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0x095ea7b3'+encAddr(approveSpender)+enc256(routerAddr ? amtMicro : burnMicro) })
     localSteps.push({ name:'approve', state:'pending', txHash:approveTx })
@@ -543,8 +583,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     localSteps[localSteps.length-1].explorerUrl=explorerFor(fromChain, approveTx)
 
     // Burn
-    setStep(`MetaMask: Confirm burn ${token} (2/2)...`)
-    setStatus({ type:'info', msg:`✓ Approve!\n⏳ MetaMask popup 2/2: Burn ${token}...`, steps:[...localSteps] })
+    setStep(`MetaMask: Confirm burn ${bridgeTokenLabel} (2/2)...`)
+    setStatus({ type:'info', msg:`✓ Approve!\n⏳ MetaMask popup 2/2: Burn ${bridgeTokenLabel}...`, steps:[...localSteps] })
 
     let burnData: string
     const maxFeeMicro = 10n
@@ -591,14 +631,16 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       walletSource: source,
       from: fromChain,
       to: toChain,
-      amount,
-      token,
+      amount: bridgeAmount,
+      token: bridgeTokenLabel,
       status: 'pending',
       burnTx,
       burnExplorerUrl: explorerFor(fromChain, burnTx),
       srcDomain: srcInfo.domain,
       dstDomain: dstDomain,
-      note: routerAddr ? 'Burn via ArcoxRouter complete. Platform fee collected. Mint/receive step pending.' : 'Burn complete. Mint/receive step pending.',
+      note: token !== 'USDC'
+        ? `Swap ${token} to ${bridgeAmount} USDC complete. Burn via ArcoxRouter complete. Mint/receive step pending.`
+        : routerAddr ? 'Burn via ArcoxRouter complete. Platform fee collected. Mint/receive step pending.' : 'Burn complete. Mint/receive step pending.',
     })
 
     // Attestation + Mint
@@ -609,7 +651,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     if (isToSolana) {
       // Mint di Solana → frontend Solflare yang sign
-      const mintData = await safePost(API, '/api/mint-cctp-solana', {burnTxHash:burnTx,toAddress:sw!.address,fromChain,toChain:'Solana_Devnet',amount})
+      const mintData = await safePost(API, '/api/mint-cctp-solana', {burnTxHash:burnTx,toAddress:sw!.address,fromChain,toChain:'Solana_Devnet',amount:bridgeAmount})
       if (mintData.error) throw new Error(mintData.error)
 
       if (mintData.requiresSolanaSign) {
@@ -621,7 +663,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           const solTxHash = await signSolanaReceiveMessage(mintData.attestation, mintData.message, sw!.address, sw!.provider)
           localSteps.push({ name:'mint', state:'success', txHash:solTxHash, explorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet` })
           if (historyId) txHistory.update(historyId, { status:'success', mintTx:solTxHash, mintExplorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet`, note:'Bridge completed on Solana destination.' })
-          setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} → Solana Devnet`, steps:[...localSteps] })
+          setStatus({ type:'success', msg:`✓ Bridge berhasil! ${bridgeAmount} ${bridgeTokenLabel} → Solana Devnet`, steps:[...localSteps] })
           fetchSolanaUsdcBalance(sw!.address, sw!.provider)
           setTimeout(() => fetchSolanaUsdcBalance(sw!.address, sw!.provider), 3000)
         } catch(e:any) {
@@ -629,7 +671,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           if (historyId) txHistory.update(historyId, { status:'error', error:e.message || 'Mint Solana gagal' })
           setStatus({
             type:'warning',
-            msg:`✗ Mint GAGAL di Solana Devnet\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (${token} sudah di-burn):\n${burnTx.slice(0,40)}...\n\n${token} Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
+            msg:`✗ Mint GAGAL di Solana Devnet\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (${bridgeTokenLabel} sudah di-burn):\n${burnTx.slice(0,40)}...\n\n${bridgeTokenLabel} Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
             steps:[...localSteps]
           })
           throw new Error(e.message || 'Mint Solana gagal')
@@ -638,7 +680,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         // Backend sudah handle mint (requiresSolanaSign=false)
         localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash || burnTx, explorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=devnet` })
         if (historyId) txHistory.update(historyId, { status:'success', mintTx:mintData.txHash || burnTx, mintExplorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=devnet`, note:'Bridge completed on Solana destination.' })
-        setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} → Solana Devnet`, steps:[...localSteps] })
+        setStatus({ type:'success', msg:`✓ Bridge berhasil! ${bridgeAmount} ${bridgeTokenLabel} → Solana Devnet`, steps:[...localSteps] })
       }
     } else {
       // EVM→EVM Mint via MetaMask: backend hanya polling attestation, frontend sign tx
@@ -722,7 +764,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const explorerUrl = explorerFor(toChain, mintTx)
       localSteps[localSteps.length-1].explorerUrl = explorerUrl
       if (historyId) txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl:explorerUrl, note:'Bridge completed on EVM destination.' })
-      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} → ${toChain}`, steps:[...localSteps] })
+      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${bridgeAmount} ${bridgeTokenLabel} → ${toChain}`, steps:[...localSteps] })
     }
 
     setAmount('')

@@ -36,7 +36,7 @@ export function IntelPanel() {
     return `/api/intel/search?q=${encoded}`
   }, [type, value, chain])
 
-  async function analyze(mockPaid = false, proof?: { paymentId: string; txHash: string }) {
+  async function analyze(proof?: { paymentId: string; txHash: string }) {
     if (!value.trim()) {
       setError('Input is required.')
       return
@@ -46,7 +46,6 @@ export function IntelPanel() {
     try {
       const response = await fetch(path, {
         headers: {
-          ...(mockPaid ? { 'X-PAYMENT': 'mock-paid' } : {}),
           ...((proof || paymentPaid) ? { 'X-PAYMENT-ID': (proof || paymentPaid)!.paymentId, 'X-PAYMENT-TX': (proof || paymentPaid)!.txHash } : {}),
         },
       })
@@ -106,7 +105,7 @@ export function IntelPanel() {
       const dataVerify = await verify.json().catch(() => ({}))
       if (!verify.ok || !dataVerify.ok) throw new Error(dataVerify.error || `x402 verify failed: HTTP ${verify.status}`)
       setPaymentPaid({ paymentId: requirement.paymentId, txHash })
-      await analyze(false, { paymentId: requirement.paymentId, txHash })
+      await analyze({ paymentId: requirement.paymentId, txHash })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'x402 payment failed.')
     } finally {
@@ -146,7 +145,7 @@ export function IntelPanel() {
             <Info label='Price' value={`${PRICES[type]} USDC`} />
             <Info label='Network' value='Arc USDC' />
           </div>
-          <button className='btn btn-primary' onClick={() => analyze(false)} disabled={loading}>{loading ? 'Analyzing...' : 'Analyze'}</button>
+          <button className='btn btn-primary' onClick={() => analyze()} disabled={loading}>{loading ? 'Analyzing...' : 'Analyze'}</button>
         </div>
 
         <div className='glass sandbox-card'>
@@ -163,13 +162,9 @@ export function IntelPanel() {
                 <Info label='Expires' value={`${requirement.expiresInSeconds || 300}s`} />
               </div>
               {paymentTx && <div className='inline-warning'>Payment tx: <span className='mono'>{paymentTx}</span></div>}
-              {requirement.mockMode ? (
-                <button className='btn btn-secondary' onClick={() => analyze(true)}>Simulate x402 Paid</button>
-              ) : (
-                <button className='btn btn-primary' onClick={payX402} disabled={loading || !requirement.recipient || requirement.recipient.startsWith('configure_')}>
-                  {loading ? 'Processing payment...' : 'Pay with USDC on Arc'}
-                </button>
-              )}
+              <button className='btn btn-primary' onClick={payX402} disabled={loading || !requirement.recipient || requirement.recipient.startsWith('configure_')}>
+                {loading ? 'Processing payment...' : 'Pay with USDC on Arc'}
+              </button>
             </>
           ) : (
             <p className='pay-muted'>If backend x402 is enabled, the first request returns HTTP 402 with price, recipient, resource, and payment ID.</p>

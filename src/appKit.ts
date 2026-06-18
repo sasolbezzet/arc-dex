@@ -232,7 +232,14 @@ export async function bridgeWithAppKit(args: BridgeArgs): Promise<unknown> {
   } as any)
 }
 
-export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: string; amountIn: string; kitKey: string }): Promise<any> {
+export async function swapEoaWithAppKit(args: {
+  tokenIn: string
+  tokenOut: string
+  amountIn: string
+  kitKey: string
+  customFeeBps?: number
+  feeRecipient?: string
+}): Promise<any> {
   await switchToArcTestnet()
   const kit = getKit()
   const adapter = await buildEvmAdapter()
@@ -245,11 +252,28 @@ export async function swapEoaWithAppKit(args: { tokenIn: string; tokenOut: strin
     tokenIn: swapTokenParam(args.tokenIn),
     tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
-    config: { kitKey: args.kitKey, allowanceStrategy: 'approve' },
+    config: {
+      kitKey: args.kitKey,
+      allowanceStrategy: 'approve',
+      slippageBps: 300,
+      ...(args.customFeeBps && args.feeRecipient ? {
+        customFee: {
+          percentageBps: args.customFeeBps,
+          recipientAddress: args.feeRecipient,
+        },
+      } : {}),
+    },
   } as any)
 }
 
-export async function estimateEoaSwapWithAppKit(args: { tokenIn: string; tokenOut: string; amountIn: string; kitKey: string }): Promise<any> {
+export async function estimateEoaSwapWithAppKit(args: {
+  tokenIn: string
+  tokenOut: string
+  amountIn: string
+  kitKey: string
+  customFeeBps?: number
+  feeRecipient?: string
+}): Promise<any> {
   await switchToArcTestnet()
   const kit = getKit()
   const adapter = await buildEvmAdapter()
@@ -262,7 +286,17 @@ export async function estimateEoaSwapWithAppKit(args: { tokenIn: string; tokenOu
     tokenIn: swapTokenParam(args.tokenIn),
     tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
-    config: { kitKey: args.kitKey, allowanceStrategy: 'approve' },
+    config: {
+      kitKey: args.kitKey,
+      allowanceStrategy: 'approve',
+      slippageBps: 300,
+      ...(args.customFeeBps && args.feeRecipient ? {
+        customFee: {
+          percentageBps: args.customFeeBps,
+          recipientAddress: args.feeRecipient,
+        },
+      } : {}),
+    },
   } as any)
 }
 

@@ -46,11 +46,14 @@ export function describeBridgeRoute(input: {
   const destinationTokenAddress = tokenAddress(input.receiveToken, input.destinationChain)
   const usdcAddressSource = tokenAddress('USDC', input.sourceChain)
   const usdcAddressDestination = tokenAddress('USDC', input.destinationChain)
-  const swapAvailable = input.sourceToken === 'USDC'
+  const sourceSwapAvailable = input.sourceToken === 'USDC' || input.sourceChain === 'Arc_Testnet'
   const destinationSwapAvailable = input.receiveToken === 'USDC'
   const burnAvailable = Boolean(usdcAddressSource)
   const mintAvailable = Boolean(usdcAddressDestination)
-  const cirbtcUnavailable = input.sourceToken === 'cirBTC' || input.receiveToken === 'cirBTC'
+  const cirbtcUnavailable = (
+    (input.sourceToken === 'cirBTC' && input.sourceChain !== 'Arc_Testnet') ||
+    (input.receiveToken === 'cirBTC' && input.destinationChain !== 'Arc_Testnet')
+  )
   const sameChain = input.sourceChain === input.destinationChain
   const routeAvailable = Boolean(
     !sameChain &&
@@ -59,7 +62,7 @@ export function describeBridgeRoute(input: {
     burnAvailable &&
     mintAvailable &&
     !cirbtcUnavailable &&
-    swapAvailable &&
+    sourceSwapAvailable &&
     destinationSwapAvailable,
   )
   return {
@@ -68,7 +71,7 @@ export function describeBridgeRoute(input: {
     destinationTokenAddress,
     usdcAddressSource,
     usdcAddressDestination,
-    swapAvailable,
+    swapAvailable: sourceSwapAvailable,
     burnAvailable,
     mintAvailable,
     destinationSwapAvailable,
@@ -77,17 +80,17 @@ export function describeBridgeRoute(input: {
     unavailableReason: routeAvailable
       ? undefined
       : cirbtcUnavailable
-        ? 'cirBTC testnet bridge route is unavailable until valid testnet addresses/liquidity exist.'
+        ? 'cirBTC testnet swap/bridge route is only enabled when the cirBTC leg is on Arc Testnet.'
         : sameChain
           ? 'Source and destination chain must be different.'
           : !sourceTokenAddress
             ? 'Source token is not available on the selected testnet chain.'
             : !destinationTokenAddress
               ? 'Receive token is not available on the selected testnet chain.'
-              : !swapAvailable
-                ? 'Source-token swap is not enabled for this bridge execution yet; use Swap first, then bridge USDC.'
+              : !sourceSwapAvailable
+                ? 'Swap before bridge is only supported on Arc Testnet. Bridge USDC from this chain, or swap on Arc after receiving.'
                 : !destinationSwapAvailable
-                  ? 'Destination-token swap is not enabled for this bridge execution yet; bridge USDC, then swap on destination.'
+                  ? 'Receive-token swap after mint is not enabled yet. Receive USDC, then swap on Arc.'
                   : 'Route unavailable for selected source token, destination chain, or receive token.',
   }
 }

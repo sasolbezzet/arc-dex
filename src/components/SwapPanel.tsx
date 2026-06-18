@@ -69,10 +69,10 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
           status: 'success',
           tx: result?.txHash || result?.transactionHash,
           explorer: result?.explorerUrl,
-          note: `EOA swap to ${result?.amountOut || result?.estimatedOutput?.amount || ''} ${tokenOut}. Platform fee ${result?.platformFee?.amount || '0'} ${tokenIn}${result?.platformFee?.error ? ` failed: ${result.platformFee.error}` : ''}.`,
+          note: `EOA swap to ${result?.amountOut || result?.raw?.estimatedOutput?.amount || ''} ${tokenOut}. Platform fee ${result?.platformFee?.amount || '0'} ${tokenIn}${result?.platformFee?.error ? ` failed: ${result.platformFee.error}` : ''}.`,
         })
         const feeWarning = result?.platformFee?.error ? `\nPlatform fee gagal: ${result.platformFee.error}` : ''
-        setStatus({ type:'success', msg:`✓ ${result?.amountIn || amountIn} ${tokenIn} → ${result?.amountOut || result?.estimatedOutput?.amount || ''} ${tokenOut}${feeWarning}`, link:result?.explorerUrl })
+        setStatus({ type:'success', msg:`✓ ${result?.amountIn || amountIn} ${tokenIn} → ${result?.amountOut || result?.raw?.estimatedOutput?.amount || ''} ${tokenOut}${feeWarning}`, link:result?.explorerUrl })
       } else {
         if (!circleWallet) return
         const d = await swapFromCircleWallet({metamaskAddress:address,tokenIn,tokenOut,amountIn})
