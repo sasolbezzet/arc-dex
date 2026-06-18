@@ -16,6 +16,14 @@ import {
   executeConfirmedSwap,
   fundAgentJob,
   getPaymentRequest,
+  intelExecuteWalletReport,
+  intelGetAddress,
+  intelGetContract,
+  intelGetEntity,
+  intelGetToken,
+  intelGetTx,
+  intelQuoteWalletReport,
+  intelSearch,
   makeAgentResponse,
   payPaymentRequest,
   payCreateNowpaymentsSandboxPayment,
@@ -452,6 +460,90 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: { limit: { type: 'number', default: 10 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_quote_wallet_report',
+    description: 'Quote an ARCOX Intel full wallet report. Shows x402 price and confirmation requirement before paid analysis.',
+    inputSchema: {
+      type: 'object',
+      properties: { address: { type: 'string' } },
+      required: ['address'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_execute_wallet_report',
+    description: 'Execute an ARCOX Intel full wallet report through the ARCOX API backend after explicit user confirmation. MCP does not call Arkham directly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        address: { type: 'string' },
+        confirmed: { type: 'boolean' },
+        confirmationText: { type: 'string' },
+      },
+      required: ['address'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_get_address',
+    description: 'Get address intelligence through ARCOX API. Returns x402 payment requirement unless mockPaid=true is accepted by backend dev mode.',
+    inputSchema: {
+      type: 'object',
+      properties: { address: { type: 'string' }, mockPaid: { type: 'boolean' } },
+      required: ['address'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_get_tx',
+    description: 'Get transaction intelligence through ARCOX API.',
+    inputSchema: {
+      type: 'object',
+      properties: { hash: { type: 'string' }, mockPaid: { type: 'boolean' } },
+      required: ['hash'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_get_contract',
+    description: 'Get contract intelligence through ARCOX API.',
+    inputSchema: {
+      type: 'object',
+      properties: { chain: { type: 'string' }, address: { type: 'string' }, mockPaid: { type: 'boolean' } },
+      required: ['chain', 'address'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_get_entity',
+    description: 'Get entity intelligence through ARCOX API.',
+    inputSchema: {
+      type: 'object',
+      properties: { entity: { type: 'string' }, mockPaid: { type: 'boolean' } },
+      required: ['entity'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_get_token',
+    description: 'Get token intelligence through ARCOX API.',
+    inputSchema: {
+      type: 'object',
+      properties: { token: { type: 'string' }, mockPaid: { type: 'boolean' } },
+      required: ['token'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'arcox_intel_search',
+    description: 'Search Arkham intelligence through ARCOX API.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' }, mockPaid: { type: 'boolean' } },
+      required: ['query'],
       additionalProperties: false,
     },
   },
@@ -997,6 +1089,14 @@ async function rpcResponse(message) {
     if (name === 'arcox_pay_simulate_nowpayments_finished') return result(id, await paySimulateNowpaymentsFinished(args))
     if (name === 'arcox_pay_simulate_nowpayments_status') return result(id, await paySimulateNowpaymentsStatus(args))
     if (name === 'arcox_pay_list_recent_payments') return result(id, await payListRecentPayments(args))
+    if (name === 'arcox_intel_quote_wallet_report') return result(id, await intelQuoteWalletReport(args))
+    if (name === 'arcox_intel_execute_wallet_report') return result(id, await intelExecuteWalletReport(args))
+    if (name === 'arcox_intel_get_address') return result(id, await intelGetAddress(args))
+    if (name === 'arcox_intel_get_tx') return result(id, await intelGetTx(args))
+    if (name === 'arcox_intel_get_contract') return result(id, await intelGetContract(args))
+    if (name === 'arcox_intel_get_entity') return result(id, await intelGetEntity(args))
+    if (name === 'arcox_intel_get_token') return result(id, await intelGetToken(args))
+    if (name === 'arcox_intel_search') return result(id, await intelSearch(args))
     if (name === 'arcox_agent_job') {
       if (isValueMovingCall(name, args)) enforceSpendLimits(name, args)
       return result(id, await agentJob(args))

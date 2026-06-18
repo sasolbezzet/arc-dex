@@ -23,7 +23,14 @@ dist-ssr
 *.sln
 *.sw?
 .env
+.env.local
+.env.*.local
 .vercel
+*.pem
+*.key
+private-key*
+seed*
+mnemonic*
 arcox-agent/solana-router/target/
 arcox-agent/solana-router/programs/*/target/
 arcox-agent/.arcox-auto-mint/

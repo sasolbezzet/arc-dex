@@ -62,6 +62,7 @@ const SOLANA_MESSAGE_TRANSMITTER_PROGRAM = 'CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFa
 const ARCOX_WEB_URL = process.env.ARCOX_WEB_URL || process.env.ARCOX_API_URL || 'https://arc-dex-bice.vercel.app'
 const ARCOX_BACKEND_URL = process.env.ARCOX_BACKEND_URL || 'https://43.163.98.128.nip.io'
 const ARCOX_PAY_API_URL = process.env.ARCOX_PAY_API_URL || ARCOX_WEB_URL
+const ARCOX_API_BASE_URL = process.env.ARCOX_API_BASE_URL || ARCOX_BACKEND_URL
 const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'ARCOX Codex Retail Agent'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired']
@@ -916,6 +917,21 @@ async function payGetJson(path, timeoutMs = BACKEND_FETCH_TIMEOUT_MS) {
     signal: AbortSignal.timeout(timeoutMs),
   })
   const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+
+async function arcoxApiGetJson(path, options = {}, timeoutMs = BACKEND_FETCH_TIMEOUT_MS) {
+  const response = await fetch(`${ARCOX_API_BASE_URL}${path}`, {
+    headers: {
+      Accept: 'application/json',
+      ...(options.mockPaid ? { 'X-PAYMENT': 'mock-paid' } : {}),
+      ...(options.headers || {}),
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (response.status === 402) return { paymentRequired: true, ...data }
   if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
   return data
 }
@@ -2988,6 +3004,73 @@ export async function paySimulateNowpaymentsStatus(input = {}) {
 
 export async function payListRecentPayments(input = {}) {
   return payGetJson(`/api/payments/nowpayments/recent?limit=${encodeURIComponent(String(input.limit || 10))}`)
+}
+
+export async function intelQuoteWalletReport(input = {}) {
+  const address = String(input.address || '').trim()
+  if (!address) throw new Error('address is required.')
+  return {
+    action: 'arcox_intel_execute_wallet_report',
+    address,
+    resource: `/api/intel/report/address/${encodeURIComponent(address)}`,
+    amount: process.env.ARCOX_INTEL_PRICE_REPORT_ADDRESS || '0.05',
+    asset: 'USDC',
+    network: 'arc-testnet',
+    requiresUserConfirmation: true,
+    instruction: 'This Arkham analysis costs 0.05 USDC on Arc. Continue?',
+    backend: ARCOX_API_BASE_URL,
+    arkhamApiKeyStoredInMcp: false,
+  }
+}
+
+export async function intelExecuteWalletReport(input = {}) {
+  if (input.confirmed !== true || !isSimpleConfirmationText(input.confirmationText)) {
+    return intelQuoteWalletReport(input)
+  }
+  const address = String(input.address || '').trim()
+  if (!address) throw new Error('address is required.')
+  return arcoxApiGetJson(`/api/intel/report/address/${encodeURIComponent(address)}`, { mockPaid: true }, 60_000)
+}
+
+export async function intelGetAddress(input = {}) {
+  const address = String(input.address || '').trim()
+  if (!address) throw new Error('address is required.')
+  return arcoxApiGetJson(`/api/intel/address/${encodeURIComponent(address)}`, { mockPaid: Boolean(input.mockPaid) })
+}
+
+export async function intelGetTx(input = {}) {
+  const hash = String(input.hash || input.txHash || '').trim()
+  if (!hash) throw new Error('hash is required.')
+  return arcoxApiGetJson(`/api/intel/tx/${encodeURIComponent(hash)}`, { mockPaid: Boolean(input.mockPaid) })
+}
+
+export async function intelGetContract(input = {}) {
+  const chain = String(input.chain || '').trim()
+  const address = String(input.address || '').trim()
+  if (!chain || !address) throw new Error('chain and address are required.')
+  return arcoxApiGetJson(`/api/intel/contract/${encodeURIComponent(chain)}/${encodeURIComponent(address)}`, { mockPaid: Boolean(input.mockPaid) })
+}
+
+export async function intelGetEntity(input = {}) {
+  const entity = String(input.entity || '').trim()
+  if (!entity) throw new Error('entity is required.')
+  return arcoxApiGetJson(`/api/intel/entity/${encodeURIComponent(entity)}`, { mockPaid: Boolean(input.mockPaid) })
+}
+
+export async function intelGetToken(input = {}) {
+  const token = String(input.token || input.id || '').trim()
+  if (!token) throw new Error('token is required.')
+  return arcoxApiGetJson(`/api/intel/token/${encodeURIComponent(token)}`, { mockPaid: Boolean(input.mockPaid) })
+}
+
+export async function intelSearch(input = {}) {
+  const query = String(input.q || input.query || '').trim()
+  if (!query) throw new Error('query is required.')
+  return arcoxApiGetJson(`/api/intel/search?q=${encodeURIComponent(query)}`, { mockPaid: Boolean(input.mockPaid) })
+}
+
+function isSimpleConfirmationText(value) {
+  return ['yes', 'ya', 'y', 'confirm', 'konfirmasi', 'lanjut', 'ok', 'oke'].includes(String(value || '').trim().toLowerCase())
 }
 
 function readAutoMintStatuses() {

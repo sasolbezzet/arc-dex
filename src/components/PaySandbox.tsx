@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   createNowpaymentsSandboxPayment,
   getNanopaymentsCapabilities,
@@ -17,7 +17,7 @@ const TEST_COMMANDS = [
 ]
 
 export function PaySandbox() {
-  const defaultOrderId = useMemo(() => `ARCOX-TEST-${Date.now()}`, [])
+  const [defaultOrderId] = useState(() => `ARCOX-TEST-${Date.now()}`)
   const [form, setForm] = useState({
     amount: '1',
     price_currency: 'usd',

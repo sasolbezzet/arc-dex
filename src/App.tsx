@@ -9,6 +9,7 @@ import { InfoPanel } from './components/InfoPanel'
 import { DocsPanel } from './components/DocsPanel'
 import { PayCheckout } from './components/PayCheckout'
 import { PaySandbox } from './components/PaySandbox'
+import { IntelPanel } from './components/IntelPanel'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 
@@ -23,6 +24,7 @@ const NAV = [
   { id: 'send', path: '/send', label: 'Send', icon: 'SE' },
   { id: 'receive', path: '/receive', label: 'Receive', icon: 'RC' },
   { id: 'agentic', path: '/agent-jobs', label: 'Agent Jobs', icon: 'AI' },
+  { id: 'intel', path: '/intel', label: 'Intel', icon: 'IX' },
   { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
   { id: 'docs', path: '/docs', label: 'Docs', icon: 'DX' },
 ] as const
@@ -250,7 +252,29 @@ export default function App() {
     ? <PaySandbox />
     : routeMode === 'pay-checkout'
       ? <PayCheckout address={address} onConnect={handleConnect} onRefresh={refresh} />
-      : renderPage({ page, address, circleWallet, balances, eoaBalances, loadingWallet, walletSetupError, retryCircleWallet, refresh, navigate, t })
+      : page === 'intro'
+        ? <IntroPage address={address} walletSetupError={walletSetupError} navigate={navigate} t={t} />
+        : page === 'docs'
+          ? <DocsPanel />
+          : !address
+            ? <ConnectRequired walletSetupError={walletSetupError} t={t} />
+            : page === 'portfolio'
+              ? <PortfolioPage address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} />
+              : page === 'swap'
+                ? <SwapPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                : page === 'bridge'
+                  ? <BridgePanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                  : page === 'send'
+                    ? <SendPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                    : page === 'receive'
+                      ? <ReceivePanel address={address} circleWallet={circleWallet} />
+                      : page === 'agentic'
+                        ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />
+                        : page === 'intel'
+                          ? <IntelPanel />
+                          : page === 'info'
+                            ? <InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                            : null
 
   const pageTitle = routeMode === 'pay-sandbox' ? 'ARCOX Pay Sandbox' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : titleFor(page)
 
@@ -320,33 +344,6 @@ export default function App() {
       </main>
     </div>
   )
-}
-
-function renderPage(args: {
-  page: PageId
-  address: string | null
-  circleWallet: {id:string;address:string}|null
-  balances: Record<string,string>
-  eoaBalances: Record<string,string>
-  loadingWallet: boolean
-  walletSetupError: string
-  retryCircleWallet: () => void
-  refresh: () => void
-  navigate: (page: PageId) => void
-  t: any
-}) {
-  const { page, address, circleWallet, balances, eoaBalances, loadingWallet, walletSetupError, retryCircleWallet, refresh, navigate, t } = args
-  if (page === 'intro') return <IntroPage address={address} walletSetupError={walletSetupError} navigate={navigate} t={t} />
-  if (page === 'docs') return <DocsPanel />
-  if (!address) return <ConnectRequired walletSetupError={walletSetupError} t={t} />
-  if (page === 'portfolio') return <PortfolioPage address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} />
-  if (page === 'swap') return <SwapPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
-  if (page === 'bridge') return <BridgePanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
-  if (page === 'send') return <SendPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
-  if (page === 'receive') return <ReceivePanel address={address} circleWallet={circleWallet} />
-  if (page === 'agentic') return <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />
-  if (page === 'info') return <InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
-  return null
 }
 
 function IntroPage({ address, walletSetupError, navigate, t }: { address: string|null; walletSetupError: string; navigate: (page: PageId) => void; t: any }) {
