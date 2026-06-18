@@ -651,19 +651,29 @@ function writeAutoMintStatus(jobId, data) {
   return saved
 }
 
+function readAutoMintStatus(jobId) {
+  try {
+    return JSON.parse(readFileSync(join(AUTO_MINT_DIR, `${jobId}.json`), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
 function autoMintJobId(burnTx) {
   return String(burnTx || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 72)
 }
 
-function spawnAutoMintWorker({ burnTx, from, to, owner }) {
-  const child = spawn(process.execPath, [
+function spawnAutoMintWorker({ burnTx, from, to, owner, delayMs = 0 }) {
+  const args = [
     fileURLToPath(import.meta.url),
     'auto-mint-bridge',
     '--burn-tx', burnTx,
     '--from-chain', from,
     '--to-chain', to,
     '--owner', owner,
-  ], {
+  ]
+  if (delayMs > 0) args.push('--delay-ms', String(delayMs))
+  const child = spawn(process.execPath, args, {
     cwd: AGENT_HOME,
     env: process.env,
     detached: true,
@@ -671,6 +681,59 @@ function spawnAutoMintWorker({ burnTx, from, to, owner }) {
   })
   child.unref()
   return child.pid
+}
+
+function isRecoverableAutoMintError(error) {
+  const message = String(error?.message || error || '').toLowerCase()
+  return [
+    'attestation timeout',
+    'timeout',
+    'timed out',
+    'fetch failed',
+    'network',
+    'rate limit',
+    '429',
+    '503',
+    '502',
+    'econnreset',
+    'etimedout',
+    'pending_confirmations',
+  ].some(part => message.includes(part))
+}
+
+function rescheduleAutoMintAfterFailure({ jobId, burnTx, fromChain, toChain, owner, error }) {
+  const previous = readAutoMintStatus(jobId) || {}
+  const recoveries = Number(previous.recoveries || 0)
+  if (recoveries >= AUTO_MINT_MAX_RECOVERIES) {
+    return writeAutoMintStatus(jobId, {
+      ...previous,
+      status: 'error',
+      action: 'auto-mint-bridge',
+      owner,
+      burnTx,
+      from: fromChain,
+      to: toChain,
+      recoveries,
+      error: error.message,
+      safeNextStep: 'Auto-mint worker reached recovery limit. Use retry bridge with the burn tx.',
+    })
+  }
+  const delayMs = Math.min(120000, 30000 * (recoveries + 1))
+  const pid = spawnAutoMintWorker({ burnTx, from: fromChain, to: toChain, owner, delayMs })
+  return writeAutoMintStatus(jobId, {
+    ...previous,
+    status: 'rescheduled',
+    action: 'auto-mint-bridge',
+    owner,
+    burnTx,
+    from: fromChain,
+    to: toChain,
+    recoveries: recoveries + 1,
+    retryDelayMs: delayMs,
+    pid,
+    lastError: error.message,
+    safeNextStep: `Temporary auto-mint error. Worker rescheduled in ${Math.round(delayMs / 1000)}s.`,
+  })
 }
 
 function scheduleAutoMint({ burnTx, fromInfo, toInfo, owner }) {
@@ -1986,6 +2049,8 @@ async function autoMintBridge() {
   const fromChain = normalizeChainName(arg('from-chain')) || arg('from-chain')
   const toChain = normalizeChainName(arg('to-chain')) || arg('to-chain')
   const owner = arg('owner') || wallet().account.address
+  const delayMs = Number(arg('delay-ms') || '0')
+  if (delayMs > 0) await sleep(delayMs)
   const jobId = autoMintJobId(burnTx)
   writeAutoMintStatus(jobId, {
     status: 'running',
@@ -2019,6 +2084,11 @@ async function autoMintBridge() {
     })
     console.log(JSON.stringify(result, null, 2))
   } catch (error) {
+    if (isRecoverableAutoMintError(error)) {
+      const next = rescheduleAutoMintAfterFailure({ jobId, burnTx, fromChain, toChain, owner, error })
+      console.log(JSON.stringify(next, null, 2))
+      return
+    }
     writeAutoMintStatus(jobId, {
       status: 'error',
       action: 'auto-mint-bridge',
