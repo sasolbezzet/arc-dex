@@ -25,6 +25,7 @@ export function IntelPanel() {
   const [loading, setLoading] = useState(false)
   const [paying, setPaying] = useState(false)
   const [paymentTx, setPaymentTx] = useState('')
+  const [walletPaymentSubmitted, setWalletPaymentSubmitted] = useState(false)
   const [paymentPaid, setPaymentPaid] = useState<{ paymentId: string } | null>(null)
 
   const path = useMemo(() => {
@@ -56,11 +57,14 @@ export function IntelPanel() {
         setRequirement(data.x402)
         setResult(null)
         setPaymentPaid(null)
+        setPaymentTx('')
+        setWalletPaymentSubmitted(false)
         return
       }
       if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`)
       setRequirement(null)
       setPaymentPaid(null)
+      setWalletPaymentSubmitted(false)
       setResult(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Intel request failed.')
@@ -125,6 +129,7 @@ export function IntelPanel() {
         }],
       })
       setPaymentTx(txHash)
+      setWalletPaymentSubmitted(true)
       await checkInvoiceStatus()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Payment failed.')
@@ -134,12 +139,12 @@ export function IntelPanel() {
   }
 
   useEffect(() => {
-    if (!requirement || requirement.status !== 'pending') return
+    if (!requirement || requirement.status !== 'pending' || !walletPaymentSubmitted) return
     const timer = setInterval(() => {
       checkInvoiceStatus().catch(() => {})
     }, 7000)
     return () => clearInterval(timer)
-  }, [requirement?.invoiceId, requirement?.paymentId, requirement?.status])
+  }, [requirement?.invoiceId, requirement?.paymentId, requirement?.status, walletPaymentSubmitted])
 
   return (
     <div className='pay-page'>
