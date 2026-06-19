@@ -10,7 +10,7 @@ import type { X402Invoice } from '../payApi'
 const TEST_COMMANDS = [
   ['Create x402 invoice', 'curl -i -X POST https://arc-dex-bice.vercel.app/api/x402/invoices/create -H "Content-Type: application/json" -d \'{"resource":"/api/intel/address/0x0000000000000000000000000000000000000000","service":"arcox_intel"}\''],
   ['Check x402 status', 'curl -i https://arc-dex-bice.vercel.app/api/x402/invoices/INVOICE_ID/status'],
-  ['Circle x402 webhook', 'curl -i -X POST https://arc-dex-bice.vercel.app/api/circle/webhook -H "Content-Type: application/json" -d \'{"id":"evt_test","type":"transactions.inbound","data":{"destinationAddress":"TREASURY","amount":"0.005001","currency":"USDC","chain":"arc-testnet","txHash":"0xtest","status":"confirmed"}}\''],
+  ['Circle webhook URL', 'https://arc-dex-bice.vercel.app/api/circle/webhook'],
   ['Intel paid retry', 'curl -i https://arc-dex-bice.vercel.app/api/intel/address/0x0000000000000000000000000000000000000000 -H "X-PAYMENT-ID: PAYMENT_ID"'],
 ]
 
