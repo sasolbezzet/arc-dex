@@ -90,36 +90,31 @@ If the backend moves, update `vercel.json` rewrite destination.
 ARCOX Pay webhook endpoints are Vercel serverless functions and should remain on the production frontend domain:
 
 ```txt
-https://arc-dex-bice.vercel.app/api/webhooks/nowpayments
-https://arc-dex-bice.vercel.app/api/webhooks/circle
+https://arc-dex-bice.vercel.app/api/circle/webhook
 ```
 
 Webhook env:
 
 ```bash
-NOWPAYMENTS_API_KEY=
-NOWPAYMENTS_PUBLIC_KEY=
-NOWPAYMENTS_IPN_SECRET=
-NOWPAYMENTS_VERIFY_IPN=false
-NOWPAYMENTS_BASE_URL=https://api-sandbox.nowpayments.io/v1
-NOWPAYMENTS_MODE=sandbox
-
 ARCOX_PAY_BASE_URL=https://arc-dex-bice.vercel.app
 ARCOX_DEFAULT_PAY_CURRENCY=usdcbase
 ARCOX_DEFAULT_PRICE_CURRENCY=usd
 ARCOX_ARC_TREASURY_ADDRESS=
 ARCOX_BASE_TREASURY_ADDRESS=
-ARCOX_SANDBOX_NOWPAYMENTS_DESTINATION_ADDRESS=0xSANDBOX_NOWPAYMENTS_DESTINATION
 
 CIRCLE_API_KEY=
 CIRCLE_BASE_URL=https://api-sandbox.circle.com
 CIRCLE_ENV=TEST
-CIRCLE_VERIFY_WEBHOOK=false
+CIRCLE_WEBHOOK_SECRET=
+CIRCLE_X402_TREASURY_WALLET_ID=
+CIRCLE_X402_TREASURY_ADDRESS=
+CIRCLE_X402_NETWORK=arc-testnet
+X402_MODE=circle_webhook_testnet
+X402_BASE_AMOUNT=0.005
+X402_PAYMENT_TTL_SECONDS=300
 ```
 
-For initial testing, keep `NOWPAYMENTS_VERIFY_IPN=false` and `CIRCLE_VERIFY_WEBHOOK=false` so test payloads without signatures are accepted. Enable verification only after provider secrets and exact signature headers are configured.
-
-ARCOX Pay NOWPayments sandbox guide: `docs/arcox-pay-nowpayments-sandbox.md`. Open `/pay/sandbox` to create a sandbox payment, view the 3-wallet flow, simulate Arc funding, simulate Arc to Base rebalance, simulate Base Treasury send to NOWPayments `pay_address`, and finish via NOWPayments IPN.
+ARCOX x402 uses internal invoices and Circle `transactions.inbound` webhook detection. Open `/pay/sandbox` to create a test invoice, view the exact unique USDC amount, and poll paid status. There is no manual txHash fallback.
 
 Runtime check:
 

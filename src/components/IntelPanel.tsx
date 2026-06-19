@@ -158,11 +158,46 @@ export function IntelPanel() {
 
         <div className='glass sandbox-card wide'>
           <h3>Result</h3>
-          <pre className='json-box'>{JSON.stringify(result || requirement || {}, null, 2)}</pre>
+          <IntelResult result={result} requirement={requirement} />
         </div>
       </section>
     </div>
   )
+}
+
+function IntelResult({ result, requirement }: { result: any; requirement: any }) {
+  if (result?.ok) {
+    const data = result.data || result.report || result
+    const label = data?.arkhamLabel?.name || data?.name || data?.entityName || data?.address || data?.hash || 'Arkham result'
+    return (
+      <div className='intel-result'>
+        <div className='pay-grid'>
+          <Info label='Status' value='Unlocked' />
+          <Info label='Source' value={result.mode || 'arkham'} />
+          <Info label='Result' value={String(label)} />
+          <Info label='Disclaimer' value={result.disclaimer || 'Informational only'} />
+        </div>
+        <details open>
+          <summary>Full result JSON</summary>
+          <pre className='json-box'>{JSON.stringify(result, null, 2)}</pre>
+        </details>
+      </div>
+    )
+  }
+  if (requirement) {
+    return (
+      <div className='intel-result'>
+        <p className='pay-muted'>Payment is required before ARCOX can show the Arkham result.</p>
+        <div className='pay-grid'>
+          <Info label='Invoice' value={requirement.invoiceId || '-'} mono />
+          <Info label='Status' value={requirement.status || 'pending'} />
+          <Info label='Exact Amount' value={`${requirement.uniqueAmount || requirement.amount} ${requirement.asset || 'USDC'}`} />
+          <Info label='Recipient' value={requirement.recipient || '-'} mono />
+        </div>
+      </div>
+    )
+  }
+  return <p className='pay-muted'>Run an analysis to create an x402 invoice or show an unlocked Arkham result.</p>
 }
 
 function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
