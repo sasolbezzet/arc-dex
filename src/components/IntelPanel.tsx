@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { switchToArcTestnet } from '../domain/arcNetwork'
+import { ARC_TOKENS } from '../domain/tokens'
 
 type IntelType = 'address' | 'report' | 'tx' | 'contract' | 'entity' | 'token' | 'search'
 declare global { interface Window { ethereum?: any } }
@@ -21,6 +23,8 @@ export function IntelPanel() {
   const [requirement, setRequirement] = useState<any>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [paying, setPaying] = useState(false)
+  const [paymentTx, setPaymentTx] = useState('')
   const [paymentPaid, setPaymentPaid] = useState<{ paymentId: string } | null>(null)
 
   const path = useMemo(() => {
@@ -72,9 +76,12 @@ export function IntelPanel() {
     try {
       const invoiceId = requirement.invoiceId || requirement.paymentId
       const response = await fetch(`/api/x402/invoices/${encodeURIComponent(invoiceId)}/status`, { cache: 'no-store' })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || data.error) throw new Error(data.error || `Invoice status failed: HTTP ${response.status}`)
+      const text = await response.text()
+      let data: any = {}
+      try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
+      if (!response.ok || data.error) throw new Error(data.error || data.raw || `Invoice status failed: HTTP ${response.status}`)
       const invoice = data.x402 || data.invoice
+      if (!invoice) throw new Error('Invoice status response is empty.')
       setRequirement(invoice)
       if (invoice?.status === 'paid') {
         setPaymentPaid({ paymentId: invoice.paymentId })
@@ -86,6 +93,43 @@ export function IntelPanel() {
       setError(e instanceof Error ? e.message : 'Invoice status check failed.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function payInvoiceWithWallet() {
+    if (!requirement?.recipient || !requirement?.amount) return
+    if (!window.ethereum) {
+      setError('Wallet browser tidak terdeteksi.')
+      return
+    }
+    setPaying(true)
+    setError('')
+    try {
+      await switchToArcTestnet()
+      const [account] = await window.ethereum.request({ method: 'eth_requestAccounts' })
+      if (!account) throw new Error('Wallet belum terkoneksi.')
+      const { encodeFunctionData, erc20Abi, parseUnits } = await import('viem')
+      const amount = parseUnits(String(requirement.amount || requirement.uniqueAmount), 6)
+      const data = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [requirement.recipient as `0x${string}`, amount],
+      })
+      const txHash = await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: account,
+          to: ARC_TOKENS.USDC.address,
+          data,
+          value: '0x0',
+        }],
+      })
+      setPaymentTx(txHash)
+      await checkInvoiceStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Payment failed.')
+    } finally {
+      setPaying(false)
     }
   }
 
@@ -150,6 +194,10 @@ export function IntelPanel() {
               <button className='btn btn-primary' onClick={checkInvoiceStatus} disabled={loading || !requirement.invoiceId}>
                 {loading ? 'Checking...' : 'Check Circle Payment Status'}
               </button>
+              <button className='btn btn-secondary' onClick={payInvoiceWithWallet} disabled={paying || loading || requirement.status !== 'pending'}>
+                {paying ? 'Sending USDC...' : 'Pay Exact USDC With Wallet'}
+              </button>
+              {paymentTx && <p className='pay-muted'>Payment tx submitted. Waiting for Circle inbound webhook: {paymentTx.slice(0, 10)}...{paymentTx.slice(-8)}</p>}
             </>
           ) : (
             <p className='pay-muted'>If backend x402 is enabled, the first request returns HTTP 402 with price, recipient, resource, and payment ID.</p>
