@@ -164,16 +164,41 @@ export function IntelPanel() {
       await switchToArcTestnet()
       const [account] = await window.ethereum.request({ method: 'eth_requestAccounts' })
       if (!account) throw new Error('Wallet belum terkoneksi.')
-      const { encodeFunctionData, erc20Abi, parseUnits } = await import('viem')
+      const { encodeFunctionData, erc20Abi, parseUnits, keccak256, toHex } = await import('viem')
       const amount = parseUnits(String(requirement.amount || requirement.uniqueAmount), 6)
-      const data = encodeFunctionData({
+      const transferData = encodeFunctionData({
         abi: erc20Abi,
         functionName: 'transfer',
         args: [requirement.recipient as `0x${string}`, amount],
       })
+      const memoData = (requirement.memoData || toHex(JSON.stringify({
+        app: 'arcox',
+        type: 'x402',
+        invoiceId: requirement.invoiceId,
+        paymentId: requirement.paymentId,
+        resource: requirement.resource,
+      }))) as `0x${string}`
+      const memoId = (requirement.memoId || keccak256(toHex(String(requirement.paymentId || requirement.invoiceId)))) as `0x${string}`
+      const memoContract = (requirement.memoContract || '0x5294E9927c3306DcBaDb03fe70b92e01cCede505') as `0x${string}`
+      const data = encodeFunctionData({
+        abi: [{
+          type: 'function',
+          name: 'memo',
+          stateMutability: 'nonpayable',
+          inputs: [
+            { name: 'target', type: 'address' },
+            { name: 'data', type: 'bytes' },
+            { name: 'memoId', type: 'bytes32' },
+            { name: 'memoData', type: 'bytes' },
+          ],
+          outputs: [],
+        }],
+        functionName: 'memo',
+        args: [ARC_TOKENS.USDC.address, transferData, memoId, memoData],
+      })
       const txHash = await window.ethereum.request({
         method: 'eth_sendTransaction',
-        params: [{ from: account, to: ARC_TOKENS.USDC.address, data, value: '0x0' }],
+        params: [{ from: account, to: memoContract, data, value: '0x0' }],
       })
       setPaymentTx(txHash)
       setWalletPaymentSubmitted(true)
@@ -198,7 +223,7 @@ export function IntelPanel() {
       <section className='glass sandbox-hero'>
         <div className='docs-kicker'>ARCOX Intel</div>
         <h2>Arkham Intelligence via x402</h2>
-        <p>Choose a paid Intel service, pay the exact Arc USDC invoice, then ARCOX API unlocks the Arkham result after Circle inbound payment is detected.</p>
+        <p>Choose a paid Intel service, pay the Arc USDC invoice with an attached transaction memo, then ARCOX API unlocks the Arkham result after the memo payment is detected.</p>
         <div className='inline-warning'>Informational only. Not financial advice. Arkham API calls are served by ARCOX API; the browser never receives the Arkham API key.</div>
       </section>
 
@@ -232,7 +257,7 @@ export function IntelPanel() {
           <h3>x402 Payment</h3>
           {requirement ? (
             <>
-              <p className='pay-muted'>Pay the exact amount shown here. ARCOX does not accept manual txHash unlocks; status changes only after Circle inbound detection.</p>
+              <p className='pay-muted'>Pay with the wallet button so ARCOX can attach the invoice memo on-chain. Manual txHash unlocks are not accepted.</p>
               <div className='pay-grid'>
                 <Info label='Invoice ID' value={requirement.invoiceId || '-'} mono />
                 <Info label='Status' value={statusLabel(requirement.status || 'pending')} />
@@ -241,6 +266,7 @@ export function IntelPanel() {
                 <Info label='Network' value={requirement.network || '-'} />
                 <Info label='Payment ID' value={requirement.paymentId || '-'} mono />
                 <Info label='Resource' value={requirement.resource || '-'} mono />
+                <Info label='Memo ID' value={requirement.memoId || '-'} mono />
                 <Info label='Expires' value={`${requirement.expiresInSeconds || 300}s`} />
               </div>
               <button className='btn btn-primary' onClick={checkInvoiceStatus} disabled={loading || !requirement.invoiceId}>
