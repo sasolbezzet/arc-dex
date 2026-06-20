@@ -278,7 +278,7 @@ export async function estimateEoaSwapWithAppKit(args: {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
-  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
+  const accounts = await window.ethereum?.request?.({ method: 'eth_accounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
   return await kit.estimateSwap({

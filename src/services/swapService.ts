@@ -1,49 +1,12 @@
 import { safePost } from '../api'
-import { switchToArcTestnet, ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
+import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
 import { getArcToken } from '../domain/tokens'
 import { encodeFunctionData, erc20Abi, parseUnits } from 'viem'
+import { estimateEoaSwapWithAppKit, swapEoaWithAppKit } from '../appKit'
 
 const API = ''
 const EVM_FEE_TREASURY = import.meta.env.VITE_ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
 const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_SWAP_FEE_BPS || '30')
-
-const adapterExecuteAbi = [{
-  type: 'function',
-  name: 'execute',
-  stateMutability: 'payable',
-  inputs: [
-    {
-      name: 'params',
-      type: 'tuple',
-      components: [
-        { name: 'instructions', type: 'tuple[]', components: [
-          { name: 'target', type: 'address' },
-          { name: 'data', type: 'bytes' },
-          { name: 'value', type: 'uint256' },
-          { name: 'tokenIn', type: 'address' },
-          { name: 'amountToApprove', type: 'uint256' },
-          { name: 'tokenOut', type: 'address' },
-          { name: 'minTokenOut', type: 'uint256' },
-        ] },
-        { name: 'tokens', type: 'tuple[]', components: [
-          { name: 'token', type: 'address' },
-          { name: 'beneficiary', type: 'address' },
-        ] },
-        { name: 'execId', type: 'uint256' },
-        { name: 'deadline', type: 'uint256' },
-        { name: 'metadata', type: 'bytes' },
-      ],
-    },
-    { name: 'tokenInputs', type: 'tuple[]', components: [
-      { name: 'permitType', type: 'uint8' },
-      { name: 'token', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-      { name: 'permitCalldata', type: 'bytes' },
-    ] },
-    { name: 'signature', type: 'bytes' },
-  ],
-  outputs: [],
-}] as const
 
 export async function quoteCircleSwap(args: {
   metamaskAddress: string | null
@@ -70,53 +33,28 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   const from = accounts?.[0]
   if (!from) throw new Error('Wallet EOA belum terhubung.')
   if (from.toLowerCase() !== args.metamaskAddress.toLowerCase()) throw new Error('Wallet aktif berbeda dengan wallet login.')
-  await switchToArcTestnet()
-  const quote = await quoteEoaSwap({ metamaskAddress: args.metamaskAddress, tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn })
-  if (quote?.available === false) throw new Error(quote.error || 'Route swap belum tersedia.')
-  const prepared = await safePost(API, '/api/eoa-swap-prepare', {
-    metamaskAddress: args.metamaskAddress,
+  const config = await getSwapConfig()
+  const result = await swapEoaWithAppKit({
     tokenIn: args.tokenIn,
     tokenOut: args.tokenOut,
-    amountIn: args.amountIn
+    amountIn: args.amountIn,
+    kitKey: config.kitKey,
+    customFeeBps: PLATFORM_FEE_BPS,
+    feeRecipient: EVM_FEE_TREASURY,
   })
-  if (!prepared?.success) throw new Error(prepared?.error || 'Swap prepare failed.')
-  const token = getArcToken(args.tokenIn)
-  if (!token) throw new Error('Token tidak didukung: ' + args.tokenIn)
-  const amountBaseUnits = BigInt(prepared.amountBaseUnits)
-  const approveData = encodeFunctionData({
-    abi: erc20Abi,
-    functionName: 'approve',
-    args: [prepared.adapterContract as `0x${string}`, amountBaseUnits],
-  })
-  const approveTx = await sendBufferedTx({ from, to: prepared.tokenInAddress || token.address, data: approveData, value: '0x0' })
-  await waitForReceipt(approveTx)
-  const executionParams = normalizeAdapterExecutionParams(prepared.executionParams)
-  const tokenInputs = [{
-    permitType: 0,
-    token: (prepared.tokenInAddress || token.address) as `0x${string}`,
-    amount: amountBaseUnits,
-    permitCalldata: '0x' as `0x${string}`,
-  }]
-  const executeData = encodeFunctionData({
-    abi: adapterExecuteAbi,
-    functionName: 'execute',
-    args: [executionParams, tokenInputs, prepared.signature],
-  })
-  const tx: any = { from, to: prepared.adapterContract, data: executeData, value: '0x0' }
-  if (prepared.gasLimit) tx.gas = toHex((BigInt(prepared.gasLimit) * 13n) / 10n + 10_000n)
-  const txHash = await sendBufferedTx(tx)
-  await waitForReceipt(txHash)
+  const txHash = result?.txHash || result?.transactionHash || result?.steps?.find?.((step: any) => step?.txHash)?.txHash || ''
   let feeTx = ''
   let feeError = ''
   const feeToken = getArcToken(args.tokenIn)
-  const feeAmount = prepared?.platformFee?.amount || quote?.platformFee?.amount || '0'
+  const feeAmount = calculateInputFee(args.amountIn, feeToken?.decimals ?? 6)
   const feeUnits = feeToken ? parseUnits(feeAmount, feeToken.decimals) : 0n
-  if (feeUnits > 0n && feeToken) {
+  const appKitFeeRequested = PLATFORM_FEE_BPS > 0
+  if (!appKitFeeRequested && feeUnits > 0n && feeToken) {
     try {
       const feeData = encodeFunctionData({
         abi: erc20Abi,
         functionName: 'transfer',
-        args: [(prepared.platformFee?.treasury || EVM_FEE_TREASURY) as `0x${string}`, feeUnits],
+        args: [EVM_FEE_TREASURY as `0x${string}`, feeUnits],
       })
       feeTx = await sendBufferedTx({ from, to: feeToken.address, data: feeData, value: '0x0' })
       await waitForReceipt(feeTx)
@@ -127,24 +65,23 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   return {
     success: true,
     source: 'browser-prepared-adapter',
-    route: 'circle-stablecoin-service-adapter',
+    route: 'circle-appkit-browser-wallet',
     tokenIn: args.tokenIn,
     tokenOut: args.tokenOut,
-    amountIn: prepared.amountIn || quote?.platformFee?.swapAmountIn || args.amountIn,
+    amountIn: args.amountIn,
     grossAmountIn: args.amountIn,
-    amountOut: prepared.amountOut || quote?.amountOut || '',
+    amountOut: result?.estimatedOutput?.amount || result?.amountOut || '',
     txHash,
     transactionHash: txHash,
     explorerUrl: txHash ? `${ARC_TESTNET_EXPLORER_TX}${txHash}` : '',
-    approveTx,
-    raw: prepared,
+    raw: result,
     platformFee: {
-      ...prepared.platformFee,
       bps: PLATFORM_FEE_BPS,
       token: args.tokenIn,
-      treasury: prepared.platformFee?.treasury || EVM_FEE_TREASURY,
+      treasury: EVM_FEE_TREASURY,
+      amount: feeAmount,
       amountBaseUnits: feeUnits.toString(),
-      collectedBy: 'post-swap-browser-transfer',
+      collectedBy: appKitFeeRequested ? 'circle-appkit-custom-fee' : 'post-swap-browser-transfer',
       txHash: feeTx || undefined,
       error: feeError || undefined,
     },
@@ -152,28 +89,61 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
 }
 
 export async function quoteEoaSwap(args: { metamaskAddress: string | null; tokenIn: string; tokenOut: string; amountIn: string }) {
-  return safePost(API, '/api/eoa-swap-quote', args)
+  try {
+    const config = await getSwapConfig()
+    const estimate = await estimateEoaSwapWithAppKit({
+      tokenIn: args.tokenIn,
+      tokenOut: args.tokenOut,
+      amountIn: args.amountIn,
+      kitKey: config.kitKey,
+      customFeeBps: PLATFORM_FEE_BPS,
+      feeRecipient: EVM_FEE_TREASURY,
+    })
+    const amountOut = estimate?.estimatedOutput?.amount || '0'
+    const fee = (estimate?.fees || []).reduce((sum: number, item: any) => sum + Number(item?.amount || 0), 0)
+    const feeAmount = calculateInputFee(args.amountIn, getArcToken(args.tokenIn)?.decimals ?? 6)
+    return {
+      available: true,
+      source: 'circle-appkit-browser-wallet',
+      amountOut,
+      fee: fee.toFixed(6),
+      platformFee: {
+        bps: PLATFORM_FEE_BPS,
+        amount: feeAmount,
+        token: args.tokenIn,
+        treasury: EVM_FEE_TREASURY,
+        swapAmountIn: args.amountIn,
+      },
+      rate: Number(amountOut || 0) / Number(args.amountIn || 1),
+      raw: estimate,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/No route available|Route or resource not found|Swap route not found|route is not supported/i.test(message)) {
+      return { available: false, code: 'NO_SWAP_ROUTE', error: 'Route swap belum tersedia dari Circle AppKit untuk pasangan/jumlah ini.', details: message }
+    }
+    throw error
+  }
 }
 
-function normalizeAdapterExecutionParams(params: any = {}) {
-  return {
-    instructions: (params.instructions || []).map((item: any) => ({
-      target: item.target,
-      data: item.data,
-      value: BigInt(item.value || 0),
-      tokenIn: item.tokenIn,
-      amountToApprove: BigInt(item.amountToApprove || 0),
-      tokenOut: item.tokenOut,
-      minTokenOut: BigInt(item.minTokenOut || 0),
-    })),
-    tokens: (params.tokens || []).map((item: any) => ({
-      token: item.token,
-      beneficiary: item.beneficiary,
-    })),
-    execId: BigInt(params.execId || 0),
-    deadline: BigInt(params.deadline || 0),
-    metadata: params.metadata || '0x',
-  }
+async function getSwapConfig(): Promise<{ kitKey: string }> {
+  const response = await fetch(`${API}/api/config`, { cache: 'no-store' })
+  if (!response.ok) throw new Error('Gagal mengambil konfigurasi swap.')
+  const data = await response.json()
+  if (!data?.kitKey) throw new Error('Kit key belum tersedia dari API.')
+  return { kitKey: data.kitKey }
+}
+
+function calculateInputFee(amount: string, decimals: number) {
+  const units = parseUnits(amount || '0', decimals)
+  return formatTokenUnits((units * BigInt(Math.max(0, Math.floor(PLATFORM_FEE_BPS)))) / 10_000n, decimals)
+}
+
+function formatTokenUnits(units: bigint, decimals: number) {
+  const base = 10n ** BigInt(decimals)
+  const whole = units / base
+  const frac = (units % base).toString().padStart(decimals, '0').replace(/0+$/, '')
+  return `${whole.toString()}${frac ? `.${frac}` : ''}`
 }
 
 function toHex(value: bigint) {
