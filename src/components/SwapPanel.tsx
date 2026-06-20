@@ -107,6 +107,17 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const maxBal = activeBalances[tokenIn] ? parseFloat(activeBalances[tokenIn]).toFixed(4) : '0'
   const walletLabel = source === 'circle' ? 'Circle Wallet' : 'EOA MetaMask'
   const walletAddr = source === 'circle' ? circleWallet?.address : address
+  const blockedRoute = source === 'circle' && tokenIn === 'EURC' && tokenOut === 'USDC'
+  const swapDisabled = !amountIn || quoteLoading || loading || tokenIn === tokenOut || blockedRoute || (source === 'circle' && !circleWallet)
+  const swapLabel = loading
+    ? `⏳ ${t('common.processing')}`
+    : quoteLoading
+      ? 'Mengambil estimasi...'
+      : blockedRoute
+        ? 'Route Circle EURC → USDC belum tersedia'
+        : amountIn
+          ? t('swap.actionAmount', { amount: amountIn, tokenIn, tokenOut, source: source === 'circle' ? 'Circle' : 'EOA' })
+          : t('swap.action')
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
@@ -148,7 +159,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       {quoteLoading && <div style={{padding:10,borderRadius:10,fontSize:12,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>Mengambil estimasi swap...</div>}
       {status && <div style={{padding:10,borderRadius:10,fontSize:13,background:status.type==='success'?'rgba(16,185,129,0.1)':status.type==='warning'?'rgba(245,158,11,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':status.type==='warning'?'#f59e0b':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':status.type==='warning'?'1px solid rgba(245,158,11,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&<div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}</div>}
       {!address ? <div style={{padding:10,borderRadius:10,fontSize:13,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>{t('swap.connectWalletHint')}</div>
-      : <button onClick={handleSwap} disabled={!amountIn||!quote||quoteLoading||loading||tokenIn===tokenOut||(source==='circle'&&!circleWallet)} className='btn btn-primary'>{loading?`⏳ ${t('common.processing')}`:quoteLoading?'Mengambil estimasi...':amountIn&&!quote?'Menunggu estimasi':amountIn?t('swap.actionAmount', { amount: amountIn, tokenIn, tokenOut, source: source==='circle'?'Circle':'EOA' }):t('swap.action')}</button>}
+      : <button onClick={handleSwap} disabled={swapDisabled} className='btn btn-primary'>{swapLabel}</button>}
     </div>
   )
 }
