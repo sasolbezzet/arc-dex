@@ -24,6 +24,7 @@ export const TESTNET_TOKEN_ADDRESSES = {
     Ethereum_Sepolia: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
     Base_Sepolia: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     Arbitrum_Sepolia: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+    Solana_Devnet: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
   },
   EURC: {
     Arc_Testnet: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
