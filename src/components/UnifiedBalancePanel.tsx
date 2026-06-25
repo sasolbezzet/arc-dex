@@ -158,15 +158,25 @@ function ChainButtons({ label, value, onChange }: { label: string; value: UbChai
 }
 
 function formatUnifiedBalance(balance: any) {
-  const total = balance?.totalBalance ?? balance?.total ?? balance?.balance ?? balance?.amount
-  if (total !== undefined && total !== null) return String(total)
-  const entries = Array.isArray(balance?.balances) ? balance.balances : Array.isArray(balance?.chainBalances) ? balance.chainBalances : []
-  const sum = entries.reduce((acc: number, item: any) => acc + Number(item?.balance || item?.amount || item?.total || 0), 0)
+  const total = balance?.totalConfirmedBalance ?? balance?.totalBalance ?? balance?.total ?? balance?.balance ?? balance?.amount
+  const pending = balance?.totalPendingBalance
+  if (total !== undefined && total !== null) return pending ? `${total} confirmed · ${pending} pending` : String(total)
+  const entries = unifiedBalanceEntries(balance)
+  const sum = entries.reduce((acc: number, item: any) => acc + Number(item?.confirmedBalance || item?.balance || item?.amount || item?.total || 0), 0)
   return Number.isFinite(sum) && sum > 0 ? sum.toFixed(6) : '0'
 }
 
 function formatUnifiedChains(balance: any) {
-  const entries = Array.isArray(balance?.balances) ? balance.balances : Array.isArray(balance?.chainBalances) ? balance.chainBalances : []
+  const entries = unifiedBalanceEntries(balance)
   if (!entries.length) return 'No chain balance found'
-  return entries.map((item: any) => `${item.chain || item.blockchain || '-'}: ${item.balance || item.amount || item.total || '0'}`).join(' · ')
+  return entries.map((item: any) => `${item.chain || item.blockchain || '-'}: ${item.confirmedBalance || item.balance || item.amount || item.total || '0'}`).join(' · ')
+}
+
+function unifiedBalanceEntries(balance: any) {
+  if (Array.isArray(balance?.balances)) return balance.balances
+  if (Array.isArray(balance?.chainBalances)) return balance.chainBalances
+  if (Array.isArray(balance?.breakdown)) {
+    return balance.breakdown.flatMap((source: any) => Array.isArray(source?.breakdown) ? source.breakdown : [])
+  }
+  return []
 }

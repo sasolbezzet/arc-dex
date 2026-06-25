@@ -496,14 +496,23 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
 }
 
 function formatUnifiedBalanceValue(balance: any) {
-  const total = balance?.totalBalance ?? balance?.total ?? balance?.balance ?? balance?.amount
+  const total = balance?.totalConfirmedBalance ?? balance?.totalBalance ?? balance?.total ?? balance?.balance ?? balance?.amount
   if (total !== undefined && total !== null) return String(total)
-  const entries = Array.isArray(balance?.balances) ? balance.balances : Array.isArray(balance?.chainBalances) ? balance.chainBalances : []
-  const sum = entries.reduce((acc: number, item: any) => acc + Number(item?.balance || item?.amount || item?.total || 0), 0)
+  const entries = unifiedBalanceEntries(balance)
+  const sum = entries.reduce((acc: number, item: any) => acc + Number(item?.confirmedBalance || item?.balance || item?.amount || item?.total || 0), 0)
   return Number.isFinite(sum) ? sum.toFixed(6) : '0'
 }
 
 function formatUnifiedChainCount(balance: any) {
-  const entries = Array.isArray(balance?.balances) ? balance.balances : Array.isArray(balance?.chainBalances) ? balance.chainBalances : []
+  const entries = unifiedBalanceEntries(balance)
   return entries.length ? `${entries.length} chain${entries.length > 1 ? 's' : ''}` : 'Check'
+}
+
+function unifiedBalanceEntries(balance: any) {
+  if (Array.isArray(balance?.balances)) return balance.balances
+  if (Array.isArray(balance?.chainBalances)) return balance.chainBalances
+  if (Array.isArray(balance?.breakdown)) {
+    return balance.breakdown.flatMap((source: any) => Array.isArray(source?.breakdown) ? source.breakdown : [])
+  }
+  return []
 }

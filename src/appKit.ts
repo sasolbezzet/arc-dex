@@ -9,7 +9,7 @@
 //              (Circle Orbit Forwarder relay attestation ke on-chain)
 
 import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
-import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet } from '@circle-fin/bridge-kit'
+import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet, resolveChainIdentifier } from '@circle-fin/bridge-kit'
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
@@ -302,12 +302,15 @@ export async function estimateEoaSwapWithAppKit(args: {
 
 export async function getUnifiedBalanceWithAppKit() {
   const kit = getKit()
-  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
-  const account = accounts?.[0]
-  if (!account) throw new Error('Wallet EOA belum terhubung.')
+  const evmAdapter = await buildEvmAdapter()
   return await kit.unifiedBalance.getBalances({
     token: 'USDC',
-    sources: { address: account },
+    sources: {
+      adapter: evmAdapter,
+      chains: ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia'],
+    },
+    networkType: 'testnet',
+    includePending: true,
   } as any)
 }
 
@@ -318,12 +321,19 @@ function unifiedBalanceFrom(adapter: any, amount: string, sourceChain: UnifiedBa
   return { adapter, allocations: [{ amount, chain: sourceChain }] }
 }
 
+async function ensureUnifiedEvmChain(adapter: any, chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
+  const resolved = resolveChainIdentifier(chain)
+  if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
+  await adapter.ensureChain(resolved)
+}
+
 export async function depositUnifiedBalanceWithAppKit(args: {
   amount: string
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
+  await ensureUnifiedEvmChain(adapter, args.chain)
   return await kit.unifiedBalance.deposit({
     from: { adapter, chain: args.chain },
     amount: args.amount,
@@ -337,6 +347,7 @@ export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
 }) {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
+  await ensureUnifiedEvmChain(adapter, args.chain)
   return await kit.unifiedBalance.initiateRemoveFund({
     from: { adapter, chain: args.chain },
     amount: args.amount,
@@ -349,6 +360,7 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
 }) {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
+  await ensureUnifiedEvmChain(adapter, args.chain)
   return await kit.unifiedBalance.removeFund({
     from: { adapter, chain: args.chain },
     token: 'USDC',
@@ -360,12 +372,12 @@ export async function estimateUnifiedBalanceSpendWithAppKit(args: {
   recipient: string
   sourceChain?: UnifiedBalanceSourceChain
 }) {
-  await switchToArcTestnet()
   const kit = getKit()
   const adapter = await buildEvmAdapter()
+  if (args.sourceChain && args.sourceChain !== 'auto') await ensureUnifiedEvmChain(adapter, args.sourceChain)
   return await kit.unifiedBalance.estimateSpend({
     from: unifiedBalanceFrom(adapter, args.amount, args.sourceChain),
-    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
+    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
     amount: args.amount,
     token: 'USDC',
   } as any)
@@ -376,12 +388,12 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   recipient: string
   sourceChain?: UnifiedBalanceSourceChain
 }) {
-  await switchToArcTestnet()
   const kit = getKit()
   const adapter = await buildEvmAdapter()
+  if (args.sourceChain && args.sourceChain !== 'auto') await ensureUnifiedEvmChain(adapter, args.sourceChain)
   return await kit.unifiedBalance.spend({
     from: unifiedBalanceFrom(adapter, args.amount, args.sourceChain),
-    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
+    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
     amount: args.amount,
     token: 'USDC',
   } as any)
