@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { getTreasuryStatus } from '../payApi'
 import { completeUnifiedBalanceWithdrawWithAppKit, depositUnifiedBalanceWithAppKit, getUnifiedBalanceWithAppKit, initiateUnifiedBalanceWithdrawWithAppKit } from '../appKit'
+import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 
 type UbChain = 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia'
 const UB_CHAINS: Array<{ id: UbChain; label: string }> = [
-  { id: 'Arc_Testnet', label: 'Arc' },
-  { id: 'Base_Sepolia', label: 'Base' },
-  { id: 'Ethereum_Sepolia', label: 'ETH' },
-  { id: 'Arbitrum_Sepolia', label: 'ARB' },
+  { id: 'Arc_Testnet', label: 'Arc Testnet' },
+  { id: 'Base_Sepolia', label: 'Base Sepolia' },
+  { id: 'Ethereum_Sepolia', label: 'Ethereum Sepolia' },
+  { id: 'Arbitrum_Sepolia', label: 'Arbitrum Sepolia' },
 ]
 
 export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null }) {
@@ -69,7 +70,16 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
         <div className='glass sandbox-card'>
           <h3>Deposit to Unified Balance</h3>
           <p className='pay-muted'>Deposit USDC from your wallet into Circle Gateway Unified Balance. This is required before a Unified Balance spend can pay x402.</p>
-          <ChainButtons label='Source Chain' value={depositChain} onChange={setDepositChain} />
+          <div className='ub-form-row'>
+            <div className='ub-picker-field'>
+              <span>Source Chain</span>
+              <CompactChainPicker value={depositChain} options={UB_CHAINS} onChange={value => setDepositChain(value as UbChain)} />
+            </div>
+            <div className='ub-token-field'>
+              <span>Token</span>
+              <CompactTokenPicker value='USDC' options={['USDC']} onChange={() => {}} width={104} />
+            </div>
+          </div>
           <label className='sandbox-field'>
             <span>Amount USDC</span>
             <input className='input' value={depositAmount} onChange={event => setDepositAmount(event.target.value)} />
@@ -90,7 +100,16 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
         <div className='glass sandbox-card'>
           <h3>Withdraw Unified Balance</h3>
           <p className='pay-muted'>Withdraw has two steps: initiate removal, wait until the withdrawal block is ready, then complete withdraw on the same chain.</p>
-          <ChainButtons label='Withdraw Chain' value={withdrawChain} onChange={setWithdrawChain} />
+          <div className='ub-form-row'>
+            <div className='ub-picker-field'>
+              <span>Withdraw Chain</span>
+              <CompactChainPicker value={withdrawChain} options={UB_CHAINS} onChange={value => setWithdrawChain(value as UbChain)} />
+            </div>
+            <div className='ub-token-field'>
+              <span>Token</span>
+              <CompactTokenPicker value='USDC' options={['USDC']} onChange={() => {}} width={104} />
+            </div>
+          </div>
           <label className='sandbox-field'>
             <span>Amount USDC</span>
             <input className='input' value={withdrawAmount} onChange={event => setWithdrawAmount(event.target.value)} />
@@ -138,21 +157,6 @@ function Info({ label, value, mono }: { label: string; value: string; mono?: boo
     <div className='pay-info'>
       <span>{label}</span>
       <strong className={mono ? 'mono' : ''}>{value || '-'}</strong>
-    </div>
-  )
-}
-
-function ChainButtons({ label, value, onChange }: { label: string; value: UbChain; onChange: (value: UbChain) => void }) {
-  return (
-    <div className='sandbox-field'>
-      <span>{label}</span>
-      <div className='compact-chain-grid compact-chain-grid--stacked'>
-        {UB_CHAINS.map(chain => (
-          <button key={chain.id} type='button' className={value === chain.id ? 'active' : ''} onClick={() => onChange(chain.id)}>
-            {chain.label}
-          </button>
-        ))}
-      </div>
     </div>
   )
 }

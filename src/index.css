@@ -179,6 +179,10 @@ select.input { cursor:pointer; }
 .sandbox-card.wide { grid-column: 1 / -1; }
 .sandbox-field { display: grid; gap: 5px; }
 .sandbox-field span { color: var(--muted-2); font-size: 11px; font-weight: 700; }
+.ub-form-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.ub-picker-field, .ub-token-field { display: grid; gap: 5px; min-width: 0; }
+.ub-picker-field span, .ub-token-field span { color: var(--muted-2); font-size: 11px; font-weight: 700; }
+.ub-token-field { width: 104px; }
 .compact-chain-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; width: 100%; }
 .compact-chain-grid button { min-width: 0; min-height: 34px; border: 1px solid rgba(148,163,184,0.22); border-radius: 8px; background: rgba(15,23,42,0.72); color: #cbd5e1; font-size: 11px; font-weight: 800; cursor: pointer; transition: border-color .18s ease, background .18s ease, color .18s ease; }
 .compact-chain-grid button:hover { border-color: rgba(251,191,36,0.42); color: #f8fafc; }
@@ -195,6 +199,7 @@ select.input { cursor:pointer; }
 .intel-service-options button.active { border-color: rgba(251,191,36,0.72); background: rgba(251,191,36,0.14); }
 .intel-service-options button span { color: #f8fafc; font-size: 12px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
 .intel-service-options button small { color: var(--muted); font-size: 10px; line-height: 1.2; }
+.compact-intel-select { min-height: 38px; font-size: 12px; }
 .json-box, .api-example pre { max-width: 100%; overflow-x: auto; border: 1px solid rgba(71,85,105,0.28); background: rgba(8,10,15,0.74); border-radius: 8px; padding: 10px; color: #c7d2fe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.45; }
 .json-box pre { margin-top: 8px; white-space: pre; }
 .api-example-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -271,6 +276,7 @@ select.input { cursor:pointer; }
   .pay-grid, .sandbox-grid, .api-example-grid, .flow-steps, .intel-highlight-grid, .intel-section-grid, .intel-record, .intel-result-header { grid-template-columns: minmax(0, 1fr); }
   .compact-chain-grid, .compact-chain-grid--stacked, .intel-service-options { grid-template-columns: minmax(0, 1fr); }
   .compact-chain-grid button, .compact-chain-grid--stacked button { min-height: 40px; padding: 8px 10px; }
+  .ub-form-row { grid-template-columns: minmax(0, 1fr) 104px; }
   .intel-service-list { max-height: 320px; }
   .intel-service-options button { min-height: 44px; }
   .pay-actions { grid-template-columns: minmax(0, 1fr); }

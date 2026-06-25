@@ -43,6 +43,7 @@ type IntelService = {
   placeholder?: string
   needsValue?: boolean
   needsChain?: boolean
+  needsTimeWindow?: boolean
   buildPath: (value: string, chain: string) => string
 }
 
@@ -52,30 +53,31 @@ const SERVICES: IntelService[] = [
   service('address_enriched', 'Wallet Enriched', 'Wallet', '0.01', 'Wallet address', value => `/api/intel/address/${enc(value)}/enriched`),
   service('balances', 'Wallet Balances', 'Wallet', '0.01', 'Wallet address', value => `/api/intel/address/${enc(value)}/balances`),
   service('counterparties', 'Wallet Counterparties', 'Wallet', '0.02', 'Wallet address', value => `/api/intel/address/${enc(value)}/counterparties`),
-  service('flows', 'Wallet Flows', 'Wallet', '0.03', 'Wallet address', value => `/api/intel/address/${enc(value)}/flows`),
-  service('history', 'Wallet History', 'Wallet', '0.03', 'Wallet address', value => `/api/intel/address/${enc(value)}/history`),
-  service('volume', 'Wallet Volume', 'Wallet', '0.03', 'Wallet address', value => `/api/intel/address/${enc(value)}/volume`),
+  service('flows', 'Wallet Flows', 'Wallet', '0.03', 'Wallet address', value => `/api/intel/address/${enc(value)}/flows`, false, true, true),
+  service('history', 'Wallet History', 'Wallet', '0.03', 'Wallet address', value => `/api/intel/address/${enc(value)}/history`, false, true, true),
+  service('volume', 'Wallet Volume', 'Wallet', '0.03', 'Wallet address', value => `/api/intel/address/${enc(value)}/volume`, false, true, true),
   service('portfolio', 'Wallet Portfolio', 'Wallet', '0.01', 'Wallet address', value => `/api/intel/address/${enc(value)}/portfolio`),
   service('report', 'Full Wallet Report', 'Wallet', '0.05', 'Wallet address', value => `/api/intel/report/address/${enc(value)}`),
   service('tx', 'Transaction Intel', 'Transaction', '0.005', 'Transaction hash', value => `/api/intel/tx/${enc(value)}`),
-  service('tx_transfers', 'Transaction Transfers', 'Transaction', '0.005', 'Transaction hash', value => `/api/intel/tx/${enc(value)}/transfers`),
+  service('tx_transfers', 'Transaction Transfers', 'Transaction', '0.005', 'Transaction hash', (value, chain) => `/api/intel/tx/${enc(value)}/transfers?chain=${enc(chain || 'ethereum')}`, true),
   service('contract', 'Contract Intel', 'Contract', '0.01', 'Contract address', (value, chain) => `/api/intel/contract/${enc(chain)}/${enc(value)}`, true),
   service('entity', 'Entity Intel', 'Entity', '0.02', 'Entity name or ID', value => `/api/intel/entity/${enc(value)}`),
   service('entity_summary', 'Entity Summary', 'Entity', '0.02', 'Entity name or ID', value => `/api/intel/entity/${enc(value)}/summary`),
   service('entity_balances', 'Entity Balances', 'Entity', '0.02', 'Entity name or ID', value => `/api/intel/entity/${enc(value)}/balances`),
-  service('entity_flows', 'Entity Flows', 'Entity', '0.02', 'Entity name or ID', value => `/api/intel/entity/${enc(value)}/flows`),
+  service('entity_flows', 'Entity Flows', 'Entity', '0.02', 'Entity name or ID', value => `/api/intel/entity/${enc(value)}/flows`, false, true, true),
   service('token', 'Token Intel', 'Token', '0.005', 'Token ID or symbol', value => `/api/intel/token/${enc(value)}`),
   service('token_contract', 'Token Contract Intel', 'Token', '0.005', 'Token contract address', (value, chain) => `/api/intel/token/${enc(chain)}/${enc(value)}`, true),
   service('token_market', 'Token Market', 'Token', '0.005', 'Token ID or symbol', value => `/api/intel/token/${enc(value)}/market`),
   service('token_holders', 'Token Holders', 'Token', '0.03', 'Token ID or symbol', value => `/api/intel/token/${enc(value)}/holders`),
   service('token_contract_holders', 'Token Contract Holders', 'Token', '0.03', 'Token contract address', (value, chain) => `/api/intel/token/${enc(chain)}/${enc(value)}/holders`, true),
-  service('token_top_flow', 'Token Top Flow', 'Token', '0.03', 'Token ID or symbol', value => `/api/intel/token/${enc(value)}/top-flow`),
+  service('token_top_flow', 'Token Top Flow', 'Token', '0.03', 'Token ID or symbol', value => `/api/intel/token/${enc(value)}/top-flow`, false, true, true),
   service('token_trending', 'Trending Tokens', 'Token', '0.005', '', () => '/api/intel/token/trending', false, false),
   service('token_top', 'Top Tokens', 'Token', '0.005', '', () => '/api/intel/token/top', false, false),
   service('search', 'Search', 'Search', '0.005', 'Search query', value => `/api/intel/search?q=${enc(value)}`),
 ]
 
 const SERVICE_BY_ID = Object.fromEntries(SERVICES.map(item => [item.id, item])) as Record<IntelType, IntelService>
+const TIME_WINDOWS = ['1h', '24h', '7d', '30d']
 const UB_SOURCES = [
   { id: 'auto', label: 'Auto' },
   { id: 'Arc_Testnet', label: 'Arc' },
@@ -88,6 +90,7 @@ export function IntelPanel() {
   const [type, setType] = useState<IntelType>('address')
   const [value, setValue] = useState('')
   const [chain, setChain] = useState('ethereum')
+  const [timeWindow, setTimeWindow] = useState('24h')
   const [result, setResult] = useState<any>(null)
   const [requirement, setRequirement] = useState<any>(null)
   const [error, setError] = useState('')
@@ -102,6 +105,11 @@ export function IntelPanel() {
 
   const selected = SERVICE_BY_ID[type]
   const path = useMemo(() => selected.buildPath(value.trim(), chain.trim()), [selected, value, chain])
+  const requestPath = useMemo(() => {
+    if (!selected.needsTimeWindow) return path
+    const joiner = path.includes('?') ? '&' : '?'
+    return `${path}${joiner}timeLast=${encodeURIComponent(timeWindow)}`
+  }, [path, selected.needsTimeWindow, timeWindow])
 
   async function analyze(proof?: { paymentId: string }) {
     if (selected.needsValue !== false && !value.trim()) {
@@ -111,7 +119,7 @@ export function IntelPanel() {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(path, {
+      const response = await fetch(requestPath, {
         headers: {
           ...((proof || paymentPaid) ? { 'X-PAYMENT-ID': (proof || paymentPaid)!.paymentId } : {}),
         },
@@ -307,12 +315,20 @@ export function IntelPanel() {
             }}
           />
           {selected.needsChain && <Field label='Chain' value={chain} onChange={setChain} placeholder='ethereum, base, arbitrum...' />}
+          {selected.needsTimeWindow && (
+            <label className='sandbox-field'>
+              <span>Time Window</span>
+              <select className='input compact-intel-select' value={timeWindow} onChange={event => setTimeWindow(event.target.value)}>
+                {TIME_WINDOWS.map(window => <option key={window} value={window}>{window}</option>)}
+              </select>
+            </label>
+          )}
           {selected.needsValue !== false && <Field label={selected.inputLabel || 'Input'} value={value} onChange={setValue} placeholder={selected.placeholder || selected.inputLabel || ''} />}
           <div className='pay-grid'>
             <Info label='Price' value={`${selected.price} USDC`} />
             <Info label='Payment Network' value='Arc Testnet USDC' />
             <Info label='Service Group' value={selected.group} />
-            <Info label='Backend Route' value={path} mono />
+            <Info label='Backend Route' value={requestPath} mono />
           </div>
           <button className='btn btn-primary' onClick={() => analyze()} disabled={loading}>{loading ? 'Analyzing...' : 'Analyze'}</button>
         </div>
@@ -538,8 +554,9 @@ function service(
   buildPath: (value: string, chain: string) => string,
   needsChain = false,
   needsValue = true,
+  needsTimeWindow = false,
 ): IntelService {
-  return { id, label, group, price, inputLabel, needsChain, needsValue, buildPath }
+  return { id, label, group, price, inputLabel, needsChain, needsValue, needsTimeWindow, buildPath }
 }
 
 function groupServices() {
