@@ -307,7 +307,7 @@ export async function getUnifiedBalanceWithAppKit() {
   if (!account) throw new Error('Wallet EOA belum terhubung.')
   return await kit.unifiedBalance.getBalances({
     token: 'USDC',
-    sources: { account },
+    sources: { address: account },
   } as any)
 }
 

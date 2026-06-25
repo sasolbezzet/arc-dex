@@ -146,7 +146,7 @@ function ChainButtons({ label, value, onChange }: { label: string; value: UbChai
   return (
     <div className='sandbox-field'>
       <span>{label}</span>
-      <div className='compact-chain-grid'>
+      <div className='compact-chain-grid compact-chain-grid--stacked'>
         {UB_CHAINS.map(chain => (
           <button key={chain.id} type='button' className={value === chain.id ? 'active' : ''} onClick={() => onChange(chain.id)}>
             {chain.label}

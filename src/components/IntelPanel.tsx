@@ -297,16 +297,15 @@ export function IntelPanel() {
       <section className='sandbox-grid'>
         <div className='glass sandbox-card'>
           <h3>Analysis Request</h3>
-          <label className='sandbox-field'>
-            <span>Service</span>
-            <select className='input intel-service-select' value={type} onChange={event => { setType(event.target.value as IntelType); setResult(null); setRequirement(null) }}>
-              {Object.entries(groupServices()).map(([group, services]) => (
-                <optgroup key={group} label={group}>
-                  {services.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+          <ServicePicker
+            value={type}
+            onChange={next => {
+              setType(next)
+              setResult(null)
+              setRequirement(null)
+              setUnifiedEstimate(null)
+            }}
+          />
           {selected.needsChain && <Field label='Chain' value={chain} onChange={setChain} placeholder='ethereum, base, arbitrum...' />}
           {selected.needsValue !== false && <Field label={selected.inputLabel || 'Input'} value={value} onChange={setValue} placeholder={selected.placeholder || selected.inputLabel || ''} />}
           <div className='pay-grid'>
@@ -353,7 +352,7 @@ export function IntelPanel() {
                 <>
                   <label className='sandbox-field'>
                     <span>Unified Balance Source</span>
-                    <div className='compact-chain-grid'>
+                    <div className='compact-chain-grid compact-chain-grid--stacked'>
                       {UB_SOURCES.map(source => (
                         <button key={source.id} type='button' className={unifiedSourceChain === source.id ? 'active' : ''} onClick={() => setUnifiedSourceChain(source.id)}>
                           {source.label}
@@ -389,6 +388,29 @@ export function IntelPanel() {
           <IntelResult result={result} requirement={requirement} selected={selected} />
         </div>
       </section>
+    </div>
+  )
+}
+
+function ServicePicker({ value, onChange }: { value: IntelType; onChange: (value: IntelType) => void }) {
+  return (
+    <div className='sandbox-field'>
+      <span>Service</span>
+      <div className='intel-service-list'>
+        {Object.entries(groupServices()).map(([group, services]) => (
+          <div className='intel-service-group' key={group}>
+            <strong>{group}</strong>
+            <div className='intel-service-options'>
+              {services.map(item => (
+                <button key={item.id} type='button' className={value === item.id ? 'active' : ''} onClick={() => onChange(item.id)}>
+                  <span>{item.label}</span>
+                  <small>{item.price} USDC</small>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
