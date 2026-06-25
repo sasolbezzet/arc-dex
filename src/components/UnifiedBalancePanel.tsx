@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { getTreasuryStatus } from '../payApi'
-import { getUnifiedBalanceWithAppKit } from '../appKit'
+import { depositUnifiedBalanceWithAppKit, getUnifiedBalanceWithAppKit } from '../appKit'
 
 export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null }) {
   const [treasury, setTreasury] = useState<any>(null)
   const [balance, setBalance] = useState<any>(null)
+  const [deposit, setDeposit] = useState<any>(null)
+  const [depositAmount, setDepositAmount] = useState('1')
+  const [depositChain, setDepositChain] = useState<'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia'>('Arc_Testnet')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
 
@@ -15,6 +18,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
       const result = await fn()
       if (label === 'treasury') setTreasury(result)
       if (label === 'balance') setBalance(result)
+      if (label === 'deposit') setDeposit(result)
     } catch (e) {
       setError(e instanceof Error ? e.message : `${label} failed`)
     } finally {
@@ -45,6 +49,35 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
               <Info label='Provider' value='Circle AppKit' />
               <Info label='Token' value='USDC' />
               <Info label='Result' value='Available' />
+            </div>
+          )}
+        </div>
+
+        <div className='glass sandbox-card'>
+          <h3>Deposit to Unified Balance</h3>
+          <p className='pay-muted'>Deposit USDC from your wallet into Circle Gateway Unified Balance. This is required before a Unified Balance spend can pay x402.</p>
+          <label className='sandbox-field'>
+            <span>Source Chain</span>
+            <select className='input' value={depositChain} onChange={event => setDepositChain(event.target.value as any)}>
+              <option value='Arc_Testnet'>Arc Testnet</option>
+              <option value='Base_Sepolia'>Base Sepolia</option>
+              <option value='Ethereum_Sepolia'>Ethereum Sepolia</option>
+              <option value='Arbitrum_Sepolia'>Arbitrum Sepolia</option>
+            </select>
+          </label>
+          <label className='sandbox-field'>
+            <span>Amount USDC</span>
+            <input className='input' value={depositAmount} onChange={event => setDepositAmount(event.target.value)} />
+          </label>
+          <button className='btn btn-primary' disabled={busy === 'deposit'} onClick={() => run('deposit', () => depositUnifiedBalanceWithAppKit({ amount: depositAmount, chain: depositChain }))}>
+            {busy === 'deposit' ? 'Depositing...' : 'Deposit USDC'}
+          </button>
+          {deposit && (
+            <div className='pay-grid'>
+              <Info label='Status' value='Submitted' />
+              <Info label='Tx Hash' value={(deposit as any).txHash || '-'} mono />
+              <Info label='Chain' value={depositChain} />
+              <Info label='Amount' value={`${depositAmount} USDC`} />
             </div>
           )}
         </div>

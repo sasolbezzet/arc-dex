@@ -9,7 +9,7 @@
 //              (Circle Orbit Forwarder relay attestation ke on-chain)
 
 import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
-import { ArcTestnet, SolanaDevnet } from '@circle-fin/bridge-kit'
+import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet } from '@circle-fin/bridge-kit'
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
@@ -96,7 +96,7 @@ export async function buildEvmAdapter() {
   if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
   return await createViemAdapterFromProvider({
     provider: window.ethereum,
-    capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet] },
+    capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet, BaseSepolia, EthereumSepolia, ArbitrumSepolia] },
   } as any)
 }
 
@@ -313,15 +313,36 @@ export async function getUnifiedBalanceWithAppKit() {
   } as any)
 }
 
+export type UnifiedBalanceSourceChain = 'auto' | 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia'
+
+function unifiedBalanceFrom(adapter: any, amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto') {
+  if (sourceChain === 'auto') return { adapter }
+  return { adapter, allocations: [{ amount, chain: sourceChain }] }
+}
+
+export async function depositUnifiedBalanceWithAppKit(args: {
+  amount: string
+  chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
+}) {
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  return await kit.unifiedBalance.deposit({
+    from: { adapter, chain: args.chain },
+    amount: args.amount,
+    token: 'USDC',
+  } as any)
+}
+
 export async function estimateUnifiedBalanceSpendWithAppKit(args: {
   amount: string
   recipient: string
+  sourceChain?: UnifiedBalanceSourceChain
 }) {
   await switchToArcTestnet()
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   return await kit.unifiedBalance.estimateSpend({
-    from: { adapter, chain: 'Arc_Testnet' },
+    from: unifiedBalanceFrom(adapter, args.amount, args.sourceChain),
     to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
     amount: args.amount,
     token: 'USDC',
@@ -331,12 +352,13 @@ export async function estimateUnifiedBalanceSpendWithAppKit(args: {
 export async function spendUnifiedBalanceWithAppKit(args: {
   amount: string
   recipient: string
+  sourceChain?: UnifiedBalanceSourceChain
 }) {
   await switchToArcTestnet()
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   return await kit.unifiedBalance.spend({
-    from: { adapter, chain: 'Arc_Testnet' },
+    from: unifiedBalanceFrom(adapter, args.amount, args.sourceChain),
     to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
     amount: args.amount,
     token: 'USDC',

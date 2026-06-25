@@ -88,6 +88,7 @@ export function IntelPanel() {
   const [paying, setPaying] = useState(false)
   const [paymentTx, setPaymentTx] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<'arc' | 'unified'>('arc')
+  const [unifiedSourceChain, setUnifiedSourceChain] = useState('auto')
   const [unifiedEstimate, setUnifiedEstimate] = useState<any>(null)
   const [walletPaymentSubmitted, setWalletPaymentSubmitted] = useState(false)
   const [paymentPaid, setPaymentPaid] = useState<{ paymentId: string } | null>(null)
@@ -222,11 +223,13 @@ export function IntelPanel() {
       const sdkEstimate = await estimateUnifiedBalanceSpendWithAppKit({
         amount: String(requirement.amount || requirement.uniqueAmount),
         recipient: requirement.recipient,
+        sourceChain: unifiedSourceChain as any,
       })
       setUnifiedEstimate(sdkEstimate)
       const result = await estimateX402UnifiedBalance(requirement.invoiceId, {
         route: 'Circle Gateway Unified Balance -> Arc Testnet USDC',
         fees: (sdkEstimate as any)?.fees || [],
+        sourceChain: unifiedSourceChain,
         delegateStatus: 'estimate_ready',
       })
       setRequirement(result.invoice || result.x402)
@@ -246,6 +249,7 @@ export function IntelPanel() {
       const spend = await spendUnifiedBalanceWithAppKit({
         amount: String(requirement.amount || requirement.uniqueAmount),
         recipient: requirement.recipient,
+        sourceChain: unifiedSourceChain as any,
       })
       const txHash = (spend as any)?.txHash || ''
       setPaymentTx(txHash)
@@ -339,14 +343,26 @@ export function IntelPanel() {
                   {paying ? 'Sending USDC...' : 'Pay with Arc USDC Memo'}
                 </button>
               ) : (
-                <div className='button-row wrap'>
-                  <button className='btn btn-secondary' onClick={estimateUnifiedPayment} disabled={paying || loading || !isPayable(requirement.status)}>
-                    {paying ? 'Estimating...' : 'Estimate Unified Balance'}
-                  </button>
-                  <button className='btn btn-primary' onClick={payWithUnifiedBalance} disabled={paying || loading || !isPayable(requirement.status)}>
-                    {paying ? 'Submitting...' : 'Pay with Unified Balance'}
-                  </button>
-                </div>
+                <>
+                  <label className='sandbox-field'>
+                    <span>Unified Balance Source</span>
+                    <select className='input' value={unifiedSourceChain} onChange={event => setUnifiedSourceChain(event.target.value)}>
+                      <option value='auto'>Auto allocation</option>
+                      <option value='Arc_Testnet'>Arc Testnet</option>
+                      <option value='Base_Sepolia'>Base Sepolia</option>
+                      <option value='Ethereum_Sepolia'>Ethereum Sepolia</option>
+                      <option value='Arbitrum_Sepolia'>Arbitrum Sepolia</option>
+                    </select>
+                  </label>
+                  <div className='button-row wrap'>
+                    <button className='btn btn-secondary' onClick={estimateUnifiedPayment} disabled={paying || loading || !isPayable(requirement.status)}>
+                      {paying ? 'Estimating...' : 'Estimate Unified Balance'}
+                    </button>
+                    <button className='btn btn-primary' onClick={payWithUnifiedBalance} disabled={paying || loading || !isPayable(requirement.status)}>
+                      {paying ? 'Submitting...' : 'Pay with Unified Balance'}
+                    </button>
+                  </div>
+                </>
               )}
               {unifiedEstimate && (
                 <div className='pay-grid'>
