@@ -11,6 +11,7 @@ import { PayCheckout } from './components/PayCheckout'
 import { PaySandbox } from './components/PaySandbox'
 import { IntelPanel } from './components/IntelPanel'
 import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
+import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 
@@ -403,6 +404,22 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
   retryCircleWallet: () => void
   refresh: () => void
 }) {
+  const [unifiedBalance, setUnifiedBalance] = useState<any>(null)
+  const [unifiedError, setUnifiedError] = useState('')
+  const [loadingUnified, setLoadingUnified] = useState(false)
+
+  async function refreshUnifiedBalance() {
+    try {
+      setLoadingUnified(true)
+      setUnifiedError('')
+      setUnifiedBalance(await getUnifiedBalanceWithAppKit())
+    } catch (error) {
+      setUnifiedError(error instanceof Error ? error.message : 'Unified Balance check failed')
+    } finally {
+      setLoadingUnified(false)
+    }
+  }
+
   const renderBalance = (label: string, value: string | undefined, color: string, decimals = 6) => (
     <div className='glass portfolio-card' key={label}>
       <span>{label}</span>
@@ -453,7 +470,40 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
           {renderBalance('cirBTC', balances.cirBTC, '#f7931a', 8)}
         </div>
       </section>
+      <section className='portfolio-section'>
+        <div className='portfolio-section-head'>
+          <div>
+            <h3>Unified Balance</h3>
+            <p>Saldo USDC routing layer Circle Gateway. Ini berbeda dari saldo EOA dan Circle proxy wallet.</p>
+          </div>
+          <span>Gateway</span>
+        </div>
+        <div className='portfolio-grid'>
+          {renderBalance('UB-USDC', formatUnifiedBalanceValue(unifiedBalance), '#fbbf24')}
+          <div className='glass portfolio-card'>
+            <span>Chains</span>
+            <strong>{formatUnifiedChainCount(unifiedBalance)}</strong>
+          </div>
+        </div>
+        {unifiedError && <div className='inline-error'>{unifiedError}</div>}
+        <button type='button' className='btn btn-secondary' onClick={refreshUnifiedBalance} disabled={loadingUnified}>
+          {loadingUnified ? 'Checking...' : 'Refresh Unified Balance'}
+        </button>
+      </section>
       <button type='button' className='btn btn-primary' onClick={refresh}>Refresh Balances</button>
     </div>
   )
+}
+
+function formatUnifiedBalanceValue(balance: any) {
+  const total = balance?.totalBalance ?? balance?.total ?? balance?.balance ?? balance?.amount
+  if (total !== undefined && total !== null) return String(total)
+  const entries = Array.isArray(balance?.balances) ? balance.balances : Array.isArray(balance?.chainBalances) ? balance.chainBalances : []
+  const sum = entries.reduce((acc: number, item: any) => acc + Number(item?.balance || item?.amount || item?.total || 0), 0)
+  return Number.isFinite(sum) ? sum.toFixed(6) : '0'
+}
+
+function formatUnifiedChainCount(balance: any) {
+  const entries = Array.isArray(balance?.balances) ? balance.balances : Array.isArray(balance?.chainBalances) ? balance.chainBalances : []
+  return entries.length ? `${entries.length} chain${entries.length > 1 ? 's' : ''}` : 'Check'
 }

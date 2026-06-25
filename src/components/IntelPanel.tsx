@@ -76,6 +76,13 @@ const SERVICES: IntelService[] = [
 ]
 
 const SERVICE_BY_ID = Object.fromEntries(SERVICES.map(item => [item.id, item])) as Record<IntelType, IntelService>
+const UB_SOURCES = [
+  { id: 'auto', label: 'Auto' },
+  { id: 'Arc_Testnet', label: 'Arc' },
+  { id: 'Base_Sepolia', label: 'Base' },
+  { id: 'Ethereum_Sepolia', label: 'ETH' },
+  { id: 'Arbitrum_Sepolia', label: 'ARB' },
+]
 
 export function IntelPanel() {
   const [type, setType] = useState<IntelType>('address')
@@ -292,7 +299,7 @@ export function IntelPanel() {
           <h3>Analysis Request</h3>
           <label className='sandbox-field'>
             <span>Service</span>
-            <select className='input' value={type} onChange={event => { setType(event.target.value as IntelType); setResult(null); setRequirement(null) }}>
+            <select className='input intel-service-select' value={type} onChange={event => { setType(event.target.value as IntelType); setResult(null); setRequirement(null) }}>
               {Object.entries(groupServices()).map(([group, services]) => (
                 <optgroup key={group} label={group}>
                   {services.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
@@ -346,13 +353,13 @@ export function IntelPanel() {
                 <>
                   <label className='sandbox-field'>
                     <span>Unified Balance Source</span>
-                    <select className='input' value={unifiedSourceChain} onChange={event => setUnifiedSourceChain(event.target.value)}>
-                      <option value='auto'>Auto allocation</option>
-                      <option value='Arc_Testnet'>Arc Testnet</option>
-                      <option value='Base_Sepolia'>Base Sepolia</option>
-                      <option value='Ethereum_Sepolia'>Ethereum Sepolia</option>
-                      <option value='Arbitrum_Sepolia'>Arbitrum Sepolia</option>
-                    </select>
+                    <div className='compact-chain-grid'>
+                      {UB_SOURCES.map(source => (
+                        <button key={source.id} type='button' className={unifiedSourceChain === source.id ? 'active' : ''} onClick={() => setUnifiedSourceChain(source.id)}>
+                          {source.label}
+                        </button>
+                      ))}
+                    </div>
                   </label>
                   <div className='button-row wrap'>
                     <button className='btn btn-secondary' onClick={estimateUnifiedPayment} disabled={paying || loading || !isPayable(requirement.status)}>

@@ -301,15 +301,13 @@ export async function estimateEoaSwapWithAppKit(args: {
 }
 
 export async function getUnifiedBalanceWithAppKit() {
-  await switchToArcTestnet()
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
   const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
   const account = accounts?.[0]
   if (!account) throw new Error('Wallet EOA belum terhubung.')
   return await kit.unifiedBalance.getBalances({
     token: 'USDC',
-    sources: { adapter, account },
+    sources: { account },
   } as any)
 }
 
@@ -329,6 +327,30 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   return await kit.unifiedBalance.deposit({
     from: { adapter, chain: args.chain },
     amount: args.amount,
+    token: 'USDC',
+  } as any)
+}
+
+export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
+  amount: string
+  chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
+}) {
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  return await kit.unifiedBalance.initiateRemoveFund({
+    from: { adapter, chain: args.chain },
+    amount: args.amount,
+    token: 'USDC',
+  } as any)
+}
+
+export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
+  chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
+}) {
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  return await kit.unifiedBalance.removeFund({
+    from: { adapter, chain: args.chain },
     token: 'USDC',
   } as any)
 }
