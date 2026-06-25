@@ -10,6 +10,7 @@ import { DocsPanel } from './components/DocsPanel'
 import { PayCheckout } from './components/PayCheckout'
 import { PaySandbox } from './components/PaySandbox'
 import { IntelPanel } from './components/IntelPanel'
+import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 
@@ -23,6 +24,7 @@ const NAV = [
   { id: 'bridge', path: '/bridge', label: 'Bridge', icon: 'BR' },
   { id: 'send', path: '/send', label: 'Send', icon: 'SE' },
   { id: 'receive', path: '/receive', label: 'Receive', icon: 'RC' },
+  { id: 'unified', path: '/unified-balance', label: 'Unified', icon: 'UB' },
   { id: 'agentic', path: '/agent-jobs', label: 'Agent Jobs', icon: 'AI' },
   { id: 'intel', path: '/intel', label: 'Intel', icon: 'IX' },
   { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
@@ -67,8 +69,8 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const connectInFlightRef = useRef('')
 
-  const routeMode = window.location.pathname === '/pay/sandbox'
-    ? 'pay-sandbox'
+  const routeMode = ['/pay/status', '/pay/sandbox'].includes(window.location.pathname)
+    ? 'pay-console'
     : window.location.pathname === '/pay'
       ? 'pay-checkout'
       : 'normal'
@@ -248,7 +250,7 @@ export default function App() {
     }
   }, [circleWallet, address, refresh])
 
-  const content = routeMode === 'pay-sandbox'
+  const content = routeMode === 'pay-console'
     ? <PaySandbox />
     : routeMode === 'pay-checkout'
       ? <PayCheckout address={address} onConnect={handleConnect} onRefresh={refresh} />
@@ -268,6 +270,8 @@ export default function App() {
                     ? <SendPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                     : page === 'receive'
                       ? <ReceivePanel address={address} circleWallet={circleWallet} />
+                      : page === 'unified'
+                        ? <UnifiedBalancePanel eoaAddress={address} />
                       : page === 'agentic'
                         ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />
                         : page === 'intel'
@@ -276,7 +280,7 @@ export default function App() {
                             ? <InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                             : null
 
-  const pageTitle = routeMode === 'pay-sandbox' ? 'ARCOX Pay Sandbox' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : titleFor(page)
+  const pageTitle = routeMode === 'pay-console' ? 'ARCOX Pay Status' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : titleFor(page)
 
   return (
     <div className='app-shell page-layout'>

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
   createX402Invoice,
-  getNanopaymentsCapabilities,
+  estimateX402UnifiedBalance,
   getX402InvoiceStatus,
-  quoteEcoRoute,
+  getTreasuryStatus,
 } from '../payApi'
 import type { X402Invoice } from '../payApi'
 
@@ -24,11 +24,10 @@ export function PaySandbox() {
   const [rawResult, setRawResult] = useState<any>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
-  const [ecoResult, setEcoResult] = useState<any>(null)
-  const [nanopaymentsResult, setNanopaymentsResult] = useState<any>(null)
+  const [treasuryResult, setTreasuryResult] = useState<any>(null)
 
   const invoiceId = invoice?.invoiceId || ''
-  const isPending = invoice?.status === 'pending'
+  const isPending = !!invoice && ['payment_required', 'estimate_ready', 'awaiting_signature', 'spend_submitted', 'settlement_pending', 'pending'].includes(invoice.status)
 
   useEffect(() => {
     if (!invoiceId || !isPending) return
@@ -59,22 +58,13 @@ export function PaySandbox() {
 
   const createPayment = () => run('create', async () => createX402Invoice({ ...form, amount: form.amount || undefined }))
   const checkStatus = () => invoiceId && run('status', async () => getX402InvoiceStatus(invoiceId))
-  const previewEco = () => run('eco', async () => {
-    const result = await quoteEcoRoute({
-      sourceChain: 'base',
-      destinationChain: 'arc-testnet',
-      sourceToken: 'USDC',
-      destinationToken: 'USDC',
-      amount: invoice?.amount || '0.005',
-      recipient: invoice?.recipient || 'ARCOX Circle Treasury',
-      invoiceId: invoice?.invoiceId,
-    })
-    setEcoResult(result)
-    return result
-  })
-  const loadNanopayments = () => run('nanopayments', async () => {
-    const result = await getNanopaymentsCapabilities()
-    setNanopaymentsResult(result)
+  const estimateUnified = () => invoiceId && run('unified', async () => estimateX402UnifiedBalance(invoiceId, {
+    route: 'Circle Gateway Unified Balance -> Arc Testnet USDC',
+    delegateStatus: 'estimate_required_in_wallet',
+  }))
+  const loadTreasury = () => run('treasury', async () => {
+    const result = await getTreasuryStatus()
+    setTreasuryResult(result)
     return result
   })
 
@@ -87,9 +77,9 @@ export function PaySandbox() {
     <div className='pay-page sandbox-page'>
       <section className='glass sandbox-hero'>
         <div className='docs-kicker'>ARCOX Pay</div>
-        <h2>ARCOX x402 Circle Sandbox</h2>
-        <p>Internal ARCOX invoice flow for paid Intel API access. User pays the exact unique USDC amount to one Circle treasury wallet; Circle transactions.inbound webhook unlocks the resource.</p>
-        <div className='inline-warning'>Testnet only. No manual txHash fallback and no mockPaid proof.</div>
+        <h2>ARCOX x402 Testnet Payments</h2>
+        <p>Internal ARCOX invoice flow for paid Intel API access. Pay exact Arc USDC with an on-chain memo, or estimate a Unified Balance spend to the same Arc treasury recipient.</p>
+        <div className='inline-warning'>Real testnet only. No NowPayments, no fake unlock, and no manual txHash fallback.</div>
       </section>
 
       {error && <div className='inline-error'>{error}</div>}
@@ -104,11 +94,11 @@ export function PaySandbox() {
         </div>
 
         <div className='glass sandbox-card wide'>
-          <h3>Circle Treasury Flow</h3>
+          <h3>Payment Flow</h3>
           <div className='flow-steps'>
-            <FlowStep title='User Wallet' value='Any supported testnet USDC wallet' extra='Sends the exact unique amount' />
-            <FlowStep title='Circle Treasury' value={invoice?.recipient || 'Set CIRCLE_X402_TREASURY_ADDRESS'} extra='Single ARCOX treasury receiver' />
-            <FlowStep title='Circle Webhook' value='transactions.inbound' extra='Detects confirmed inbound USDC' />
+            <FlowStep title='User Wallet' value='Arc USDC or Unified Balance' extra='Signs the payment' />
+            <FlowStep title='ARCOX Treasury' value={invoice?.recipient || 'Set X402_RECIPIENT_ADDRESS'} extra='Arc Testnet USDC receiver' />
+            <FlowStep title='Reconciliation' value='Arc memo / ERC20 Transfer / Gateway webhook' extra='Marks invoice paid only after settlement' />
             <FlowStep title='ARCOX Intel' value={invoice?.resource || form.resource} extra='Unlocked only after invoice is paid' />
           </div>
         </div>
@@ -122,13 +112,17 @@ export function PaySandbox() {
                 <Info label='Payment ID' value={invoice.paymentId} mono />
                 <Info label='Status' value={invoice.status} />
                 <Info label='Exact Amount' value={`${invoice.amount} ${invoice.asset}`} />
+                <Info label='Base Units' value={invoice.amountBaseUnits || '-'} mono />
                 <Info label='Recipient' value={invoice.recipient} mono />
                 <Info label='Network' value={invoice.network} />
+                <Info label='Settlement' value={invoice.settlementStatus || invoice.status} />
                 <Info label='Resource' value={invoice.resource} mono />
                 <Info label='Paid Tx' value={invoice.txHash || '-'} mono />
+                <Info label='Memo ID' value={invoice.memoId || '-'} mono />
               </div>
               <div className='button-row wrap'>
                 <button className='btn btn-secondary' onClick={checkStatus}>Check Status</button>
+                <button className='btn btn-secondary' onClick={estimateUnified}>Estimate Unified Balance</button>
                 <button className='btn btn-secondary' onClick={() => copy(invoice.recipient)}>Copy Treasury Address</button>
                 <button className='btn btn-secondary' onClick={() => copy(invoice.amount)}>Copy Exact Amount</button>
                 <button className='btn btn-secondary' onClick={() => copy(invoice.paymentId)}>Copy Payment ID</button>
@@ -139,23 +133,23 @@ export function PaySandbox() {
           )}
         </div>
 
-        <div className='glass sandbox-card'>
-          <h3>Eco / Cross-Chain Preview</h3>
-          <p className='pay-muted'>Preview future pay cross-chain routing. This is adapter readiness, not hidden execution.</p>
-          <button className='btn btn-primary' onClick={previewEco}>Preview Eco Route</button>
-          {ecoResult && <pre className='json-box'>{JSON.stringify(ecoResult, null, 2)}</pre>}
-        </div>
-
-        <div className='glass sandbox-card'>
-          <h3>Circle x402 Readiness</h3>
-          <p className='pay-muted'>Checks x402/Gateway readiness metadata for ARCOX paid API access.</p>
-          <button className='btn btn-primary' onClick={loadNanopayments}>Check Readiness</button>
-          {nanopaymentsResult && <pre className='json-box'>{JSON.stringify(nanopaymentsResult, null, 2)}</pre>}
+        <div className='glass sandbox-card wide'>
+          <h3>Unified Balance</h3>
+          <p className='pay-muted'>Unified Balance is a USDC routing layer, not a third wallet. The app estimates before spend and keeps settlement pending until Arc/Gateway confirms payment.</p>
+          <button className='btn btn-primary' onClick={loadTreasury}>Check Treasury Readiness</button>
+          {treasuryResult && (
+            <div className='pay-grid'>
+              <Info label='Mode' value={treasuryResult.mode || '-'} />
+              <Info label='Network' value={treasuryResult.network || '-'} />
+              <Info label='Treasury' value={treasuryResult.treasuryWallet || treasuryResult.recipient || '-'} mono />
+              <Info label='Methods' value={(treasuryResult.supportedPaymentMethods || []).join(', ') || '-'} />
+            </div>
+          )}
         </div>
 
         <div className='glass sandbox-card wide'>
-          <h3>Raw Response</h3>
-          <details open>
+          <h3>Response Details</h3>
+          <details>
             <summary>API JSON</summary>
             <pre className='json-box'>{JSON.stringify(rawResult || invoice || {}, null, 2)}</pre>
           </details>

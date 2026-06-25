@@ -77,21 +77,37 @@ export type X402Invoice = {
   paymentId: string
   service: string
   resource: string
-  status: 'pending' | 'paid' | 'expired' | 'failed'
+  status: 'created' | 'payment_required' | 'estimate_ready' | 'awaiting_signature' | 'spend_submitted' | 'settlement_pending' | 'paid' | 'service_unlocked' | 'recovery_required' | 'expired' | 'failed' | 'pending'
   asset: string
   network: string
+  chainId?: number
+  usdcAddress?: string
   circleEnvironment: string
   circleTreasuryWalletId?: string
   recipient: string
   baseAmount: string
   uniqueAmount: string
   amount: string
+  amountBaseUnits?: string
+  decimals?: number
+  memoContract?: string
+  memoId?: string
+  memoData?: string
+  paymentMethod?: string
+  paymentMethods?: string[]
+  settlementStatus?: string
+  route?: any
+  fee?: any
+  unifiedBalanceEstimate?: any
+  spendTxHash?: string
+  transferId?: string
   createdAt: string
   expiresAt: string
   expiresInSeconds: number
   txHash?: string
   paidAt?: string
-  mockMode: false
+  serviceStatus?: string
+  serviceUnlockedAt?: string
 }
 
 export function createX402Invoice(input: Record<string, unknown>): Promise<{ ok: boolean; x402: X402Invoice; invoice: X402Invoice; config: unknown }> {
@@ -100,4 +116,16 @@ export function createX402Invoice(input: Record<string, unknown>): Promise<{ ok:
 
 export function getX402InvoiceStatus(invoiceId: string): Promise<{ ok: boolean; x402: X402Invoice; invoice: X402Invoice }> {
   return request(`/api/x402/invoices/${encodeURIComponent(invoiceId)}/status`)
+}
+
+export function estimateX402UnifiedBalance(invoiceId: string, input: Record<string, unknown>): Promise<{ ok: boolean; x402: X402Invoice; invoice: X402Invoice }> {
+  return request(`/api/x402/invoices/${encodeURIComponent(invoiceId)}/estimate-unified-balance`, { method: 'POST', body: JSON.stringify(input) })
+}
+
+export function markX402UnifiedBalanceSpendSubmitted(invoiceId: string, input: Record<string, unknown>): Promise<{ ok: boolean; x402: X402Invoice; invoice: X402Invoice }> {
+  return request(`/api/x402/invoices/${encodeURIComponent(invoiceId)}/spend-submitted`, { method: 'POST', body: JSON.stringify(input) })
+}
+
+export function getTreasuryStatus() {
+  return request('/api/treasury/status')
 }

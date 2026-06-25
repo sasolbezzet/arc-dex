@@ -300,6 +300,49 @@ export async function estimateEoaSwapWithAppKit(args: {
   } as any)
 }
 
+export async function getUnifiedBalanceWithAppKit() {
+  await switchToArcTestnet()
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
+  const account = accounts?.[0]
+  if (!account) throw new Error('Wallet EOA belum terhubung.')
+  return await kit.unifiedBalance.getBalances({
+    token: 'USDC',
+    sources: { adapter, account },
+  } as any)
+}
+
+export async function estimateUnifiedBalanceSpendWithAppKit(args: {
+  amount: string
+  recipient: string
+}) {
+  await switchToArcTestnet()
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  return await kit.unifiedBalance.estimateSpend({
+    from: { adapter, chain: 'Arc_Testnet' },
+    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
+    amount: args.amount,
+    token: 'USDC',
+  } as any)
+}
+
+export async function spendUnifiedBalanceWithAppKit(args: {
+  amount: string
+  recipient: string
+}) {
+  await switchToArcTestnet()
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  return await kit.unifiedBalance.spend({
+    from: { adapter, chain: 'Arc_Testnet' },
+    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
+    amount: args.amount,
+    token: 'USDC',
+  } as any)
+}
+
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
 
 function swapTokenParam(symbol: string) {

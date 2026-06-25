@@ -26,11 +26,12 @@ The UI is page-based:
 - `/bridge`
 - `/send`
 - `/receive`
+- `/unified-balance`
 - `/agent-jobs`
 - `/info`
 - `/docs`
 - `/pay?invoice=...`
-- `/pay/sandbox`
+- `/pay/status`
 
 Backend:
 
@@ -109,12 +110,15 @@ CIRCLE_WEBHOOK_SECRET=
 CIRCLE_X402_TREASURY_WALLET_ID=
 CIRCLE_X402_TREASURY_ADDRESS=
 CIRCLE_X402_NETWORK=arc-testnet
-X402_MODE=circle_webhook_testnet
+X402_MODE=arc_real_testnet
+X402_CHAIN_ID=5042002
+X402_USDC_ADDRESS=0x3600000000000000000000000000000000000000
+X402_RECIPIENT_ADDRESS=
 X402_BASE_AMOUNT=0.005
 X402_PAYMENT_TTL_SECONDS=300
 ```
 
-ARCOX x402 uses internal invoices and Circle `transactions.inbound` webhook detection. Open `/pay/sandbox` to create a test invoice, view the exact unique USDC amount, and poll paid status. There is no manual txHash fallback.
+ARCOX x402 uses internal invoices, exact Arc Testnet USDC amounts, and Arc Transaction Memo reconciliation. Open `/pay/status` to create an invoice, view the exact unique USDC amount, and poll paid status. There is no NowPayments flow and no manual txHash fallback.
 
 Runtime check:
 

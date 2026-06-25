@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { switchToArcTestnet } from '../domain/arcNetwork'
 import { ARC_TOKENS } from '../domain/tokens'
+import { estimateX402UnifiedBalance, markX402UnifiedBalanceSpendSubmitted } from '../payApi'
+import { estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
 
 type IntelType =
   | 'address'
@@ -85,6 +87,8 @@ export function IntelPanel() {
   const [loading, setLoading] = useState(false)
   const [paying, setPaying] = useState(false)
   const [paymentTx, setPaymentTx] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<'arc' | 'unified'>('arc')
+  const [unifiedEstimate, setUnifiedEstimate] = useState<any>(null)
   const [walletPaymentSubmitted, setWalletPaymentSubmitted] = useState(false)
   const [paymentPaid, setPaymentPaid] = useState<{ paymentId: string } | null>(null)
 
@@ -139,7 +143,7 @@ export function IntelPanel() {
       const invoice = data.x402 || data.invoice
       if (!invoice) throw new Error('Invoice status response is empty.')
       setRequirement(invoice)
-      if (invoice?.status === 'paid') {
+      if (invoice?.status === 'paid' || invoice?.status === 'service_unlocked') {
         setPaymentPaid({ paymentId: invoice.paymentId })
         await analyze({ paymentId: invoice.paymentId })
       } else if (invoice?.status === 'expired') {
@@ -210,8 +214,58 @@ export function IntelPanel() {
     }
   }
 
+  async function estimateUnifiedPayment() {
+    if (!requirement?.invoiceId || !requirement?.recipient || !requirement?.amount) return
+    setPaying(true)
+    setError('')
+    try {
+      const sdkEstimate = await estimateUnifiedBalanceSpendWithAppKit({
+        amount: String(requirement.amount || requirement.uniqueAmount),
+        recipient: requirement.recipient,
+      })
+      setUnifiedEstimate(sdkEstimate)
+      const result = await estimateX402UnifiedBalance(requirement.invoiceId, {
+        route: 'Circle Gateway Unified Balance -> Arc Testnet USDC',
+        fees: (sdkEstimate as any)?.fees || [],
+        delegateStatus: 'estimate_ready',
+      })
+      setRequirement(result.invoice || result.x402)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unified Balance estimate failed.')
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  async function payWithUnifiedBalance() {
+    if (!requirement?.invoiceId || !requirement?.recipient || !requirement?.amount) return
+    setPaying(true)
+    setError('')
+    try {
+      if (!unifiedEstimate) await estimateUnifiedPayment()
+      const spend = await spendUnifiedBalanceWithAppKit({
+        amount: String(requirement.amount || requirement.uniqueAmount),
+        recipient: requirement.recipient,
+      })
+      const txHash = (spend as any)?.txHash || ''
+      setPaymentTx(txHash)
+      setWalletPaymentSubmitted(true)
+      const result = await markX402UnifiedBalanceSpendSubmitted(requirement.invoiceId, {
+        txHash,
+        transferId: (spend as any)?.transferId || '',
+        spendResult: spend,
+      })
+      setRequirement(result.invoice || result.x402)
+      await checkInvoiceStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unified Balance spend failed.')
+    } finally {
+      setPaying(false)
+    }
+  }
+
   useEffect(() => {
-    if (!requirement || requirement.status !== 'pending' || !walletPaymentSubmitted) return
+    if (!requirement || !['payment_required', 'estimate_ready', 'awaiting_signature', 'spend_submitted', 'settlement_pending', 'pending'].includes(requirement.status) || !walletPaymentSubmitted) return
     const timer = setInterval(() => {
       checkInvoiceStatus().catch(() => {})
     }, 5000)
@@ -258,12 +312,20 @@ export function IntelPanel() {
           {requirement ? (
             <>
               <p className='pay-muted'>Pay with the wallet button so ARCOX can attach the invoice memo on-chain. Manual txHash unlocks are not accepted.</p>
+              <label className='sandbox-field'>
+                <span>Payment Method</span>
+                <select className='input' value={paymentMethod} onChange={event => setPaymentMethod(event.target.value as 'arc' | 'unified')}>
+                  <option value='arc'>Pay with Arc USDC memo</option>
+                  <option value='unified'>Pay with Unified Balance / Circle Gateway</option>
+                </select>
+              </label>
               <div className='pay-grid'>
                 <Info label='Invoice ID' value={requirement.invoiceId || '-'} mono />
                 <Info label='Status' value={statusLabel(requirement.status || 'pending')} />
                 <Info label='Recipient' value={requirement.recipient || '-'} mono />
                 <Info label='Exact Amount' value={`${requirement.uniqueAmount || requirement.amount} ${requirement.asset || 'USDC'}`} />
                 <Info label='Network' value={requirement.network || '-'} />
+                <Info label='Settlement' value={requirement.settlementStatus || requirement.status || '-'} />
                 <Info label='Payment ID' value={requirement.paymentId || '-'} mono />
                 <Info label='Resource' value={requirement.resource || '-'} mono />
                 <Info label='Memo ID' value={requirement.memoId || '-'} mono />
@@ -272,10 +334,27 @@ export function IntelPanel() {
               <button className='btn btn-primary' onClick={checkInvoiceStatus} disabled={loading || !requirement.invoiceId}>
                 {loading ? 'Checking...' : 'Check Payment Status'}
               </button>
-              <button className='btn btn-secondary' onClick={payInvoiceWithWallet} disabled={paying || loading || requirement.status !== 'pending'}>
-                {paying ? 'Sending USDC...' : 'Pay Exact USDC With Wallet'}
-              </button>
-              {paymentTx && <p className='pay-muted'>Payment submitted. Waiting for Circle inbound webhook: {short(paymentTx, 10, 8)}</p>}
+              {paymentMethod === 'arc' ? (
+                <button className='btn btn-secondary' onClick={payInvoiceWithWallet} disabled={paying || loading || !isPayable(requirement.status)}>
+                  {paying ? 'Sending USDC...' : 'Pay with Arc USDC Memo'}
+                </button>
+              ) : (
+                <div className='button-row wrap'>
+                  <button className='btn btn-secondary' onClick={estimateUnifiedPayment} disabled={paying || loading || !isPayable(requirement.status)}>
+                    {paying ? 'Estimating...' : 'Estimate Unified Balance'}
+                  </button>
+                  <button className='btn btn-primary' onClick={payWithUnifiedBalance} disabled={paying || loading || !isPayable(requirement.status)}>
+                    {paying ? 'Submitting...' : 'Pay with Unified Balance'}
+                  </button>
+                </div>
+              )}
+              {unifiedEstimate && (
+                <div className='pay-grid'>
+                  <Info label='UB Route' value='Gateway spend to Arc Testnet' />
+                  <Info label='UB Fee Items' value={String((unifiedEstimate?.fees || []).length || 0)} />
+                </div>
+              )}
+              {paymentTx && <p className='pay-muted'>Payment submitted. Waiting for on-chain settlement: {short(paymentTx, 10, 8)}</p>}
             </>
           ) : (
             <p className='pay-muted'>The first request creates a payment invoice. Once paid, the same service returns the unlocked result.</p>
@@ -399,6 +478,10 @@ function Info({ label, value, mono }: { label: string; value: string; mono?: boo
       <strong className={mono ? 'mono' : ''}>{value || '-'}</strong>
     </div>
   )
+}
+
+function isPayable(status: string) {
+  return ['payment_required', 'estimate_ready', 'awaiting_signature', 'spend_submitted', 'settlement_pending', 'pending'].includes(status)
 }
 
 function service(
