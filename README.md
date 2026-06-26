@@ -135,7 +135,7 @@ AI Router pays each AI request from the user’s Unified Balance through Auto Pa
 OpenAI-compatible client config:
 
 ```text
-base_url = https://api.arcox.app/v1
+base_url = https://arc-dex-bice.vercel.app/v1
 api_key = arx_sk_...
 model = arcox/auto
 ```
