@@ -73,12 +73,16 @@ export function AiRouterPanel({ address }: { address: string }) {
       return
     }
     if (!await authReady()) return
-    try {
-      await runRequired('autoPaySetup', () => addUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
-    } catch {
-      return
+    if (!sameAddress(delegateAddress, address)) {
+      try {
+        await runRequired('autoPaySetup', () => addUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
+      } catch {
+        return
+      }
     }
-    const delegateStatus = await run('autoPayStatus', () => getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress }))
+    const delegateStatus = sameAddress(delegateAddress, address)
+      ? 'ready'
+      : await run('autoPayStatus', () => getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress }))
     const normalizedStatus = normalizeAutoPayStatus(delegateStatus, true)
     await run('autoPay', () => setAiRouterAutoPay({
       ownerAddress: address,
@@ -101,10 +105,12 @@ export function AiRouterPanel({ address }: { address: string }) {
       return
     }
     if (!await authReady()) return
-    try {
-      await runRequired('autoPayRemove', () => removeUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
-    } catch {
-      return
+    if (!sameAddress(delegateAddress, address)) {
+      try {
+        await runRequired('autoPayRemove', () => removeUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
+      } catch {
+        return
+      }
     }
     await run('autoPay', () => setAiRouterAutoPay({ ownerAddress: address, enabled: false }))
     setStatus((prev: any) => prev ? {
@@ -339,6 +345,10 @@ function formatAutoPayStatus(status: string) {
 
 function isEvmAddress(value: any) {
   return /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim())
+}
+
+function sameAddress(a: string, b: string) {
+  return String(a || '').toLowerCase() === String(b || '').toLowerCase()
 }
 
 function autoPayAddress(status: any) {
