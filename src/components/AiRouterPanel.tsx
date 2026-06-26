@@ -6,7 +6,6 @@ import {
   getAiRouterModels,
   getAiRouterStatus,
   revokeAiRouterApiKey,
-  rotateAiRouterApiKey,
   setAiRouterAutoPay,
 } from '../aiRouterApi'
 
@@ -15,7 +14,6 @@ export function AiRouterPanel({ address }: { address: string }) {
   const [models, setModels] = useState<any[]>([])
   const [unifiedBalance, setUnifiedBalance] = useState<any>(null)
   const [newKey, setNewKey] = useState('')
-  const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({})
   const [copied, setCopied] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -27,6 +25,19 @@ export function AiRouterPanel({ address }: { address: string }) {
       return await fn()
     } catch (e) {
       setError(e instanceof Error ? e.message : `${label} failed`)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function runRequired(label: string, fn: () => Promise<any>) {
+    try {
+      setBusy(label)
+      setError('')
+      return await fn()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `${label} failed`)
+      throw e
     } finally {
       setBusy('')
     }
@@ -57,14 +68,24 @@ export function AiRouterPanel({ address }: { address: string }) {
       return
     }
     if (!await authReady()) return
-    await run('autoPaySetup', () => addUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
+    try {
+      await runRequired('autoPaySetup', () => addUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
+    } catch {
+      return
+    }
     const delegateStatus = await run('autoPayStatus', () => getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress }))
+    const normalizedStatus = normalizeAutoPayStatus(delegateStatus, true)
     await run('autoPay', () => setAiRouterAutoPay({
       ownerAddress: address,
       enabled: true,
-      delegateStatus: String(delegateStatus || 'pending'),
+      delegateStatus: normalizedStatus,
       delegateAddress,
     }))
+    setStatus((prev: any) => prev ? {
+      ...prev,
+      autoPay: { ...prev.autoPay, enabled: true, delegateStatus: normalizedStatus, status: normalizedStatus === 'ready' ? 'ready' : 'auto_pay_required' },
+      delegate: { ...prev.delegate, status: normalizedStatus, address: delegateAddress },
+    } : prev)
     await refresh()
   }
 
@@ -79,7 +100,12 @@ export function AiRouterPanel({ address }: { address: string }) {
     const result = await run('apiKey', () => createAiRouterApiKey({ ownerAddress: address }))
     if (result?.apiKey) {
       setNewKey(result.apiKey)
-      if (result?.key?.id) setRevealedKeys(prev => ({ ...prev, [result.key.id]: result.apiKey }))
+    }
+    if (result?.key) {
+      setStatus((prev: any) => prev ? {
+        ...prev,
+        apiKeys: [result.key, ...(prev.apiKeys || []).filter((key: any) => key.id !== result.key.id)],
+      } : prev)
     }
     await refresh()
   }
@@ -99,7 +125,7 @@ export function AiRouterPanel({ address }: { address: string }) {
         <div>
           <div className='docs-kicker'>AI Router</div>
           <h2>Deposit USDC. Create API key. Use AI models.</h2>
-          <p>ARCOX AI Router pays each AI request from your Unified Balance through Auto Pay. Your provider keys stay in the backend.</p>
+          <p>ARCOX AI Router pays each AI request from your Unified Balance through Auto Pay. Provider keys stay in backend env.</p>
         </div>
         <div className='ai-router-status'>
           <StatusPill label='Unified Balance' value={formatUnifiedBalance(unifiedBalance)} />
@@ -157,25 +183,23 @@ export function AiRouterPanel({ address }: { address: string }) {
         <div className='glass sandbox-card'>
           <h3>3. API Key</h3>
           <p className='pay-muted'>Use this key in Hermes, OpenClaw, or OpenAI-compatible clients.</p>
-          <button className='btn btn-primary' disabled={busy === 'apiKey'} onClick={createKey}>
-            {busy === 'apiKey' ? 'Creating...' : 'Create API Key'}
-          </button>
+          <div className='button-row wrap'>
+            <button className='btn btn-primary' disabled={busy === 'apiKey'} onClick={createKey}>
+              {busy === 'apiKey' ? 'Creating...' : 'Create API Key'}
+            </button>
+          </div>
           <div className='api-key-list'>
-            {keys.map((key: any) => (
+            {activeKeys.length ? activeKeys.map((key: any) => (
               <div className='api-key-row' key={key.id}>
                 <div>
                   <strong>{key.keyPreview}</strong>
                   <span>{key.scopes?.join(', ')}</span>
                 </div>
                 <div className='button-row'>
-                  <button className='btn btn-secondary small' disabled={!revealedKeys[key.id]} onClick={() => copyText(revealedKeys[key.id], key.id)}>
-                    {copied === key.id ? 'Copied' : 'Copy'}
-                  </button>
-                  <button className='btn btn-secondary small' disabled={busy === 'rotate' || key.status !== 'active'} onClick={() => rotateKey(key.id)}>Rotate</button>
-                  <button className='btn btn-secondary small' disabled={busy === 'revoke' || key.status !== 'active'} onClick={() => revokeKey(key.id)}>Revoke</button>
+                  <button className='btn btn-secondary small danger' disabled={busy === 'delete'} onClick={() => deleteKey(key.id)}>Delete</button>
                 </div>
               </div>
-            ))}
+            )) : <p className='pay-muted'>No active API key yet.</p>}
           </div>
         </div>
       </section>
@@ -213,18 +237,14 @@ export function AiRouterPanel({ address }: { address: string }) {
     </div>
   )
 
-  async function revokeKey(keyId: string) {
+  async function deleteKey(keyId: string) {
     if (!await authReady()) return
-    await run('revoke', () => revokeAiRouterApiKey({ ownerAddress: address, keyId }))
-    await refresh()
-  }
-
-  async function rotateKey(keyId: string) {
-    if (!await authReady()) return
-    const result = await run('rotate', () => rotateAiRouterApiKey({ ownerAddress: address, keyId }))
-    if (result?.apiKey) {
-      setNewKey(result.apiKey)
-      if (result?.key?.id) setRevealedKeys(prev => ({ ...prev, [result.key.id]: result.apiKey }))
+    const result = await run('delete', () => revokeAiRouterApiKey({ ownerAddress: address, keyId }))
+    if (result?.ok) {
+      setStatus((prev: any) => prev ? {
+        ...prev,
+        apiKeys: (prev.apiKeys || []).map((key: any) => key.id === keyId ? { ...key, status: 'revoked' } : key),
+      } : prev)
     }
     await refresh()
   }
@@ -284,4 +304,25 @@ function formatAutoPayStatus(status: string) {
   if (status === 'delegate_required' || status === 'auto_pay_required') return 'Aktifkan Auto Pay'
   if (status === 'pending') return 'Menunggu konfirmasi'
   return value || 'Not ready'
+}
+
+function normalizeAutoPayStatus(value: any, setupSucceeded = false) {
+  if (value === true) return 'ready'
+  if (value === false || value === null) return setupSucceeded ? 'ready' : 'not_configured'
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase().replaceAll('_', ' ').trim()
+    if (['ready', 'enabled', 'active', 'approved', 'allowed', 'complete', 'completed', 'success', 'delegated'].includes(normalized)) return 'ready'
+    if (['none', 'missing', 'disabled', 'not configured', 'not ready'].includes(normalized)) return setupSucceeded ? 'ready' : 'not_configured'
+    if (normalized.includes('ready') || normalized.includes('enabled') || normalized.includes('active')) return 'ready'
+    if (normalized.includes('pending') || normalized.includes('processing')) return 'pending'
+    return value
+  }
+  if (typeof value === 'object') {
+    const status = value.status || value.state || value.delegateStatus || value.readiness
+    if (status) return normalizeAutoPayStatus(status, setupSucceeded)
+    const flags = ['ready', 'isReady', 'enabled', 'isEnabled', 'delegated', 'isDelegated', 'allowed', 'hasDelegate']
+    if (flags.some(flag => value[flag] === true)) return 'ready'
+    if (setupSucceeded) return 'ready'
+  }
+  return setupSucceeded ? 'ready' : 'pending'
 }

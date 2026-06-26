@@ -1113,6 +1113,17 @@ button, a, select {
   font-size: 11px;
 }
 
+.btn.danger {
+  border-color: rgba(248, 113, 113, 0.32);
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.btn.danger:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.56);
+  background: rgba(127, 29, 29, 0.28);
+}
+
 .copy-line,
 .config-snippet {
   display: grid;

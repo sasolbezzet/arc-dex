@@ -20,10 +20,6 @@ export async function revokeAiRouterApiKey(input: { ownerAddress: string; keyId:
   return safePost(API, `/api/ai-router/api-keys/${encodeURIComponent(input.keyId)}/revoke`, { ownerAddress: input.ownerAddress })
 }
 
-export async function rotateAiRouterApiKey(input: { ownerAddress: string; keyId: string }) {
-  return safePost(API, `/api/ai-router/api-keys/${encodeURIComponent(input.keyId)}/rotate`, { ownerAddress: input.ownerAddress })
-}
-
 export async function getAiRouterModels() {
   const res = await fetch(`${API}/api/ai-router/models`)
   if (!res.ok) throw new Error(await responseError(res))
