@@ -62,9 +62,9 @@ export function AiRouterPanel({ address }: { address: string }) {
   }
 
   async function enableAutoPay() {
-    const delegateAddress = status?.delegate?.address || status?.autoPay?.delegateAddress
-    if (!delegateAddress || !String(delegateAddress).startsWith('0x')) {
-      setError('Auto Pay address is not configured in backend env.')
+    const delegateAddress = autoPayAddress(status)
+    if (!delegateAddress) {
+      setError('Auto Pay address is not configured in backend env. Isi AI_ROUTER_DELEGATE_ADDRESS atau CIRCLE_X402_TREASURY_ADDRESS dengan address 0x valid.')
       return
     }
     if (!await authReady()) return
@@ -125,7 +125,7 @@ export function AiRouterPanel({ address }: { address: string }) {
         <div>
           <div className='docs-kicker'>AI Router</div>
           <h2>Deposit USDC. Create API key. Use AI models.</h2>
-          <p>ARCOX AI Router pays each AI request from your Unified Balance through Auto Pay. Provider keys stay in backend env.</p>
+          <p>Auto Pay only approves delegated spend. Each AI request is paid from your Unified Balance, not from your wallet balance.</p>
         </div>
         <div className='ai-router-status'>
           <StatusPill label='Unified Balance' value={formatUnifiedBalance(unifiedBalance)} />
@@ -167,13 +167,13 @@ export function AiRouterPanel({ address }: { address: string }) {
 
         <div className='glass sandbox-card'>
           <h3>2. Auto Pay</h3>
-          <p className='pay-muted'>Enable once. Each AI request then estimates and spends from Unified Balance to ARCOX treasury.</p>
+          <p className='pay-muted'>Enable once. This is only an approval; AI requests spend USDC from Unified Balance to ARCOX treasury.</p>
           <div className='pay-grid'>
             <Info label='Auto Pay' value={autoPayLabel} />
             <Info label='Per Request' value={`${autoPay?.maxPerRequest || '0.02'} USDC`} />
           </div>
           <div className='button-row wrap'>
-            <button className='btn btn-primary' disabled={!!busy || autoPay?.enabled} onClick={enableAutoPay}>
+            <button className='btn btn-primary' disabled={!!busy || autoPayReady} onClick={enableAutoPay}>
               {busy === 'autoPaySetup' || busy === 'autoPayStatus' || busy === 'autoPay' ? 'Enabling...' : 'Enable Auto Pay'}
             </button>
             <button className='btn btn-secondary' disabled={busy === 'autoPay' || !autoPay?.enabled} onClick={disableAutoPay}>Turn OFF</button>
@@ -306,6 +306,20 @@ function formatAutoPayStatus(status: string) {
   return value || 'Not ready'
 }
 
+function isEvmAddress(value: any) {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(value || '').trim())
+}
+
+function autoPayAddress(status: any) {
+  const candidates = [
+    status?.delegate?.address,
+    status?.autoPay?.delegateAddress,
+    status?.autoPay?.autoPayAddress,
+    status?.treasury,
+  ]
+  return String(candidates.find(isEvmAddress) || '')
+}
+
 function normalizeAutoPayStatus(value: any, setupSucceeded = false) {
   if (value === true) return 'ready'
   if (value === false || value === null) return setupSucceeded ? 'ready' : 'not_configured'
@@ -314,7 +328,7 @@ function normalizeAutoPayStatus(value: any, setupSucceeded = false) {
     if (['ready', 'enabled', 'active', 'approved', 'allowed', 'complete', 'completed', 'success', 'delegated'].includes(normalized)) return 'ready'
     if (['none', 'missing', 'disabled', 'not configured', 'not ready'].includes(normalized)) return setupSucceeded ? 'ready' : 'not_configured'
     if (normalized.includes('ready') || normalized.includes('enabled') || normalized.includes('active')) return 'ready'
-    if (normalized.includes('pending') || normalized.includes('processing')) return 'pending'
+    if (normalized.includes('pending') || normalized.includes('processing')) return setupSucceeded ? 'ready' : 'pending'
     return value
   }
   if (typeof value === 'object') {
