@@ -396,6 +396,35 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   } as any)
 }
 
+export async function addUnifiedBalanceDelegateWithAppKit(args: {
+  delegateAddress: string
+  chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
+}) {
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  const chain = args.chain || 'Arc_Testnet'
+  await ensureUnifiedEvmChain(adapter, chain)
+  return await kit.unifiedBalance.addDelegate({
+    adapter,
+    chain,
+    delegate: args.delegateAddress,
+  } as any)
+}
+
+export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
+  delegateAddress: string
+  chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
+}) {
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  const chain = args.chain || 'Arc_Testnet'
+  await ensureUnifiedEvmChain(adapter, chain)
+  return await kit.unifiedBalance.getDelegateStatus({
+    from: { adapter, chain },
+    delegateAddress: args.delegateAddress,
+  } as any)
+}
+
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
 
 function swapTokenParam(symbol: string) {

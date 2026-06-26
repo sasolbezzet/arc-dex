@@ -1,21 +1,18 @@
 import { useEffect, useState } from 'react'
-import { getUnifiedBalanceWithAppKit, estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
+import { addUnifiedBalanceDelegateWithAppKit, getUnifiedBalanceDelegateStatusWithAppKit, getUnifiedBalanceWithAppKit } from '../appKit'
 import {
   createAiRouterApiKey,
   getAiRouterModels,
   getAiRouterStatus,
-  prepareAiRouterTopUp,
   revokeAiRouterApiKey,
   rotateAiRouterApiKey,
   setAiRouterAutoPay,
-  settleAiRouterTopUp,
 } from '../aiRouterApi'
 
 export function AiRouterPanel({ address }: { address: string }) {
   const [status, setStatus] = useState<any>(null)
   const [models, setModels] = useState<any[]>([])
   const [unifiedBalance, setUnifiedBalance] = useState<any>(null)
-  const [topUpAmount, setTopUpAmount] = useState('0.10')
   const [newKey, setNewKey] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -50,8 +47,25 @@ export function AiRouterPanel({ address }: { address: string }) {
     if (result) setUnifiedBalance(result)
   }
 
-  async function enableAutoPay(enabled: boolean) {
-    await run('autoPay', () => setAiRouterAutoPay({ ownerAddress: address, enabled }))
+  async function enableAutoPay() {
+    const delegateAddress = status?.delegate?.address || status?.autoPay?.delegateAddress
+    if (!delegateAddress || !String(delegateAddress).startsWith('0x')) {
+      setError('Delegate address is not configured in backend env.')
+      return
+    }
+    await run('delegate', () => addUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
+    const delegateStatus = await run('delegateStatus', () => getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress }))
+    await run('autoPay', () => setAiRouterAutoPay({
+      ownerAddress: address,
+      enabled: true,
+      delegateStatus: String(delegateStatus || 'pending'),
+      delegateAddress,
+    }))
+    await refresh()
+  }
+
+  async function disableAutoPay() {
+    await run('autoPay', () => setAiRouterAutoPay({ ownerAddress: address, enabled: false }))
     await refresh()
   }
 
@@ -61,24 +75,10 @@ export function AiRouterPanel({ address }: { address: string }) {
     await refresh()
   }
 
-  async function topUpFromUnifiedBalance() {
-    const prepared = await run('prepare', () => prepareAiRouterTopUp({ ownerAddress: address, amount: topUpAmount }))
-    const payment = prepared?.payment
-    if (!payment?.recipient) return
-    const estimate = await run('estimate', () => estimateUnifiedBalanceSpendWithAppKit({ amount: payment.amount, recipient: payment.recipient }))
-    if (!estimate) return
-    const spendResult: any = await run('spend', () => spendUnifiedBalanceWithAppKit({ amount: payment.amount, recipient: payment.recipient }))
-    const txHash = spendResult?.txHash || spendResult?.transactionHash || spendResult?.hash
-    if (!txHash) {
-      setError('Unified Balance spend submitted, but no tx hash was returned.')
-      return
-    }
-    await run('settle', () => settleAiRouterTopUp({ paymentId: payment.id, txHash }))
-    await refresh()
-  }
-
   const autoPay = status?.autoPay
+  const delegate = status?.delegate
   const keys = status?.apiKeys || []
+  const activeKeys = keys.filter((key: any) => key.status === 'active')
   const usage = status?.usageLogs || []
 
   return (
@@ -87,12 +87,13 @@ export function AiRouterPanel({ address }: { address: string }) {
         <div>
           <div className='docs-kicker'>AI Router</div>
           <h2>Deposit USDC. Create API key. Use AI models.</h2>
-          <p>ARCOX AI Router uses only funded Unified Balance credit. Provider API keys stay in the backend.</p>
+          <p>ARCOX AI Router pays each AI request from your Unified Balance through Auto Pay. Your provider keys stay in the backend.</p>
         </div>
         <div className='ai-router-status'>
-          <StatusPill label='Unified Balance' value={status?.unifiedBalance?.available ? `${status.unifiedBalance.available} USDC` : 'Check'} />
+          <StatusPill label='Unified Balance' value={formatUnifiedBalance(unifiedBalance)} />
           <StatusPill label='Auto Pay' value={autoPay?.enabled ? 'ON' : 'OFF'} tone={autoPay?.enabled ? 'good' : 'warn'} />
-          <StatusPill label='API Key' value={keys.length ? 'Ready' : 'Not created'} tone={keys.length ? 'good' : 'warn'} />
+          <StatusPill label='Delegate' value={delegate?.status || autoPay?.delegateStatus || 'not ready'} tone={(delegate?.status || autoPay?.delegateStatus) === 'ready' ? 'good' : 'warn'} />
+          <StatusPill label='API Key' value={activeKeys.length ? 'Ready' : 'Not created'} tone={activeKeys.length ? 'good' : 'warn'} />
         </div>
       </section>
 
@@ -108,42 +109,37 @@ export function AiRouterPanel({ address }: { address: string }) {
       <section className='ai-router-steps'>
         <div className='glass sandbox-card'>
           <h3>1. Unified Balance</h3>
-          <p className='pay-muted'>Deposit USDC on the Unified Balance page, then check the available balance here.</p>
-          <button className='btn btn-secondary' disabled={busy === 'balance'} onClick={checkUnified}>
-            {busy === 'balance' ? 'Checking...' : 'Check Unified Balance'}
-          </button>
+          <p className='pay-muted'>Your USDC stays in your Unified Balance until each AI request is paid.</p>
+          <div className='button-row wrap'>
+            <button className='btn btn-secondary' disabled={busy === 'balance'} onClick={checkUnified}>
+              {busy === 'balance' ? 'Checking...' : 'Check Unified Balance'}
+            </button>
+            <button className='btn btn-primary' onClick={openUnifiedBalance}>Deposit USDC</button>
+          </div>
           <div className='pay-grid'>
             <Info label='Available' value={formatUnifiedBalance(unifiedBalance)} />
-            <Info label='AI Credit' value={`${status?.unifiedBalance?.available || '0.000000'} USDC`} />
+            <Info label='Source' value='User Unified Balance' />
           </div>
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>2. Fund AI Router</h3>
-          <p className='pay-muted'>Move USDC from Unified Balance to ARCOX treasury credit. This is a real Arc Testnet settlement.</p>
-          <label className='sandbox-field'>
-            <span>Amount USDC</span>
-            <input className='input' value={topUpAmount} onChange={event => setTopUpAmount(event.target.value)} />
-          </label>
-          <button className='btn btn-primary' disabled={!!busy} onClick={topUpFromUnifiedBalance}>
-            {busy ? 'Processing...' : 'Fund from Unified Balance'}
-          </button>
-        </div>
-
-        <div className='glass sandbox-card'>
-          <h3>3. Auto Pay</h3>
-          <p className='pay-muted'>Requests use your AI Router credit automatically until limits are reached.</p>
+          <h3>2. Auto Pay</h3>
+          <p className='pay-muted'>Enable once. Each AI request then estimates and spends from Unified Balance to ARCOX treasury.</p>
           <div className='pay-grid'>
+            <Info label='Delegate' value={delegate?.status || autoPay?.delegateStatus || 'not ready'} />
             <Info label='Per Request' value={`${autoPay?.maxPerRequest || '0.02'} USDC`} />
             <Info label='Daily Limit' value={`${autoPay?.dailyLimit || '0.20'} USDC`} />
           </div>
-          <button className={`btn ${autoPay?.enabled ? 'btn-secondary' : 'btn-primary'}`} disabled={busy === 'autoPay'} onClick={() => enableAutoPay(!autoPay?.enabled)}>
-            {autoPay?.enabled ? 'Turn Auto Pay OFF' : 'Turn Auto Pay ON'}
-          </button>
+          <div className='button-row wrap'>
+            <button className='btn btn-primary' disabled={!!busy || autoPay?.enabled} onClick={enableAutoPay}>
+              {busy === 'delegate' || busy === 'delegateStatus' || busy === 'autoPay' ? 'Enabling...' : 'Enable Auto Pay'}
+            </button>
+            <button className='btn btn-secondary' disabled={busy === 'autoPay' || !autoPay?.enabled} onClick={disableAutoPay}>Turn OFF</button>
+          </div>
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>4. API Key</h3>
+          <h3>3. API Key</h3>
           <p className='pay-muted'>Use this key in Hermes, OpenClaw, or OpenAI-compatible clients.</p>
           <button className='btn btn-primary' disabled={busy === 'apiKey'} onClick={createKey}>
             {busy === 'apiKey' ? 'Creating...' : 'Create API Key'}
@@ -182,7 +178,7 @@ export function AiRouterPanel({ address }: { address: string }) {
           {usage.length ? usage.map((item: any) => (
             <div className='usage-row' key={item.requestId}>
               <div><strong>{item.model || 'arcox/auto'}</strong><span>{item.providerUsed || 'provider pending'}</span></div>
-              <div><strong>{item.cost} USDC</strong><span>{item.status}</span></div>
+              <div><strong>{item.cost} USDC</strong><span>{item.paymentStatus || item.status}</span></div>
             </div>
           )) : <p className='pay-muted'>No usage yet.</p>}
         </div>
@@ -207,6 +203,11 @@ export function AiRouterPanel({ address }: { address: string }) {
     const result = await run('rotate', () => rotateAiRouterApiKey({ ownerAddress: address, keyId }))
     if (result?.apiKey) setNewKey(result.apiKey)
     await refresh()
+  }
+
+  function openUnifiedBalance() {
+    window.history.pushState(null, '', '/unified-balance')
+    window.dispatchEvent(new PopStateEvent('popstate'))
   }
 }
 

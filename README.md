@@ -127,10 +127,10 @@ Open `/ai-router` or the “AI Router” menu.
 Flow:
 
 ```text
-Connect wallet -> Deposit USDC to Unified Balance -> Fund AI Router -> Auto Pay ON -> Create API Key -> Use AI Router
+Connect wallet -> Deposit USDC to Unified Balance -> Auto Pay ON -> Create API Key -> Use AI Router
 ```
 
-AI Router uses only Unified Balance-funded credit. It does not ask users for provider API keys and does not use NowPayments or sandbox payments.
+AI Router pays each AI request from the user’s Unified Balance through Auto Pay. It does not ask users for provider API keys and does not use NowPayments or sandbox payments.
 
 OpenAI-compatible client config:
 

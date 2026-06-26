@@ -8,7 +8,7 @@ export async function getAiRouterStatus(ownerAddress: string) {
   return res.json()
 }
 
-export async function setAiRouterAutoPay(input: { ownerAddress: string; enabled: boolean; maxPerRequest?: string; dailyLimit?: string; monthlyLimit?: string }) {
+export async function setAiRouterAutoPay(input: { ownerAddress: string; enabled: boolean; maxPerRequest?: string; dailyLimit?: string; monthlyLimit?: string; delegateStatus?: string; delegateAddress?: string }) {
   return safePost(API, '/api/ai-router/auto-pay', input)
 }
 
@@ -22,14 +22,6 @@ export async function revokeAiRouterApiKey(input: { ownerAddress: string; keyId:
 
 export async function rotateAiRouterApiKey(input: { ownerAddress: string; keyId: string }) {
   return safePost(API, `/api/ai-router/api-keys/${encodeURIComponent(input.keyId)}/rotate`, { ownerAddress: input.ownerAddress })
-}
-
-export async function prepareAiRouterTopUp(input: { ownerAddress: string; amount: string }) {
-  return safePost(API, '/api/ai-router/payments/prepare', input)
-}
-
-export async function settleAiRouterTopUp(input: { paymentId: string; txHash: string }) {
-  return safePost(API, `/api/ai-router/payments/${encodeURIComponent(input.paymentId)}/settle`, { txHash: input.txHash })
 }
 
 export async function getAiRouterModels() {
