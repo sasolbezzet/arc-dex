@@ -8,6 +8,10 @@
       "destination": "https://43.163.98.128.nip.io/api/:path*"
     },
     {
+      "source": "/v1/:path*",
+      "destination": "https://43.163.98.128.nip.io/v1/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
