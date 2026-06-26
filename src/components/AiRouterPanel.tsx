@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { addUnifiedBalanceDelegateWithAppKit, getUnifiedBalanceDelegateStatusWithAppKit, getUnifiedBalanceWithAppKit } from '../appKit'
+import {
+  addUnifiedBalanceDelegateWithAppKit,
+  getUnifiedBalanceDelegateStatusWithAppKit,
+  getUnifiedBalanceWithAppKit,
+  removeUnifiedBalanceDelegateWithAppKit,
+} from '../appKit'
 import { ensureAuthSession } from '../auth'
 import {
   createAiRouterApiKey,
@@ -90,8 +95,23 @@ export function AiRouterPanel({ address }: { address: string }) {
   }
 
   async function disableAutoPay() {
+    const delegateAddress = autoPayAddress(status)
+    if (!delegateAddress) {
+      setError('Auto Pay address is not configured in backend env. Isi AI_ROUTER_DELEGATE_ADDRESS atau CIRCLE_X402_TREASURY_ADDRESS dengan address 0x valid.')
+      return
+    }
     if (!await authReady()) return
+    try {
+      await runRequired('autoPayRemove', () => removeUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
+    } catch {
+      return
+    }
     await run('autoPay', () => setAiRouterAutoPay({ ownerAddress: address, enabled: false }))
+    setStatus((prev: any) => prev ? {
+      ...prev,
+      autoPay: { ...prev.autoPay, enabled: false, delegateStatus: 'not_configured', status: 'off' },
+      delegate: { ...prev.delegate, status: 'not_configured', address: delegateAddress },
+    } : prev)
     await refresh()
   }
 
@@ -176,7 +196,9 @@ export function AiRouterPanel({ address }: { address: string }) {
             <button className='btn btn-primary' disabled={!!busy || autoPayReady} onClick={enableAutoPay}>
               {busy === 'autoPaySetup' || busy === 'autoPayStatus' || busy === 'autoPay' ? 'Enabling...' : 'Enable Auto Pay'}
             </button>
-            <button className='btn btn-secondary' disabled={busy === 'autoPay' || !autoPay?.enabled} onClick={disableAutoPay}>Turn OFF</button>
+            <button className='btn btn-secondary' disabled={!!busy || !autoPay?.enabled} onClick={disableAutoPay}>
+              {busy === 'autoPayRemove' || busy === 'autoPay' ? 'Turning off...' : 'Turn OFF'}
+            </button>
           </div>
         </div>
 

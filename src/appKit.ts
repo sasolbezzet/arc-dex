@@ -405,9 +405,22 @@ export async function addUnifiedBalanceDelegateWithAppKit(args: {
   const chain = args.chain || 'Arc_Testnet'
   await ensureUnifiedEvmChain(adapter, chain)
   return await kit.unifiedBalance.addDelegate({
-    adapter,
-    chain,
-    delegate: args.delegateAddress,
+    from: { adapter, chain },
+    delegateAddress: args.delegateAddress,
+  } as any)
+}
+
+export async function removeUnifiedBalanceDelegateWithAppKit(args: {
+  delegateAddress: string
+  chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
+}) {
+  const kit = getKit()
+  const adapter = await buildEvmAdapter()
+  const chain = args.chain || 'Arc_Testnet'
+  await ensureUnifiedEvmChain(adapter, chain)
+  return await kit.unifiedBalance.removeDelegate({
+    from: { adapter, chain },
+    delegateAddress: args.delegateAddress,
   } as any)
 }
 
