@@ -280,8 +280,8 @@ function formatUnifiedBalance(balance: any) {
 function formatAutoPayStatus(status: string) {
   const value = String(status || '').replaceAll('_', ' ')
   if (status === 'ready') return 'Ready - siap digunakan'
-  if (status === 'not_configured') return 'Auto Pay belum siap'
-  if (status === 'delegate_required') return 'Aktifkan Auto Pay'
+  if (status === 'not_configured' || status === 'none') return 'Auto Pay belum siap'
+  if (status === 'delegate_required' || status === 'auto_pay_required') return 'Aktifkan Auto Pay'
   if (status === 'pending') return 'Menunggu konfirmasi'
   return value || 'Not ready'
 }
