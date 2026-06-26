@@ -11,6 +11,7 @@ import { PayCheckout } from './components/PayCheckout'
 import { PaySandbox } from './components/PaySandbox'
 import { IntelPanel } from './components/IntelPanel'
 import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
+import { AiRouterPanel } from './components/AiRouterPanel'
 import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
@@ -26,6 +27,7 @@ const NAV = [
   { id: 'send', path: '/send', label: 'Send', icon: 'SE' },
   { id: 'receive', path: '/receive', label: 'Receive', icon: 'RC' },
   { id: 'unified', path: '/unified-balance', label: 'Unified', icon: 'UB' },
+  { id: 'ai-router', path: '/ai-router', label: 'AI Router', icon: 'AR' },
   { id: 'agentic', path: '/agent-jobs', label: 'Agent Jobs', icon: 'AI' },
   { id: 'intel', path: '/intel', label: 'Intel', icon: 'IX' },
   { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
@@ -273,6 +275,8 @@ export default function App() {
                       ? <ReceivePanel address={address} circleWallet={circleWallet} />
                       : page === 'unified'
                         ? <UnifiedBalancePanel eoaAddress={address} />
+                      : page === 'ai-router'
+                        ? <AiRouterPanel address={address} />
                       : page === 'agentic'
                         ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />
                         : page === 'intel'

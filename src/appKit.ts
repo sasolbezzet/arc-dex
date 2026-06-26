@@ -305,10 +305,7 @@ export async function getUnifiedBalanceWithAppKit() {
   const evmAdapter = await buildEvmAdapter()
   return await kit.unifiedBalance.getBalances({
     token: 'USDC',
-    sources: {
-      adapter: evmAdapter,
-      chains: ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia'],
-    },
+    sources: [{ adapter: evmAdapter }],
     networkType: 'testnet',
     includePending: true,
   } as any)

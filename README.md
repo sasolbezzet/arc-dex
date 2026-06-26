@@ -120,6 +120,26 @@ X402_PAYMENT_TTL_SECONDS=300
 
 ARCOX x402 uses internal invoices, exact Arc Testnet USDC amounts, and Arc Transaction Memo reconciliation. Open `/pay/status` to create an invoice, view the exact unique USDC amount, and poll paid status. There is no NowPayments flow and no manual txHash fallback.
 
+## AI Router
+
+Open `/ai-router` or the “AI Router” menu.
+
+Flow:
+
+```text
+Connect wallet -> Deposit USDC to Unified Balance -> Fund AI Router -> Auto Pay ON -> Create API Key -> Use AI Router
+```
+
+AI Router uses only Unified Balance-funded credit. It does not ask users for provider API keys and does not use NowPayments or sandbox payments.
+
+OpenAI-compatible client config:
+
+```text
+base_url = https://api.arcox.app/v1
+api_key = arx_sk_...
+model = arcox/auto
+```
+
 Runtime check:
 
 - Header app menampilkan `API online/offline`.

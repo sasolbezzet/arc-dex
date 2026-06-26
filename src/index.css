@@ -1021,6 +1021,115 @@ button, a, select {
   color: #fecdd3;
 }
 
+.ai-router-page {
+  gap: 14px;
+}
+
+.ai-router-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.ai-router-status {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ai-status-pill {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.44);
+  padding: 10px;
+}
+
+.ai-status-pill span,
+.api-key-row span,
+.model-row span,
+.usage-row span {
+  display: block;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.ai-status-pill strong,
+.api-key-row strong,
+.model-row strong,
+.usage-row strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ai-status-pill.good {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.ai-status-pill.warn {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.ai-router-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.api-key-list,
+.model-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.api-key-row,
+.model-row,
+.usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.32);
+  padding: 9px;
+}
+
+.api-key-row > div:first-child,
+.usage-row > div:first-child {
+  min-width: 0;
+}
+
+.btn.small {
+  min-height: 30px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.copy-line,
+.config-snippet {
+  display: grid;
+  gap: 8px;
+}
+
+.copy-line code,
+.config-snippet code {
+  display: block;
+  border: 1px solid rgba(34, 197, 94, 0.18);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.6);
+  color: #bbf7d0;
+  padding: 10px;
+  overflow-wrap: anywhere;
+}
+
 .wallet-connected .glass {
   border-radius: 8px !important;
   box-shadow: none;
@@ -1142,8 +1251,20 @@ button, a, select {
   }
 
   .pay-stepper,
-  .pay-methods {
+  .pay-methods,
+  .ai-router-hero,
+  .ai-router-steps {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-router-status {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .api-key-row,
+  .usage-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
