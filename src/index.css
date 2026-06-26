@@ -1119,6 +1119,11 @@ button, a, select {
   gap: 8px;
 }
 
+.copy-line.with-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
 .copy-line code,
 .config-snippet code {
   display: block;
@@ -1265,6 +1270,10 @@ button, a, select {
   .usage-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .copy-line.with-action {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
