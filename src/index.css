@@ -1107,6 +1107,19 @@ button, a, select {
   min-width: 0;
 }
 
+.tx-link {
+  display: block;
+  color: #67e8f9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.tx-link:hover {
+  text-decoration: underline;
+}
+
 .btn.small {
   min-height: 30px;
   padding: 6px 9px;

@@ -137,7 +137,7 @@ export function AiRouterPanel({ address }: { address: string }) {
   const autoPayLabel = autoPayReady ? 'Ready - siap digunakan' : formatAutoPayStatus(autoPayStatus)
   const keys = status?.apiKeys || []
   const activeKeys = keys.filter((key: any) => key.status === 'active')
-  const usage = status?.usageLogs || []
+  const usage = (status?.usageLogs || []).slice(0, 5)
 
   return (
     <div className='pay-page ai-router-page'>
@@ -243,7 +243,16 @@ export function AiRouterPanel({ address }: { address: string }) {
           {usage.length ? usage.map((item: any) => (
             <div className='usage-row' key={item.requestId}>
               <div><strong>{item.model || 'arcox/auto'}</strong><span>{item.providerUsed || 'provider pending'}</span></div>
-              <div><strong>{item.cost} USDC</strong><span>{item.paymentStatus || item.status}</span></div>
+              <div>
+                <strong>{item.cost} USDC</strong>
+                {item.txHash ? (
+                  <a className='tx-link' href={`https://testnet.arcscan.app/tx/${item.txHash}`} target='_blank' rel='noreferrer'>
+                    {shortHash(item.txHash)}
+                  </a>
+                ) : (
+                  <span>{item.paymentStatus || item.status}</span>
+                )}
+              </div>
             </div>
           )) : <p className='pay-muted'>No usage yet.</p>}
         </div>
@@ -340,6 +349,10 @@ function autoPayAddress(status: any) {
     status?.treasury,
   ]
   return String(candidates.find(isEvmAddress) || '')
+}
+
+function shortHash(value: string) {
+  return value ? `${value.slice(0, 8)}...${value.slice(-6)}` : ''
 }
 
 function normalizeAutoPayStatus(value: any, setupSucceeded = false) {
