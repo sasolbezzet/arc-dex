@@ -47,6 +47,31 @@ type IntelService = {
   buildPath: (value: string, chain: string) => string
 }
 
+type IntelField = {
+  label: string
+  value: string
+  rawValue?: unknown
+  path?: string
+  kind?: 'address' | 'hash' | 'datetime' | 'boolean' | 'amount' | 'number' | 'url' | 'text'
+}
+
+type IntelRecord = { index: number; title: string; fields: IntelField[] }
+type IntelSection = { id: string; title: string; description?: string; fields: IntelField[]; records: IntelRecord[] }
+type IntelPresentation = {
+  title: string
+  subtitle: string
+  service: string
+  provider: string
+  generatedAt: string
+  resource?: string
+  providerPath?: string
+  query?: Record<string, string>
+  overview: IntelField[]
+  sections: IntelSection[]
+  dataQuality: { status: string; fieldCount: number; recordCount: number; sectionCount: number; partial?: boolean; errors?: Array<{ section: string; message: string }> }
+  guidance?: string[]
+}
+
 const SERVICES: IntelService[] = [
   service('address', 'Wallet Intel', 'Wallet', '0.005', 'Wallet address', value => `/api/intel/address/${enc(value)}`),
   service('address_all', 'Wallet Intel: All', 'Wallet', '0.01', 'Wallet address', value => `/api/intel/address/${enc(value)}/all`),
@@ -433,70 +458,105 @@ function ServicePicker({ value, onChange }: { value: IntelType; onChange: (value
 
 function IntelResult({ result, requirement, selected }: { result: any; requirement: any; selected: IntelService }) {
   if (result?.ok) {
-    const payload = result.report || result.data || result
-    const summary = summarizeIntelPayload(payload)
-    const rows = rowsFromPayload(payload)
+    const presentation = normalizePresentation(result, selected)
+    const quality = presentation.dataQuality
+    const payment = result.x402Payment
     return (
       <div className='intel-result'>
         <div className='intel-result-header'>
           <div>
             <div className='docs-kicker'>Unlocked Result</div>
-            <h4>{summary.title || selected.label}</h4>
-            <p>{summary.description || 'Arkham intelligence data is available for review.'}</p>
+            <h4>{presentation.title || selected.label}</h4>
+            <p>{presentation.subtitle || 'Arkham intelligence data is available for review.'}</p>
           </div>
-          <span className='intel-pill'>{result.mode || 'arkham'}</span>
+          <span className={`intel-pill ${quality.status === 'partial' ? 'warning' : ''}`}>{quality.status || 'complete'}</span>
         </div>
-        <div className='pay-grid'>
+
+        <div className='intel-result-meta'>
           <Info label='Service' value={selected.label} />
-          <Info label='Source' value={result.mode || 'arkham'} />
-          <Info label='Status' value='Paid and unlocked' />
-          <Info label='Disclaimer' value={result.disclaimer || 'Informational only'} />
+          <Info label='Data Provider' value={presentation.provider || 'Arkham Intel API'} />
+          <Info label='Generated At' value={formatDate(presentation.generatedAt)} />
+          <Info label='Coverage' value={`${quality.fieldCount} labeled fields, ${quality.recordCount} records, ${quality.sectionCount} sections`} />
+          <Info label='ARCOX Resource' value={presentation.resource || requestLabel(selected)} mono />
+          <Info label='Provider Endpoint' value={presentation.providerPath || 'Arkham endpoint'} mono />
+          <Info label='Query Parameters' value={formatQuery(presentation.query)} mono />
+          <Info label='Access Status' value='Paid and unlocked' />
         </div>
-        {result.x402Payment && (
-          <div className='intel-section'>
-            <h4>Payment</h4>
-            <div className='pay-grid'>
-              <Info label='Invoice' value={result.x402Payment.invoiceId || '-'} mono />
-              <Info label='Amount' value={`${result.x402Payment.amount || '-'} ${result.x402Payment.asset || 'USDC'}`} />
-              <Info label='Tx Hash' value={result.x402Payment.txHash ? short(result.x402Payment.txHash, 12, 10) : '-'} mono />
-              <Info label='Paid At' value={formatDate(result.x402Payment.paidAt)} />
+
+        {payment && (
+          <section className='intel-detail-section intel-payment-receipt'>
+            <div className='intel-section-heading'>
+              <div><span>Payment Receipt</span><h4>x402 Access Payment</h4></div>
+              <span className='intel-pill'>{statusLabel(payment.status || 'paid')}</span>
             </div>
-          </div>
-        )}
-        {summary.highlights.length > 0 && (
-          <div className='intel-section'>
-            <h4>Highlights</h4>
-            <div className='intel-highlight-grid'>
-              {summary.highlights.map(item => <Info key={item.label} label={item.label} value={item.value} mono={item.mono} />)}
+            <div className='intel-field-grid'>
+              <DetailField field={{ label: 'Invoice ID', value: payment.invoiceId || '-', kind: 'text' }} mono />
+              <DetailField field={{ label: 'Payment ID', value: payment.paymentId || '-', kind: 'text' }} mono />
+              <DetailField field={{ label: 'Exact Amount Paid', value: `${payment.amount || '-'} ${payment.asset || 'USDC'}`, kind: 'amount' }} />
+              <DetailField field={{ label: 'Payment Network', value: payment.network || '-', kind: 'text' }} />
+              <DetailField field={{ label: 'Treasury Recipient', value: payment.recipient || '-', kind: 'address' }} mono />
+              <DetailField field={{ label: 'Paid At', value: formatDate(payment.paidAt), kind: 'datetime' }} />
+              <DetailField field={{ label: 'Reconciled By', value: payment.reconciledBy || 'On-chain reconciliation', kind: 'text' }} />
+              <div className='intel-field intel-field--wide'>
+                <span className='intel-field-label'>Payment Transaction</span>
+                {payment.txHash ? (
+                  <a className='intel-field-value mono intel-tx-link' href={`https://testnet.arcscan.app/tx/${payment.txHash}`} target='_blank' rel='noreferrer'>{payment.txHash}</a>
+                ) : <strong className='intel-field-value'>Not reported</strong>}
+              </div>
             </div>
-          </div>
+          </section>
         )}
-        {rows.length > 0 && (
-          <div className='intel-section'>
-            <h4>Records</h4>
-            <div className='intel-record-list'>
-              {rows.slice(0, 12).map((row, index) => (
-                <div className='intel-record' key={index}>
-                  <strong>{row.title}</strong>
-                  <span>{row.subtitle}</span>
-                </div>
-              ))}
+
+        {presentation.overview.length > 0 && (
+          <section className='intel-detail-section'>
+            <div className='intel-section-heading'><div><span>Overview</span><h4>Key Result Fields</h4></div></div>
+            <div className='intel-field-grid'>
+              {presentation.overview.map((field, index) => <DetailField key={`${field.path || field.label}-${index}`} field={field} />)}
             </div>
-          </div>
+          </section>
         )}
-        {summary.sections.length > 0 && (
-          <div className='intel-section'>
-            <h4>Sections</h4>
-            <div className='intel-section-grid'>
-              {summary.sections.map(section => (
-                <div className='intel-mini-card' key={section.title}>
-                  <strong>{section.title}</strong>
-                  <span>{section.value}</span>
-                </div>
-              ))}
+
+        {presentation.sections.map(section => (
+          <section className='intel-detail-section' key={section.id}>
+            <div className='intel-section-heading'>
+              <div><span>Result Section</span><h4>{section.title}</h4></div>
+              <small>{section.description || `${section.records.length} records`}</small>
             </div>
-          </div>
-        )}
+            {section.fields.length > 0 && (
+              <div className='intel-field-grid'>
+                {section.fields.map((field, index) => <DetailField key={`${field.path || field.label}-${index}`} field={field} />)}
+              </div>
+            )}
+            {section.records.length > 0 && (
+              <div className='intel-record-list'>
+                {section.records.map(record => (
+                  <article className='intel-record-card' key={`${section.id}-${record.index}`}>
+                    <div className='intel-record-heading'><span>Record {record.index}</span><strong>{record.title}</strong></div>
+                    <div className='intel-record-fields'>
+                      {record.fields.map((field, index) => <DetailField key={`${field.path || field.label}-${index}`} field={field} />)}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+            {!section.fields.length && !section.records.length && <p className='pay-muted'>No populated data was returned for this section.</p>}
+          </section>
+        ))}
+
+        <section className='intel-detail-section intel-quality'>
+          <div className='intel-section-heading'><div><span>Data Quality</span><h4>Coverage and Interpretation</h4></div></div>
+          {quality.errors && quality.errors.length > 0 && (
+            <div className='intel-error-list'>
+              {quality.errors.map((item, index) => <p key={`${item.section}-${index}`}><strong>{humanize(item.section)}:</strong> {item.message}</p>)}
+            </div>
+          )}
+          {presentation.guidance && presentation.guidance.length > 0 && (
+            <ul className='intel-guidance'>
+              {presentation.guidance.map((note, index) => <li key={index}>{note}</li>)}
+            </ul>
+          )}
+          {!quality.fieldCount && !quality.recordCount && <p className='pay-muted'>The provider returned no populated fields or records for this query.</p>}
+        </section>
       </div>
     )
   }
@@ -521,6 +581,20 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
     )
   }
   return <p className='pay-muted'>Run an analysis to create an x402 invoice or show an unlocked Arkham result.</p>
+}
+
+function DetailField({ field, mono = false }: { field: IntelField; mono?: boolean }) {
+  const isMono = mono || field.kind === 'address' || field.kind === 'hash'
+  return (
+    <div className='intel-field'>
+      <span className='intel-field-label'>{field.label}</span>
+      {field.kind === 'url' && /^https?:\/\//.test(field.value) ? (
+        <a className={`intel-field-value ${isMono ? 'mono' : ''}`} href={field.value} target='_blank' rel='noreferrer'>{field.value}</a>
+      ) : (
+        <strong className={`intel-field-value ${isMono ? 'mono' : ''}`}>{field.value || '-'}</strong>
+      )}
+    </div>
+  )
 }
 
 function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
@@ -566,71 +640,54 @@ function groupServices() {
   }, {})
 }
 
-function summarizeIntelPayload(payload: any) {
-  const root = unwrap(payload)
-  const title = firstString(root, ['name', 'label', 'entityName', 'arkhamLabel.name', 'address', 'hash', 'id', 'symbol'])
-  const description = firstString(root, ['description', 'summary', 'entityType', 'type', 'chain'])
-  const highlights = keyFacts(root)
-  const sections = Object.entries(root || {})
-    .filter(([, value]) => value && typeof value === 'object')
-    .slice(0, 8)
-    .map(([key, value]) => ({ title: humanize(key), value: Array.isArray(value) ? `${value.length} records` : `${Object.keys(value as any).length} fields` }))
-  return { title, description, highlights, sections }
-}
-
-function rowsFromPayload(payload: any) {
-  const root = unwrap(payload)
-  const arrays = collectArrays(root)
-  const first = arrays.find(item => item.items.length > 0)
-  if (!first) return []
-  return first.items
-    .filter(item => item && typeof item === 'object')
-    .map((item: any) => ({
-      title: firstString(item, ['name', 'label', 'tokenName', 'symbol', 'address', 'hash', 'txHash', 'entityName']) || first.path,
-      subtitle: compact([
-        firstString(item, ['chain', 'blockchain', 'type', 'status']),
-        firstString(item, ['amount', 'balance', 'value', 'usdValue', 'price']),
-        firstString(item, ['timestamp', 'time', 'date']),
-      ]).join(' | ') || `${Object.keys(item).length} fields`,
-    }))
-}
-
-function keyFacts(root: any) {
-  const facts: { label: string; value: string; mono?: boolean }[] = []
-  for (const key of ['address', 'hash', 'txHash', 'chain', 'blockchain', 'entity', 'entityName', 'symbol', 'tokenName', 'balance', 'amount', 'usdValue', 'volume', 'status']) {
-    const value = getPath(root, key)
-    if (value !== undefined && value !== null && typeof value !== 'object') {
-      facts.push({ label: humanize(key), value: String(value), mono: /address|hash|tx/i.test(key) })
-    }
+function normalizePresentation(result: any, selected: IntelService): IntelPresentation {
+  if (result?.intelPresentation?.dataQuality) return result.intelPresentation as IntelPresentation
+  const payload = result?.report || result?.data || result
+  const fields = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? Object.entries(payload)
+      .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+      .slice(0, 16)
+      .map(([key, value]) => ({ label: humanize(key), value: String(value), path: key, kind: inferFieldKind(key, value) }))
+    : []
+  const records = Array.isArray(payload) ? payload.slice(0, 30).map((item, index) => ({
+    index: index + 1,
+    title: `Record ${index + 1}`,
+    fields: item && typeof item === 'object'
+      ? Object.entries(item).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).slice(0, 12).map(([key, value]) => ({ label: humanize(key), value: String(value), path: `${index}.${key}`, kind: inferFieldKind(key, value) }))
+      : [{ label: 'Value', value: String(item), path: String(index), kind: 'text' as const }],
+  })) : []
+  return {
+    title: selected.label,
+    subtitle: 'Structured on-chain intelligence returned by Arkham through ARCOX.',
+    service: selected.id,
+    provider: 'Arkham Intel API',
+    generatedAt: new Date().toISOString(),
+    resource: '',
+    providerPath: '',
+    query: {},
+    overview: fields,
+    sections: records.length ? [{ id: 'records', title: 'Records', description: `${records.length} records returned`, fields: [], records }] : [],
+    dataQuality: { status: fields.length || records.length ? 'complete' : 'empty', fieldCount: fields.length + records.reduce((sum, item) => sum + item.fields.length, 0), recordCount: records.length, sectionCount: records.length ? 1 : 0 },
+    guidance: [result?.disclaimer || 'Informational only. Not financial advice.'],
   }
-  if (Array.isArray(root)) facts.push({ label: 'Records', value: String(root.length) })
-  if (!Array.isArray(root) && root && typeof root === 'object') facts.push({ label: 'Fields', value: String(Object.keys(root).length) })
-  return facts.slice(0, 8)
 }
 
-function collectArrays(value: any, path = 'records', out: { path: string; items: any[] }[] = []) {
-  if (Array.isArray(value)) out.push({ path, items: value })
-  else if (value && typeof value === 'object') {
-    for (const [key, child] of Object.entries(value)) collectArrays(child, humanize(key), out)
-  }
-  return out
+function requestLabel(selected: IntelService) {
+  return `ARCOX Intel: ${selected.label}`
 }
 
-function unwrap(value: any): any {
-  if (value?.data !== undefined && Object.keys(value).length <= 4) return unwrap(value.data)
-  return value
+function formatQuery(query?: Record<string, string>) {
+  if (!query || !Object.keys(query).length) return 'No additional parameters'
+  return Object.entries(query).map(([key, value]) => `${key}=${value}`).join(', ')
 }
 
-function firstString(root: any, keys: string[]) {
-  for (const key of keys) {
-    const value = getPath(root, key)
-    if (value !== undefined && value !== null && value !== '') return String(value)
-  }
-  return ''
-}
-
-function getPath(root: any, path: string): any {
-  return path.split('.').reduce((acc, key) => (acc && typeof acc === 'object' ? acc[key] : undefined), root)
+function inferFieldKind(key: string, value: unknown): IntelField['kind'] {
+  const text = String(value)
+  if (/^(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(text)) return 'address'
+  if (/^(0x[a-fA-F0-9]{64}|[1-9A-HJ-NP-Za-km-z]{64,100})$/.test(text)) return 'hash'
+  if (/time|date|created|updated|timestamp/i.test(key)) return 'datetime'
+  if (typeof value === 'number') return 'number'
+  return 'text'
 }
 
 function humanize(key: string) {
@@ -644,10 +701,6 @@ function statusLabel(value: string) {
 function short(value: string, left = 8, right = 6) {
   if (!value || value.length <= left + right + 3) return value || '-'
   return `${value.slice(0, left)}...${value.slice(-right)}`
-}
-
-function compact(items: Array<string | undefined | null>) {
-  return items.filter(Boolean) as string[]
 }
 
 function formatDate(value: string) {
