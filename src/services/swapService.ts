@@ -2,11 +2,59 @@ import { safePost } from '../api'
 import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
 import { getArcToken } from '../domain/tokens'
 import { encodeFunctionData, erc20Abi, parseUnits } from 'viem'
-import { estimateEoaSwapWithAppKit, swapEoaWithAppKit } from '../appKit'
 
 const API = ''
 const EVM_FEE_TREASURY = import.meta.env.VITE_ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
 const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_SWAP_FEE_BPS || '30')
+const ADAPTER_EXECUTE_ABI = [{
+  type: 'function',
+  name: 'execute',
+  stateMutability: 'payable',
+  inputs: [
+    {
+      name: 'params',
+      type: 'tuple',
+      components: [
+        {
+          name: 'instructions',
+          type: 'tuple[]',
+          components: [
+            { name: 'target', type: 'address' },
+            { name: 'data', type: 'bytes' },
+            { name: 'value', type: 'uint256' },
+            { name: 'tokenIn', type: 'address' },
+            { name: 'amountToApprove', type: 'uint256' },
+            { name: 'tokenOut', type: 'address' },
+            { name: 'minTokenOut', type: 'uint256' },
+          ],
+        },
+        {
+          name: 'tokens',
+          type: 'tuple[]',
+          components: [
+            { name: 'token', type: 'address' },
+            { name: 'beneficiary', type: 'address' },
+          ],
+        },
+        { name: 'execId', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' },
+        { name: 'metadata', type: 'bytes' },
+      ],
+    },
+    {
+      name: 'tokenInputs',
+      type: 'tuple[]',
+      components: [
+        { name: 'permitType', type: 'uint8' },
+        { name: 'token', type: 'address' },
+        { name: 'amount', type: 'uint256' },
+        { name: 'permitCalldata', type: 'bytes' },
+      ],
+    },
+    { name: 'signature', type: 'bytes' },
+  ],
+  outputs: [],
+}] as const
 
 export async function quoteCircleSwap(args: {
   metamaskAddress: string | null
@@ -33,23 +81,42 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   const from = accounts?.[0]
   if (!from) throw new Error('Wallet EOA belum terhubung.')
   if (from.toLowerCase() !== args.metamaskAddress.toLowerCase()) throw new Error('Wallet aktif berbeda dengan wallet login.')
-  const config = await getSwapConfig()
-  const result = await swapEoaWithAppKit({
-    tokenIn: args.tokenIn,
-    tokenOut: args.tokenOut,
-    amountIn: args.amountIn,
-    kitKey: config.kitKey,
-    customFeeBps: PLATFORM_FEE_BPS,
-    feeRecipient: EVM_FEE_TREASURY,
-  })
-  const txHash = result?.txHash || result?.transactionHash || result?.steps?.find?.((step: any) => step?.txHash)?.txHash || ''
+  const prepared = await safePost(API, '/api/eoa-swap-prepare', args)
+  if (!prepared?.adapterContract || !Array.isArray(prepared?.legs) || prepared.legs.length === 0) {
+    throw new Error('Backend tidak mengembalikan route EOA swap yang valid.')
+  }
+  const steps: any[] = []
+  for (const leg of prepared.legs) {
+    const approveData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [prepared.adapterContract as `0x${string}`, BigInt(leg.amountBaseUnits)],
+    })
+    const approvalTx = await sendBufferedTx({ from, to: leg.tokenInAddress, data: approveData, value: '0x0' })
+    await waitForReceipt(approvalTx)
+    steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: approvalTx })
+
+    const executeData = encodeFunctionData({
+      abi: ADAPTER_EXECUTE_ABI,
+      functionName: 'execute',
+      args: [normalizeExecutionParams(leg.executionParams), [{
+        permitType: 0,
+        token: leg.tokenInAddress,
+        amount: BigInt(leg.amountBaseUnits),
+        permitCalldata: '0x',
+      }], leg.signature],
+    })
+    const swapTx = await sendBufferedTx({ from, to: prepared.adapterContract, data: executeData, value: '0x0' })
+    await waitForReceipt(swapTx)
+    steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
+  }
+  const txHash = steps.filter(step => step.name.includes('→')).at(-1)?.txHash || ''
   let feeTx = ''
   let feeError = ''
   const feeToken = getArcToken(args.tokenIn)
   const feeAmount = calculateInputFee(args.amountIn, feeToken?.decimals ?? 6)
   const feeUnits = feeToken ? parseUnits(feeAmount, feeToken.decimals) : 0n
-  const appKitFeeRequested = PLATFORM_FEE_BPS > 0
-  if (!appKitFeeRequested && feeUnits > 0n && feeToken) {
+  if (feeUnits > 0n && feeToken) {
     try {
       const feeData = encodeFunctionData({
         abi: erc20Abi,
@@ -65,23 +132,23 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   return {
     success: true,
     source: 'browser-prepared-adapter',
-    route: 'circle-appkit-browser-wallet',
+    route: prepared.route || `${args.tokenIn} → ${args.tokenOut}`,
     tokenIn: args.tokenIn,
     tokenOut: args.tokenOut,
     amountIn: args.amountIn,
     grossAmountIn: args.amountIn,
-    amountOut: result?.estimatedOutput?.amount || result?.amountOut || '',
+    amountOut: prepared.amountOut || '',
     txHash,
     transactionHash: txHash,
     explorerUrl: txHash ? `${ARC_TESTNET_EXPLORER_TX}${txHash}` : '',
-    raw: result,
+    raw: { ...prepared, steps },
     platformFee: {
       bps: PLATFORM_FEE_BPS,
       token: args.tokenIn,
       treasury: EVM_FEE_TREASURY,
       amount: feeAmount,
       amountBaseUnits: feeUnits.toString(),
-      collectedBy: appKitFeeRequested ? 'circle-appkit-custom-fee' : 'post-swap-browser-transfer',
+      collectedBy: 'post-swap-browser-transfer',
       txHash: feeTx || undefined,
       error: feeError || undefined,
     },
@@ -90,33 +157,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
 
 export async function quoteEoaSwap(args: { metamaskAddress: string | null; tokenIn: string; tokenOut: string; amountIn: string }) {
   try {
-    const config = await getSwapConfig()
-    const estimate = await estimateEoaSwapWithAppKit({
-      tokenIn: args.tokenIn,
-      tokenOut: args.tokenOut,
-      amountIn: args.amountIn,
-      kitKey: config.kitKey,
-      customFeeBps: PLATFORM_FEE_BPS,
-      feeRecipient: EVM_FEE_TREASURY,
-    })
-    const amountOut = estimate?.estimatedOutput?.amount || '0'
-    const fee = (estimate?.fees || []).reduce((sum: number, item: any) => sum + Number(item?.amount || 0), 0)
-    const feeAmount = calculateInputFee(args.amountIn, getArcToken(args.tokenIn)?.decimals ?? 6)
-    return {
-      available: true,
-      source: 'circle-appkit-browser-wallet',
-      amountOut,
-      fee: fee.toFixed(6),
-      platformFee: {
-        bps: PLATFORM_FEE_BPS,
-        amount: feeAmount,
-        token: args.tokenIn,
-        treasury: EVM_FEE_TREASURY,
-        swapAmountIn: args.amountIn,
-      },
-      rate: Number(amountOut || 0) / Number(args.amountIn || 1),
-      raw: estimate,
-    }
+    return await safePost(API, '/api/eoa-swap-quote', args)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (/No route available|Route or resource not found|Swap route not found|route is not supported/i.test(message)) {
@@ -126,17 +167,27 @@ export async function quoteEoaSwap(args: { metamaskAddress: string | null; token
   }
 }
 
-async function getSwapConfig(): Promise<{ kitKey: string }> {
-  const response = await fetch(`${API}/api/config`, { cache: 'no-store' })
-  if (!response.ok) throw new Error('Gagal mengambil konfigurasi swap.')
-  const data = await response.json()
-  if (!data?.kitKey) throw new Error('Kit key belum tersedia dari API.')
-  return { kitKey: data.kitKey }
-}
-
 function calculateInputFee(amount: string, decimals: number) {
   const units = parseUnits(amount || '0', decimals)
   return formatTokenUnits((units * BigInt(Math.max(0, Math.floor(PLATFORM_FEE_BPS)))) / 10_000n, decimals)
+}
+
+function normalizeExecutionParams(params: any) {
+  return {
+    instructions: (params?.instructions || []).map((instruction: any) => ({
+      target: instruction.target,
+      data: instruction.data,
+      value: BigInt(instruction.value),
+      tokenIn: instruction.tokenIn,
+      amountToApprove: BigInt(instruction.amountToApprove),
+      tokenOut: instruction.tokenOut,
+      minTokenOut: BigInt(instruction.minTokenOut),
+    })),
+    tokens: (params?.tokens || []).map((token: any) => ({ token: token.token, beneficiary: token.beneficiary })),
+    execId: BigInt(params.execId),
+    deadline: BigInt(params.deadline),
+    metadata: params.metadata,
+  }
 }
 
 function formatTokenUnits(units: bigint, decimals: number) {
