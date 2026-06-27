@@ -107,15 +107,12 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const maxBal = activeBalances[tokenIn] ? parseFloat(activeBalances[tokenIn]).toFixed(4) : '0'
   const walletLabel = source === 'circle' ? 'Circle Wallet' : 'EOA MetaMask'
   const walletAddr = source === 'circle' ? circleWallet?.address : address
-  const blockedRoute = source === 'circle' && tokenIn === 'EURC' && tokenOut === 'USDC'
-  const swapDisabled = !amountIn || quoteLoading || loading || tokenIn === tokenOut || blockedRoute || (source === 'circle' && !circleWallet)
+  const swapDisabled = !amountIn || !quote || quoteLoading || loading || tokenIn === tokenOut || (source === 'circle' && !circleWallet)
   const swapLabel = loading
     ? `⏳ ${t('common.processing')}`
     : quoteLoading
       ? 'Mengambil estimasi...'
-      : blockedRoute
-        ? 'Route Circle EURC → USDC belum tersedia'
-        : amountIn
+      : amountIn
           ? t('swap.actionAmount', { amount: amountIn, tokenIn, tokenOut, source: source === 'circle' ? 'Circle' : 'EOA' })
           : t('swap.action')
   return (

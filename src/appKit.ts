@@ -247,22 +247,40 @@ export async function swapEoaWithAppKit(args: {
   const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
+  const from = { adapter, chain: SwapChain.Arc_Testnet }
+  const config = swapConfig(args)
+  if (isEurcToCirBtc(args.tokenIn, args.tokenOut)) {
+    const first = await kit.swap({
+      from,
+      tokenIn: 'EURC',
+      tokenOut: 'USDC',
+      amountIn: args.amountIn,
+      config,
+    } as any)
+    const intermediateAmount = first?.amountOut
+    if (!intermediateAmount || Number(intermediateAmount) <= 0) throw new Error('Swap EURC → USDC tidak menghasilkan output untuk route cirBTC.')
+    const second = await kit.swap({
+      from,
+      tokenIn: 'USDC',
+      tokenOut: swapTokenParam('cirBTC'),
+      amountIn: intermediateAmount,
+      config: swapConfig({ ...args, customFeeBps: 0 }),
+    } as any)
+    return {
+      ...second,
+      tokenIn: 'EURC',
+      tokenOut: 'cirBTC',
+      amountIn: args.amountIn,
+      route: 'EURC → USDC → cirBTC',
+      steps: [swapStep('EURC → USDC', first), swapStep('USDC → cirBTC', second)],
+    }
+  }
   return await kit.swap({
-    from: { adapter, chain: SwapChain.Arc_Testnet },
+    from,
     tokenIn: swapTokenParam(args.tokenIn),
     tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
-    config: {
-      kitKey: args.kitKey,
-      allowanceStrategy: 'approve',
-      slippageBps: 300,
-      ...(args.customFeeBps && args.feeRecipient ? {
-        customFee: {
-          percentageBps: args.customFeeBps,
-          recipientAddress: args.feeRecipient,
-        },
-      } : {}),
-    },
+    config,
   } as any)
 }
 
@@ -281,39 +299,82 @@ export async function estimateEoaSwapWithAppKit(args: {
   const accounts = await window.ethereum?.request?.({ method: 'eth_accounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
+  const from = { adapter, chain: SwapChain.Arc_Testnet }
+  const config = swapConfig(args)
+  if (isEurcToCirBtc(args.tokenIn, args.tokenOut)) {
+    const first = await kit.estimateSwap({
+      from,
+      tokenIn: 'EURC',
+      tokenOut: 'USDC',
+      amountIn: args.amountIn,
+      config,
+    } as any)
+    const intermediateAmount = first?.estimatedOutput?.amount
+    if (!intermediateAmount || Number(intermediateAmount) <= 0) throw new Error('Route EURC → USDC tidak menghasilkan estimasi.')
+    const second = await kit.estimateSwap({
+      from,
+      tokenIn: 'USDC',
+      tokenOut: swapTokenParam('cirBTC'),
+      amountIn: intermediateAmount,
+      config: swapConfig({ ...args, customFeeBps: 0 }),
+    } as any)
+    return {
+      ...second,
+      tokenIn: 'EURC',
+      tokenOut: 'cirBTC',
+      amountIn: args.amountIn,
+      fees: [...(first?.fees || []), ...(second?.fees || [])],
+      route: 'EURC → USDC → cirBTC',
+      legs: [first, second],
+    }
+  }
   return await kit.estimateSwap({
-    from: { adapter, chain: SwapChain.Arc_Testnet },
+    from,
     tokenIn: swapTokenParam(args.tokenIn),
     tokenOut: swapTokenParam(args.tokenOut),
     amountIn: args.amountIn,
-    config: {
-      kitKey: args.kitKey,
-      allowanceStrategy: 'approve',
-      slippageBps: 300,
-      ...(args.customFeeBps && args.feeRecipient ? {
-        customFee: {
-          percentageBps: args.customFeeBps,
-          recipientAddress: args.feeRecipient,
-        },
-      } : {}),
-    },
+    config,
   } as any)
 }
 
+function isEurcToCirBtc(tokenIn: string, tokenOut: string) {
+  return tokenIn === 'EURC' && tokenOut === 'cirBTC'
+}
+
+function swapConfig(args: { kitKey: string; customFeeBps?: number; feeRecipient?: string }) {
+  return {
+    kitKey: args.kitKey,
+    allowanceStrategy: 'approve' as const,
+    slippageBps: 300,
+    ...(args.customFeeBps && args.feeRecipient ? {
+      customFee: {
+        percentageBps: args.customFeeBps,
+        recipientAddress: args.feeRecipient,
+      },
+    } : {}),
+  }
+}
+
+function swapStep(name: string, result: any) {
+  return { name, state: 'success', txHash: result?.txHash, explorerUrl: result?.explorerUrl, amountOut: result?.amountOut }
+}
+
 export async function getUnifiedBalanceWithAppKit() {
-  const kit = getKit()
-  const evmAdapter = await buildEvmAdapter()
   const address = await getConnectedEvmAddress()
-  const chains: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
   try {
-    return await kit.unifiedBalance.getBalances({
-      token: 'USDC',
-      sources: { address, chains },
-      networkType: 'testnet',
-      includePending: true,
-    } as any)
+    const response = await fetch('/api/unified-balance/balances', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data?.error || 'Unified Balance API failed')
+    return data
   } catch (error) {
-    console.warn('[Unified Balance] address balance lookup failed, retrying with adapter source', error)
+    console.warn('[Unified Balance] server lookup failed, retrying with wallet adapter', error)
+    const kit = getKit()
+    const evmAdapter = await buildEvmAdapter()
+    const chains: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
     return await kit.unifiedBalance.getBalances({
       token: 'USDC',
       sources: { adapter: evmAdapter, chains },
