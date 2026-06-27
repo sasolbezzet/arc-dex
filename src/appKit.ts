@@ -303,12 +303,24 @@ export async function estimateEoaSwapWithAppKit(args: {
 export async function getUnifiedBalanceWithAppKit() {
   const kit = getKit()
   const evmAdapter = await buildEvmAdapter()
-  return await kit.unifiedBalance.getBalances({
-    token: 'USDC',
-    sources: [{ adapter: evmAdapter }],
-    networkType: 'testnet',
-    includePending: true,
-  } as any)
+  const address = await getConnectedEvmAddress()
+  const chains: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
+  try {
+    return await kit.unifiedBalance.getBalances({
+      token: 'USDC',
+      sources: { address, chains },
+      networkType: 'testnet',
+      includePending: true,
+    } as any)
+  } catch (error) {
+    console.warn('[Unified Balance] address balance lookup failed, retrying with adapter source', error)
+    return await kit.unifiedBalance.getBalances({
+      token: 'USDC',
+      sources: { adapter: evmAdapter, chains },
+      networkType: 'testnet',
+      includePending: true,
+    } as any)
+  }
 }
 
 export type UnifiedBalanceSourceChain = 'auto' | 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia'
@@ -322,6 +334,13 @@ async function ensureUnifiedEvmChain(adapter: any, chain: Exclude<UnifiedBalance
   const resolved = resolveChainIdentifier(chain)
   if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
   await adapter.ensureChain(resolved)
+}
+
+async function getConnectedEvmAddress() {
+  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
+  const address = accounts?.[0]
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(address || ''))) throw new Error('Connect EVM wallet first.')
+  return address
 }
 
 export async function depositUnifiedBalanceWithAppKit(args: {
