@@ -10,6 +10,7 @@ import {
 import { ensureAuthSession } from '../auth'
 import {
   createAiRouterApiKey,
+  getAiRouterDelegateStatus,
   getAiRouterModels,
   getAiRouterStatus,
   revokeAiRouterApiKey,
@@ -86,35 +87,46 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     setBusy('autoPaySetup')
     const delegateChains: Array<{ chain: string; status: string }> = []
     const failures: string[] = []
+    const previousChains = new Map((autoPay?.delegateChains || delegate?.chains || []).map((item: any) => [item.chain, item.status]))
     for (const chain of sourceChains) {
       try {
         let chainStatus: any = sameAddress(delegateAddress, address)
           ? 'ready'
-          : await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain })
+          : await resolveAutoPayStatus(address, delegateAddress, chain, previousChains.get(chain))
         if (!sameAddress(delegateAddress, address) && chainStatus === 'none') {
           await addUnifiedBalanceDelegateWithAppKit({ delegateAddress, chain })
-          chainStatus = await waitForAutoPayReady(delegateAddress, chain)
+          chainStatus = 'pending'
+          try {
+            const refreshed = await getAiRouterDelegateStatus({ ownerAddress: address, delegateAddress, chain })
+            if (refreshed.status === 'ready') chainStatus = 'ready'
+          } catch {}
         }
         delegateChains.push({ chain, status: normalizeAutoPayStatus(chainStatus) })
       } catch (error) {
-        delegateChains.push({ chain, status: 'not_configured' })
+        const previous = normalizeAutoPayStatus(previousChains.get(chain))
+        delegateChains.push({ chain, status: previous === 'ready' || previous === 'pending' ? previous : 'not_configured' })
         failures.push(`${chain}: ${error instanceof Error ? error.message : 'setup failed'}`)
       }
     }
     const normalizedStatus = delegateChains.some(item => item.status === 'ready') ? 'ready' : delegateChains.some(item => item.status === 'pending') ? 'pending' : 'not_configured'
-    await run('autoPay', () => setAiRouterAutoPay({
+    const policyEnabled = normalizedStatus === 'ready' || normalizedStatus === 'pending'
+    const savedPolicy = await run('autoPay', () => setAiRouterAutoPay({
       ownerAddress: address,
-      enabled: normalizedStatus === 'ready',
+      enabled: policyEnabled,
       delegateStatus: normalizedStatus,
       delegateAddress,
       delegateChains,
     }))
+    if (!savedPolicy) {
+      setBusy('')
+      return
+    }
     setStatus((prev: any) => prev ? {
       ...prev,
-      autoPay: { ...prev.autoPay, enabled: normalizedStatus === 'ready', delegateStatus: normalizedStatus, delegateChains, status: normalizedStatus === 'ready' ? 'ready' : 'auto_pay_required' },
+      autoPay: { ...prev.autoPay, enabled: policyEnabled, delegateStatus: normalizedStatus, delegateChains, status: normalizedStatus === 'ready' ? 'ready' : 'auto_pay_required' },
       delegate: { ...prev.delegate, status: normalizedStatus, address: delegateAddress, chains: delegateChains },
     } : prev)
-    if (failures.length) setError(`Auto Pay belum siap di semua chain. ${failures.join(' | ')}`)
+    if (failures.length) setError(`Sebagian status Auto Pay belum dapat diperiksa. ${failures.join(' | ')}`)
     setBusy('')
     await refresh()
   }
@@ -127,20 +139,43 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     }
     if (!await authReady()) return
     setBusy('autoPayRemove')
+    const currentChains = autoPay?.delegateChains || delegate?.chains || []
+    try {
+      await setAiRouterAutoPay({
+        ownerAddress: address,
+        enabled: false,
+        delegateStatus: 'not_configured',
+        delegateAddress,
+        delegateChains: currentChains,
+      })
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to turn Auto Pay off')
+      setBusy('')
+      return
+    }
+    const remainingChains: Array<{ chain: string; status: string }> = []
+    const failures: string[] = []
     if (!sameAddress(delegateAddress, address)) {
-      for (const chain of UNIFIED_BALANCE_EVM_CHAINS) {
+      const configured = new Map<string, string>(currentChains.map((item: any) => [String(item.chain), normalizeAutoPayStatus(item.status)]))
+      const chains = UNIFIED_BALANCE_EVM_CHAINS.filter(chain => ['ready', 'pending'].includes(configured.get(chain) || ''))
+      for (const chain of chains) {
         try {
-          const chainStatus = await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain })
+          const chainStatus = await resolveAutoPayStatus(address, delegateAddress, chain, configured.get(chain))
           if (chainStatus !== 'none') await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress, chain })
-        } catch {}
+          remainingChains.push({ chain, status: 'not_configured' })
+        } catch (error) {
+          remainingChains.push({ chain, status: configured.get(chain) || 'pending' })
+          failures.push(`${chain}: ${error instanceof Error ? error.message : 'revoke failed'}`)
+        }
       }
     }
-    await run('autoPay', () => setAiRouterAutoPay({ ownerAddress: address, enabled: false, delegateChains: [] }))
+    await setAiRouterAutoPay({ ownerAddress: address, enabled: false, delegateStatus: 'not_configured', delegateAddress, delegateChains: remainingChains })
     setStatus((prev: any) => prev ? {
       ...prev,
-      autoPay: { ...prev.autoPay, enabled: false, delegateStatus: 'not_configured', status: 'off' },
-      delegate: { ...prev.delegate, status: 'not_configured', address: delegateAddress },
+      autoPay: { ...prev.autoPay, enabled: false, delegateStatus: 'not_configured', delegateChains: remainingChains, status: 'off' },
+      delegate: { ...prev.delegate, status: 'not_configured', address: delegateAddress, chains: remainingChains },
     } : prev)
+    if (failures.length) setError(`Auto Pay OFF. Ulangi Turn OFF untuk chain yang belum berhasil dicabut: ${failures.join(' | ')}`)
     setBusy('')
     await refresh()
   }
@@ -166,6 +201,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const autoPayReady = autoPay?.enabled && autoPayStatus === 'ready'
   const autoPayLabel = autoPayReady ? 'Ready - siap digunakan' : formatAutoPayStatus(autoPayStatus)
   const readyChainCount = (autoPay?.delegateChains || delegate?.chains || []).filter((item: any) => item.status === 'ready').length
+  const hasAutoPaySetup = Boolean(autoPay?.enabled) || (autoPay?.delegateChains || delegate?.chains || []).some((item: any) => ['ready', 'pending'].includes(normalizeAutoPayStatus(item.status)))
   const keys = status?.apiKeys || []
   const activeKeys = keys.filter((key: any) => key.status === 'active')
   const usage = (status?.usageLogs || []).slice(0, 5)
@@ -229,7 +265,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
             <button className='btn btn-primary' disabled={!!busy} onClick={enableAutoPay}>
               {busy === 'autoPaySetup' || busy === 'autoPayStatus' || busy === 'autoPay' ? 'Preparing...' : autoPayReady ? 'Sync Auto Pay Chains' : 'Enable Auto Pay'}
             </button>
-            <button className='btn btn-secondary' disabled={!!busy || !autoPay?.enabled} onClick={disableAutoPay}>
+            <button className='btn btn-secondary' disabled={!!busy || !hasAutoPaySetup} onClick={disableAutoPay}>
               {busy === 'autoPayRemove' || busy === 'autoPay' ? 'Turning off...' : 'Turn OFF'}
             </button>
           </div>
@@ -412,12 +448,18 @@ function normalizeAutoPayStatus(value: any) {
   return 'pending'
 }
 
-async function waitForAutoPayReady(delegateAddress: string, chain: any) {
-  let status: any = 'pending'
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    status = await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain })
-    if (status === 'ready' || status === 'none') return status
-    await new Promise(resolve => window.setTimeout(resolve, 3000))
+async function resolveAutoPayStatus(ownerAddress: string, delegateAddress: string, chain: any, previousStatus?: any) {
+  try {
+    const result = await getAiRouterDelegateStatus({ ownerAddress, delegateAddress, chain })
+    return result.status
+  } catch {
+    try {
+      return await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain })
+    } catch (error) {
+      if (/failed to fetch gateway info/i.test(error instanceof Error ? error.message : String(error))) return 'pending'
+      const previous = normalizeAutoPayStatus(previousStatus)
+      if (previous === 'ready' || previous === 'pending') return previous
+      throw error
+    }
   }
-  return status
 }
