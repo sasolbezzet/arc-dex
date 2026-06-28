@@ -10,6 +10,8 @@ export type StoredAgentProfile = {
 
 export type StoredAgenticJob = {
   id: string
+  agentId?: string
+  memoId?: string
   role: 'client' | 'provider' | 'evaluator'
   client: string
   description: string
@@ -71,7 +73,7 @@ export function getStoredJobs(owner: string | null): StoredAgenticJob[] {
 
 export function saveStoredJob(job: StoredAgenticJob) {
   const jobs = readJson<StoredAgenticJob[]>(JOBS_KEY, [])
-  const next = [job, ...jobs.filter(item => item.id !== job.id)].slice(0, 50)
+  const next = [job, ...jobs.filter(item => item.id !== job.id)].slice(0, 500)
   writeJson(JOBS_KEY, next)
 }
 

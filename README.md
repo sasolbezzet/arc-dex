@@ -132,6 +132,8 @@ Connect wallet -> Deposit USDC to Unified Balance -> Auto Pay ON -> Create API K
 
 AI Router pays each AI request from the user’s Unified Balance through Auto Pay. It does not ask users for provider API keys and does not use NowPayments or sandbox payments.
 
+Agent Identity is auto-detected from Arc Testnet ERC-8004. AI Router remains available without an identity; Agent Jobs require one. New API keys bind to the selected identity and owner wallet when available. See [docs/agent-identity.md](docs/agent-identity.md).
+
 OpenAI-compatible client config:
 
 ```text

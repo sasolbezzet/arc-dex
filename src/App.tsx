@@ -16,6 +16,7 @@ import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 import { ViewportPopover } from './components/ViewportPopover'
+import { listAgentIdentities, selectAgentIdentity, type AgentIdentity } from './services/agentIdentity'
 
 const API = ''
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
@@ -72,6 +73,8 @@ export default function App() {
   const [loadingWallet, setLoadingWallet] = useState(false)
   const [walletSetupError, setWalletSetupError] = useState('')
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
+  const [agentIdentities, setAgentIdentities] = useState<AgentIdentity[]>([])
+  const [activeAgentIdentity, setActiveAgentIdentity] = useState<AgentIdentity|null>(null)
   const connectInFlightRef = useRef('')
 
   const routeMode = ['/pay/status', '/pay/sandbox'].includes(window.location.pathname)
@@ -106,6 +109,32 @@ export default function App() {
       setEoaBalances({ USDC:formatUnits(u as bigint,6), EURC:formatUnits(e as bigint,6), USYC:formatUnits(y as bigint,6), cirBTC:formatUnits(c as bigint,cirDecimals) })
     } catch(e) { console.error('fetchEoaBal error:',e) }
   }
+
+  const refreshAgentIdentities = useCallback(async (refresh = false) => {
+    if (!address) {
+      setAgentIdentities([])
+      setActiveAgentIdentity(null)
+      return
+    }
+    const data = await listAgentIdentities(address, refresh)
+    setAgentIdentities(data.identities || [])
+    setActiveAgentIdentity(data.activeAgentIdentity || null)
+  }, [address])
+
+  const chooseAgentIdentity = useCallback(async (agentId:string) => {
+    if (!address) return
+    await ensureAuthSession(address)
+    const data = await selectAgentIdentity(address, agentId)
+    setActiveAgentIdentity(data.activeAgentIdentity)
+  }, [address])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => refreshAgentIdentities().catch(() => {
+      setAgentIdentities([])
+      setActiveAgentIdentity(null)
+    }), 0)
+    return () => window.clearTimeout(timer)
+  }, [refreshAgentIdentities])
   const fetchCircleBalRef = useRef(fetchCircleBal)
   const fetchEoaBalRef = useRef(fetchEoaBal)
   useEffect(() => {
@@ -278,11 +307,11 @@ export default function App() {
                       : page === 'unified'
                         ? <UnifiedBalancePanel eoaAddress={address} />
                       : page === 'ai-router'
-                        ? <AiRouterPanel address={address} />
+                        ? <AiRouterPanel address={address} activeAgentIdentity={activeAgentIdentity} />
                       : page === 'agentic'
-                        ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} />
+                        ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} identities={agentIdentities} activeIdentity={activeAgentIdentity} onSelectIdentity={chooseAgentIdentity} onIdentityRefresh={() => refreshAgentIdentities(true)} />
                         : page === 'intel'
-                          ? <IntelPanel />
+                          ? <IntelPanel address={address} activeAgentIdentity={activeAgentIdentity} />
                           : page === 'info'
                             ? <InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                             : null

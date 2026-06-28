@@ -8,7 +8,7 @@ export async function getAiRouterStatus(ownerAddress: string) {
   return res.json()
 }
 
-export async function setAiRouterAutoPay(input: { ownerAddress: string; enabled: boolean; maxPerRequest?: string; monthlyLimit?: string; delegateStatus?: string; delegateAddress?: string }) {
+export async function setAiRouterAutoPay(input: { ownerAddress: string; enabled: boolean; monthlyLimit?: string; delegateStatus?: string; delegateAddress?: string }) {
   return safePost(API, '/api/ai-router/auto-pay', input)
 }
 

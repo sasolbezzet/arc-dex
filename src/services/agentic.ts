@@ -4,6 +4,7 @@ import {
   custom,
   decodeEventLog,
   defineChain,
+  encodeFunctionData,
   erc20Abi,
   formatUnits,
   getAddress,
@@ -33,6 +34,7 @@ type ContractJob = readonly [bigint, string, string, string, string, bigint, big
 export const AGENTIC_COMMERCE_CONTRACT = '0x0747EEf0706327138c69792bF28Cd525089e4583' as Address
 export const IDENTITY_REGISTRY = '0x8004A818BFB912233c491871b3d84c89A494BD9e' as Address
 export const ARC_USDC = '0x3600000000000000000000000000000000000000' as Address
+export const ARC_MEMO_CONTRACT = '0x5294E9927c3306DcBaDb03fe70b92e01cCede505' as Address
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address
 
@@ -174,6 +176,16 @@ const identityAbi = [
   },
 ] as const
 
+const memoAbi = [{
+  type: 'function', name: 'memo', stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'target', type: 'address' },
+    { name: 'data', type: 'bytes' },
+    { name: 'memoId', type: 'bytes32' },
+    { name: 'memoData', type: 'bytes' },
+  ], outputs: [],
+}] as const
+
 export const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'] as const
 
 export type AgenticJob = {
@@ -234,6 +246,21 @@ export function hashTextBytes32(text: string): Hex {
   return keccak256(toHex(text || 'arcox-agentic-deliverable'))
 }
 
+async function writeAgenticMemo(account: string, agentId: string, functionName: 'createJob' | 'setBudget' | 'fund' | 'submit' | 'complete', args: readonly unknown[], referenceId: string, amount = '') {
+  if (!/^\d+$/.test(agentId)) throw new Error('Agent Identity required for Agent Jobs')
+  const walletClient = await getWalletClient(account)
+  const memoId = keccak256(toHex(`${agentId}::${referenceId}`))
+  const memoData = toHex(JSON.stringify({
+    agentId,
+    requestIdHash: keccak256(toHex(referenceId)),
+    service: 'agent_job',
+    ...(amount ? { amount } : {}),
+  }))
+  const data = encodeFunctionData({ abi: agenticCommerceAbi, functionName, args } as never)
+  const hash = await walletClient.writeContract({ address: ARC_MEMO_CONTRACT, abi: memoAbi, functionName: 'memo', args: [AGENTIC_COMMERCE_CONTRACT, data, memoId, memoData] })
+  return { hash, memoId }
+}
+
 export async function registerAgent(account: string, metadataUri: string) {
   const walletClient = await getWalletClient(account)
   const hash = await walletClient.writeContract({
@@ -256,32 +283,20 @@ export async function readAgent(agentId: string) {
   return { owner, metadataUri }
 }
 
-export async function createAgenticJob(args: { account: string; provider: string; evaluator: string; description: string; expiresInHours: number }) {
-  const walletClient = await getWalletClient(args.account)
+export async function createAgenticJob(args: { account: string; agentId: string; provider: string; evaluator: string; description: string; expiresInHours: number }) {
   const expiredAt = BigInt(Math.floor(Date.now() / 1000) + Math.max(1, args.expiresInHours) * 3600)
-  const hash = await walletClient.writeContract({
-    address: AGENTIC_COMMERCE_CONTRACT,
-    abi: agenticCommerceAbi,
-    functionName: 'createJob',
-    args: [getAddress(args.provider) as Address, getAddress(args.evaluator) as Address, expiredAt, args.description, ZERO_ADDRESS],
-  })
+  const { hash, memoId } = await writeAgenticMemo(args.account, args.agentId, 'createJob', [getAddress(args.provider) as Address, getAddress(args.evaluator) as Address, expiredAt, args.description, ZERO_ADDRESS], crypto.randomUUID())
   const receipt = await publicClient.waitForTransactionReceipt({ hash })
-  return { hash, explorerUrl: explorer(hash), jobId: parseJobId(receipt.logs) }
+  return { hash, memoId, explorerUrl: explorer(hash), jobId: parseJobId(receipt.logs) }
 }
 
-export async function setJobBudget(account: string, jobId: string, amountUsdc: string) {
-  const walletClient = await getWalletClient(account)
-  const hash = await walletClient.writeContract({
-    address: AGENTIC_COMMERCE_CONTRACT,
-    abi: agenticCommerceAbi,
-    functionName: 'setBudget',
-    args: [BigInt(jobId), parseUnits(amountUsdc, 6), '0x'],
-  })
+export async function setJobBudget(account: string, agentId: string, jobId: string, amountUsdc: string) {
+  const { hash, memoId } = await writeAgenticMemo(account, agentId, 'setBudget', [BigInt(jobId), parseUnits(amountUsdc, 6), '0x'], jobId, amountUsdc)
   await publicClient.waitForTransactionReceipt({ hash })
-  return { hash, explorerUrl: explorer(hash) }
+  return { hash, memoId, explorerUrl: explorer(hash) }
 }
 
-export async function approveAndFundJob(account: string, jobId: string, amountUsdc: string) {
+export async function approveAndFundJob(account: string, agentId: string, jobId: string, amountUsdc: string) {
   const walletClient = await getWalletClient(account)
   const amount = parseUnits(amountUsdc, 6)
   const approveHash = await walletClient.writeContract({
@@ -291,40 +306,23 @@ export async function approveAndFundJob(account: string, jobId: string, amountUs
     args: [AGENTIC_COMMERCE_CONTRACT, amount],
   })
   await publicClient.waitForTransactionReceipt({ hash: approveHash })
-  const fundHash = await walletClient.writeContract({
-    address: AGENTIC_COMMERCE_CONTRACT,
-    abi: agenticCommerceAbi,
-    functionName: 'fund',
-    args: [BigInt(jobId), '0x'],
-  })
+  const { hash: fundHash, memoId } = await writeAgenticMemo(account, agentId, 'fund', [BigInt(jobId), '0x'], jobId, amountUsdc)
   await publicClient.waitForTransactionReceipt({ hash: fundHash })
-  return { approveHash, fundHash, explorerUrl: explorer(fundHash) }
+  return { approveHash, fundHash, memoId, explorerUrl: explorer(fundHash) }
 }
 
-export async function submitDeliverable(account: string, jobId: string, deliverableText: string) {
-  const walletClient = await getWalletClient(account)
+export async function submitDeliverable(account: string, agentId: string, jobId: string, deliverableText: string) {
   const deliverableHash = hashTextBytes32(deliverableText)
-  const hash = await walletClient.writeContract({
-    address: AGENTIC_COMMERCE_CONTRACT,
-    abi: agenticCommerceAbi,
-    functionName: 'submit',
-    args: [BigInt(jobId), deliverableHash, '0x'],
-  })
+  const { hash, memoId } = await writeAgenticMemo(account, agentId, 'submit', [BigInt(jobId), deliverableHash, '0x'], jobId)
   await publicClient.waitForTransactionReceipt({ hash })
-  return { hash, deliverableHash, explorerUrl: explorer(hash) }
+  return { hash, memoId, deliverableHash, explorerUrl: explorer(hash) }
 }
 
-export async function completeJob(account: string, jobId: string, reasonText: string) {
-  const walletClient = await getWalletClient(account)
+export async function completeJob(account: string, agentId: string, jobId: string, reasonText: string) {
   const reasonHash = hashTextBytes32(reasonText || 'deliverable-approved')
-  const hash = await walletClient.writeContract({
-    address: AGENTIC_COMMERCE_CONTRACT,
-    abi: agenticCommerceAbi,
-    functionName: 'complete',
-    args: [BigInt(jobId), reasonHash, '0x'],
-  })
+  const { hash, memoId } = await writeAgenticMemo(account, agentId, 'complete', [BigInt(jobId), reasonHash, '0x'], jobId)
   await publicClient.waitForTransactionReceipt({ hash })
-  return { hash, reasonHash, explorerUrl: explorer(hash) }
+  return { hash, memoId, reasonHash, explorerUrl: explorer(hash) }
 }
 
 export async function readJob(jobId: string): Promise<AgenticJob> {

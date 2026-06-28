@@ -3,6 +3,7 @@ import { switchToArcTestnet } from '../domain/arcNetwork'
 import { ARC_TOKENS } from '../domain/tokens'
 import { estimateX402UnifiedBalance, markX402UnifiedBalanceSpendSubmitted } from '../payApi'
 import { estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
+import type { AgentIdentity } from '../services/agentIdentity'
 
 type IntelType =
   | 'address'
@@ -111,7 +112,7 @@ const UB_SOURCES = [
   { id: 'Arbitrum_Sepolia', label: 'ARB' },
 ]
 
-export function IntelPanel() {
+export function IntelPanel({ address, activeAgentIdentity }: { address: string; activeAgentIdentity: AgentIdentity | null }) {
   const [type, setType] = useState<IntelType>('address')
   const [value, setValue] = useState('')
   const [chain, setChain] = useState('ethereum')
@@ -147,6 +148,8 @@ export function IntelPanel() {
       const response = await fetch(requestPath, {
         headers: {
           ...((proof || paymentPaid) ? { 'X-PAYMENT-ID': (proof || paymentPaid)!.paymentId } : {}),
+          'X-ARCOX-OWNER': address,
+          ...(activeAgentIdentity ? { 'X-ARCOX-AGENT-ID': activeAgentIdentity.agentId } : {}),
         },
       })
       const data = await response.json().catch(() => ({}))
@@ -363,13 +366,17 @@ export function IntelPanel() {
           {requirement ? (
             <>
               <p className='pay-muted'>Pay with the wallet button so ARCOX can attach the invoice memo on-chain. Manual txHash unlocks are not accepted.</p>
-              <label className='sandbox-field'>
+              <div className='sandbox-field'>
                 <span>Payment Method</span>
-                <select className='input' value={paymentMethod} onChange={event => setPaymentMethod(event.target.value as 'arc' | 'unified')}>
-                  <option value='arc'>Pay with Arc USDC memo</option>
-                  <option value='unified'>Pay with Unified Balance / Circle Gateway</option>
-                </select>
-              </label>
+                <div className='payment-method-picker' role='radiogroup' aria-label='Payment method'>
+                  <button type='button' role='radio' aria-checked={paymentMethod === 'arc'} className={paymentMethod === 'arc' ? 'active' : ''} onClick={() => setPaymentMethod('arc')}>
+                    <strong>Arc USDC</strong><small>Wallet memo payment</small>
+                  </button>
+                  <button type='button' role='radio' aria-checked={paymentMethod === 'unified'} className={paymentMethod === 'unified' ? 'active' : ''} onClick={() => setPaymentMethod('unified')}>
+                    <strong>Unified Balance</strong><small>Circle Gateway spend</small>
+                  </button>
+                </div>
+              </div>
               <div className='pay-grid'>
                 <Info label='Invoice ID' value={requirement.invoiceId || '-'} mono />
                 <Info label='Status' value={statusLabel(requirement.status || 'pending')} />
@@ -380,6 +387,7 @@ export function IntelPanel() {
                 <Info label='Payment ID' value={requirement.paymentId || '-'} mono />
                 <Info label='Resource' value={requirement.resource || '-'} mono />
                 <Info label='Memo ID' value={requirement.memoId || '-'} mono />
+                <Info label='Agent Identity' value={requirement.agentId ? `#${requirement.agentId}` : 'Personal'} />
                 <Info label='Expires' value={`${requirement.expiresInSeconds || 300}s`} />
               </div>
               <button className='btn btn-primary' onClick={checkInvoiceStatus} disabled={loading || !requirement.invoiceId}>

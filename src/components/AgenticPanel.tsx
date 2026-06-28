@@ -17,7 +17,6 @@ import {
 } from '../services/agentic'
 import {
   getAgentLink,
-  getAgentProfile,
   getStoredJobs,
   saveAgentLink,
   saveAgentProfile,
@@ -26,6 +25,7 @@ import {
   type StoredAgentProfile,
   type StoredAgenticJob,
 } from '../services/agenticStore'
+import type { AgentIdentity } from '../services/agentIdentity'
 
 type Status = { type: 'success' | 'error' | 'info'; msg: string; link?: string }
 type View = 'agent' | 'link' | 'create' | 'manage'
@@ -40,6 +40,10 @@ interface Props {
   address: string | null
   eoaBalances: Record<string, string>
   onRefresh: () => void
+  identities: AgentIdentity[]
+  activeIdentity: AgentIdentity | null
+  onSelectIdentity: (agentId: string) => Promise<void>
+  onIdentityRefresh: () => Promise<void>
 }
 
 function shortAddress(value?: string) {
@@ -83,7 +87,7 @@ type AgentEndpointResponse = Partial<SimResult> & {
   error?: string
 }
 
-export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
+export function AgenticPanel({ address, eoaBalances, onRefresh, identities, activeIdentity, onSelectIdentity, onIdentityRefresh }: Props) {
   const { t } = useI18n()
   const [view, setView] = useState<View>('agent')
   const [loading, setLoading] = useState('')
@@ -113,7 +117,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setProfile(getAgentProfile(address))
+      setProfile(activeIdentity ? { owner: activeIdentity.ownerWallet, agentId: activeIdentity.agentId, metadataUri: activeIdentity.metadataUri, createdAt: Date.now() } : null)
       const savedLink = getAgentLink(address)
       setAgentLink(savedLink)
       setJobs(getStoredJobs(address))
@@ -130,7 +134,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
       }
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [address])
+  }, [address, activeIdentity])
 
   const usdcBalance = useMemo(() => parseFloat(eoaBalances.USDC || '0').toFixed(4), [eoaBalances.USDC])
 
@@ -150,6 +154,11 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
     return getAddress(address)
   }
 
+  const requireActiveIdentity = () => {
+    if (!activeIdentity) throw new Error('Agent Identity required for Agent Jobs')
+    return activeIdentity.agentId
+  }
+
   const handleRegisterAgent = () => run(t('agentic.registering'), async () => {
     const owner = requireAddress()
     if (!metadataUri.trim()) throw new Error(t('agentic.metadataRequired'))
@@ -158,6 +167,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
     const next = { owner, agentId: result.agentId, metadataUri: metadataUri.trim(), txHash: result.hash, createdAt: Date.now() }
     saveAgentProfile(next)
     setProfile(next)
+    await onIdentityRefresh()
     setStatus({ type: 'success', msg: t('agentic.registered', { id: result.agentId }), link: result.explorerUrl })
   })
 
@@ -170,6 +180,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
 
   const handleLinkAiAgent = () => run(t('agentic.linking'), async () => {
     const owner = requireAddress()
+    requireActiveIdentity()
     if (!linkAgentId.trim()) throw new Error(t('agentic.jobIdRequired'))
     if (!aiName.trim() || !aiEndpoint.trim()) throw new Error(t('agentic.aiRequired'))
     const data = await readAgent(linkAgentId.trim())
@@ -289,6 +300,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
 
   const handleCreateJob = () => run(t('agentic.creatingJob'), async () => {
     const client = requireAddress()
+    const agentId = requireActiveIdentity()
     if (!description.trim()) throw new Error(t('agentic.descriptionRequired'))
     const result = await createAgenticJob({
       account: client,
@@ -296,9 +308,12 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
       evaluator,
       description: description.trim(),
       expiresInHours: Number(expiresInHours) || 24,
+      agentId,
     })
     const stored = {
       id: result.jobId,
+      agentId,
+      memoId: result.memoId,
       role: 'client' as const,
       description: description.trim(),
       client,
@@ -315,6 +330,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
   })
 
   const handleReadJob = () => run(t('agentic.reading'), async () => {
+    requireActiveIdentity()
     if (!jobId) throw new Error(t('agentic.jobIdRequired'))
     const data = await readJob(jobId)
     setJobInfo(data)
@@ -324,16 +340,18 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
 
   const handleSetBudget = () => run(t('agentic.settingBudget'), async () => {
     const account = requireAddress()
+    const agentId = requireActiveIdentity()
     if (!jobId || !budget) throw new Error(t('agentic.jobBudgetRequired'))
-    const result = await setJobBudget(account, jobId, budget)
+    const result = await setJobBudget(account, agentId, jobId, budget)
     await handleReadJob()
     setStatus({ type: 'success', msg: t('agentic.budgetSet'), link: result.explorerUrl })
   })
 
   const handleFund = () => run(t('agentic.funding'), async () => {
     const account = requireAddress()
+    const agentId = requireActiveIdentity()
     if (!jobId || !budget) throw new Error(t('agentic.jobBudgetRequired'))
-    const result = await approveAndFundJob(account, jobId, budget)
+    const result = await approveAndFundJob(account, agentId, jobId, budget)
     await handleReadJob()
     onRefresh()
     setStatus({ type: 'success', msg: t('agentic.funded'), link: result.explorerUrl })
@@ -341,16 +359,18 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
 
   const handleSubmit = () => run(t('agentic.submitting'), async () => {
     const account = requireAddress()
+    const agentId = requireActiveIdentity()
     if (!jobId || !deliverable) throw new Error(t('agentic.deliverableRequired'))
-    const result = await submitDeliverable(account, jobId, deliverable)
+    const result = await submitDeliverable(account, agentId, jobId, deliverable)
     await handleReadJob()
     setStatus({ type: 'success', msg: t('agentic.submitted', { hash: result.deliverableHash.slice(0, 10) }), link: result.explorerUrl })
   })
 
   const handleComplete = () => run(t('agentic.completing'), async () => {
     const account = requireAddress()
+    const agentId = requireActiveIdentity()
     if (!jobId) throw new Error(t('agentic.jobIdRequired'))
-    const result = await completeJob(account, jobId, reason)
+    const result = await completeJob(account, agentId, jobId, reason)
     await handleReadJob()
     onRefresh()
     setStatus({ type: 'success', msg: t('agentic.completed'), link: result.explorerUrl })
@@ -373,11 +393,17 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
           <span style={{color:'#64748b'}}>E-USDC</span>
           <span style={{color:'#10b981'}}>{usdcBalance}</span>
         </div>
+        <div style={{display:'flex',justifyContent:'space-between',gap:10,marginTop:4}}>
+          <span style={{color:'#64748b'}}>Active Agent Identity</span>
+          <span style={{color:activeIdentity?'#10b981':'#f59e0b'}}>{activeIdentity ? `#${activeIdentity.agentId}` : 'Not found'}</span>
+        </div>
       </div>
+
+      {!activeIdentity && <div className='inline-warning'>Agent Identity required for Agent Jobs. AI Router remains available.</div>}
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4, minmax(0, 1fr))',gap:8}}>
         {(['agent', 'link', 'create', 'manage'] as View[]).map(item => (
-          <button key={item} onClick={()=>setView(item)} style={{padding:'9px 6px',borderRadius:8,cursor:'pointer',border:view===item?'1px solid rgba(99,102,241,0.65)':'1px solid #1e1e2e',background:view===item?'rgba(99,102,241,0.14)':'rgba(18,18,26,0.8)',color:view===item?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>
+          <button key={item} disabled={!activeIdentity && (item === 'create' || item === 'manage' || item === 'link')} onClick={()=>setView(item)} style={{padding:'9px 6px',borderRadius:8,cursor:'pointer',border:view===item?'1px solid rgba(99,102,241,0.65)':'1px solid #1e1e2e',background:view===item?'rgba(99,102,241,0.14)':'rgba(18,18,26,0.8)',color:view===item?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>
             {t(VIEW_LABEL_KEYS[item])}
           </button>
         ))}
@@ -387,7 +413,15 @@ export function AgenticPanel({ address, eoaBalances, onRefresh }: Props) {
         <div style={{display:'flex',flexDirection:'column',gap:12}}>
           <div className='glass' style={{padding:12,borderRadius:10}}>
             <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13,marginBottom:4}}>{t('agentic.identity')}</div>
-            <div style={{color:'#64748b',fontSize:11,marginBottom:10}}>{t('agentic.identityHelp')}</div>
+            <div style={{color:'#64748b',fontSize:11,marginBottom:10}}>Detected from the Arc ERC-8004 registry. Registration through ARCOX is optional.</div>
+            {identities.length > 0 && (
+              <label className='sandbox-field' style={{marginBottom:10}}>
+                <span>Active Agent Identity</span>
+                <select className='input' value={activeIdentity?.agentId || ''} onChange={event => onSelectIdentity(event.target.value)}>
+                  {identities.map(identity => <option key={identity.agentId} value={identity.agentId}>Agent #{identity.agentId}</option>)}
+                </select>
+              </label>
+            )}
             {profile && (
               <div style={{fontSize:12,marginBottom:10,display:'grid',gap:4}}>
                 <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Agent ID</span><span style={{color:'#818cf8'}}>{profile.agentId}</span></div>

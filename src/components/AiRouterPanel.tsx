@@ -13,8 +13,9 @@ import {
   revokeAiRouterApiKey,
   setAiRouterAutoPay,
 } from '../aiRouterApi'
+import type { AgentIdentity } from '../services/agentIdentity'
 
-export function AiRouterPanel({ address }: { address: string }) {
+export function AiRouterPanel({ address, activeAgentIdentity }: { address: string; activeAgentIdentity: AgentIdentity | null }) {
   const [status, setStatus] = useState<any>(null)
   const [models, setModels] = useState<any[]>([])
   const [unifiedBalance, setUnifiedBalance] = useState<any>(null)
@@ -158,6 +159,7 @@ export function AiRouterPanel({ address }: { address: string }) {
           <StatusPill label='Auto Pay' value={autoPayReady ? 'Ready' : autoPay?.enabled ? 'Pending' : 'OFF'} tone={autoPayReady ? 'good' : 'warn'} />
           <StatusPill label='Readiness' value={autoPayReady ? 'Siap digunakan' : autoPayLabel} tone={autoPayReady ? 'good' : 'warn'} />
           <StatusPill label='API Key' value={activeKeys.length ? 'Ready' : 'Not created'} tone={activeKeys.length ? 'good' : 'warn'} />
+          <StatusPill label='Agent Identity' value={activeAgentIdentity ? `#${activeAgentIdentity.agentId}` : 'Personal'} tone={activeAgentIdentity ? 'good' : undefined} />
         </div>
       </section>
 
@@ -196,7 +198,7 @@ export function AiRouterPanel({ address }: { address: string }) {
           <p className='pay-muted'>Enable once. This is only an approval; AI requests spend USDC from Unified Balance to ARCOX treasury.</p>
           <div className='pay-grid'>
             <Info label='Auto Pay' value={autoPayLabel} />
-            <Info label='Per Request' value={`${autoPay?.maxPerRequest || '0.02'} USDC`} />
+            <Info label='Payment Source' value='Unified Balance' />
           </div>
           <div className='button-row wrap'>
             <button className='btn btn-primary' disabled={!!busy || autoPayReady} onClick={enableAutoPay}>
@@ -221,7 +223,7 @@ export function AiRouterPanel({ address }: { address: string }) {
               <div className='api-key-row' key={key.id}>
                 <div>
                   <strong>{key.keyPreview}</strong>
-                  <span>{key.scopes?.join(', ')}</span>
+                  <span>{key.agentId ? `Agent #${key.agentId} · ` : 'Personal · '}{key.scopes?.join(', ')}</span>
                 </div>
                 <div className='button-row'>
                   <button className='btn btn-secondary small danger' disabled={busy === 'delete'} onClick={() => deleteKey(key.id)}>Delete</button>
