@@ -361,34 +361,39 @@ function swapStep(name: string, result: any) {
 
 export async function getUnifiedBalanceWithAppKit() {
   const address = await getConnectedEvmAddress()
-  try {
-    const response = await fetch('/api/unified-balance/balances', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address }),
-    })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data?.error || 'Unified Balance API failed')
-    return data
-  } catch (error) {
-    console.warn('[Unified Balance] server lookup failed, retrying with wallet adapter', error)
-    const kit = getKit()
-    const evmAdapter = await buildEvmAdapter()
-    const chains: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
-    return await kit.unifiedBalance.getBalances({
-      token: 'USDC',
-      sources: { adapter: evmAdapter, chains },
-      networkType: 'testnet',
-      includePending: true,
-    } as any)
-  }
+  const response = await fetch('/api/unified-balance/balances', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address }),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(data?.error || 'Unified Balance API temporarily unavailable')
+  return data
 }
 
 export type UnifiedBalanceSourceChain = 'auto' | 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia'
+export const UNIFIED_BALANCE_EVM_CHAINS: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
 
-function unifiedBalanceFrom(adapter: any, amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto') {
+async function unifiedBalanceFrom(adapter: any, amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto') {
   if (sourceChain === 'auto') return { adapter }
   return { adapter, allocations: [{ amount, chain: sourceChain }] }
+}
+
+async function allocatedUnifiedBalanceFrom(adapter: any, amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto', knownBalance?: any) {
+  if (sourceChain !== 'auto') return unifiedBalanceFrom(adapter, amount, sourceChain)
+  const balance = knownBalance || await getUnifiedBalanceWithAppKit()
+  const requested = usdcUnits(amount)
+  let remaining = requested
+  const allocations: Array<{ amount: string; chain: Exclude<UnifiedBalanceSourceChain, 'auto'> }> = []
+  for (const chain of UNIFIED_BALANCE_EVM_CHAINS) {
+    const available = usdcUnits(confirmedBalanceForChain(balance, chain))
+    if (available <= 0n || remaining <= 0n) continue
+    const allocated = available < remaining ? available : remaining
+    allocations.push({ chain, amount: formatUsdcUnits(allocated) })
+    remaining -= allocated
+  }
+  if (remaining > 0n) throw new Error(`Unified Balance insufficient. Available ${formatUsdcUnits(requested - remaining)} USDC.`)
+  return { adapter, allocations }
 }
 
 async function ensureUnifiedEvmChain(adapter: any, chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
@@ -424,22 +429,22 @@ export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
 }) {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
-  await ensureUnifiedEvmChain(adapter, args.chain)
-  return await kit.unifiedBalance.initiateRemoveFund({
-    from: { adapter, chain: args.chain },
-    amount: args.amount,
-    token: 'USDC',
-  } as any)
+  const recipientAddress = await getConnectedEvmAddress()
+  return prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
 }
 
 export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
+  amount: string
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
-  await ensureUnifiedEvmChain(adapter, args.chain)
-  return await kit.unifiedBalance.removeFund({
-    from: { adapter, chain: args.chain },
+  const recipientAddress = await getConnectedEvmAddress()
+  const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
+  return await kit.unifiedBalance.spend({
+    from: { adapter, allocations: plan.allocations },
+    to: { chain: args.chain, recipientAddress, useForwarder: true },
+    amount: plan.spendAmount,
     token: 'USDC',
   } as any)
 }
@@ -452,12 +457,7 @@ export async function estimateUnifiedBalanceSpendWithAppKit(args: {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (args.sourceChain && args.sourceChain !== 'auto') await ensureUnifiedEvmChain(adapter, args.sourceChain)
-  return await kit.unifiedBalance.estimateSpend({
-    from: unifiedBalanceFrom(adapter, args.amount, args.sourceChain),
-    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
-    amount: args.amount,
-    token: 'USDC',
-  } as any)
+  return prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
 }
 
 export async function spendUnifiedBalanceWithAppKit(args: {
@@ -468,10 +468,11 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (args.sourceChain && args.sourceChain !== 'auto') await ensureUnifiedEvmChain(adapter, args.sourceChain)
+  const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
   return await kit.unifiedBalance.spend({
-    from: unifiedBalanceFrom(adapter, args.amount, args.sourceChain),
-    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
-    amount: args.amount,
+    from: { adapter, allocations: plan.allocations },
+    to: { chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
+    amount: plan.spendAmount,
     token: 'USDC',
   } as any)
 }
@@ -519,6 +520,76 @@ export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
 }
 
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
+
+export function confirmedUnifiedBalanceChains(balance: any) {
+  return UNIFIED_BALANCE_EVM_CHAINS.filter(chain => Number(confirmedBalanceForChain(balance, chain)) > 0)
+}
+
+async function prepareUnifiedBalanceSpend(args: {
+  kit: AppKit
+  adapter: any
+  receiveAmount: string
+  destinationChain: Exclude<UnifiedBalanceSourceChain, 'auto'>
+  recipientAddress: string
+  sourceChain?: UnifiedBalanceSourceChain
+}) {
+  const receiveUnits = usdcUnits(args.receiveAmount)
+  let spendUnits = receiveUnits
+  let estimate: any = null
+  let allocations: any[] = []
+  let stable = false
+  const balance = !args.sourceChain || args.sourceChain === 'auto' ? await getUnifiedBalanceWithAppKit() : null
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const spendAmount = formatUsdcUnits(spendUnits)
+    const from = await allocatedUnifiedBalanceFrom(args.adapter, spendAmount, args.sourceChain, balance)
+    allocations = from.allocations || []
+    estimate = await args.kit.unifiedBalance.estimateSpend({
+      from,
+      to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
+      amount: spendAmount,
+      token: 'USDC',
+    } as any)
+    const nextSpend = receiveUnits + totalFeeUnits(estimate?.fees)
+    if (nextSpend === spendUnits) {
+      stable = true
+      break
+    }
+    spendUnits = nextSpend
+  }
+  if (!stable) throw new Error('Gateway fee estimate did not stabilize. Try again.')
+  return {
+    ...estimate,
+    requestedReceiveAmount: formatUsdcUnits(receiveUnits),
+    spendAmount: formatUsdcUnits(spendUnits),
+    totalFee: formatUsdcUnits(spendUnits - receiveUnits),
+    allocations,
+  }
+}
+
+function totalFeeUnits(fees: any) {
+  return (Array.isArray(fees) ? fees : []).reduce((total: bigint, fee: any) => total + usdcUnits(String(fee?.amount || '0')), 0n)
+}
+
+function confirmedBalanceForChain(balance: any, chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
+  for (const source of Array.isArray(balance?.breakdown) ? balance.breakdown : []) {
+    const entry = (source?.breakdown || []).find((item: any) => item?.chain === chain)
+    if (entry) return String(entry.confirmedBalance || '0')
+  }
+  return '0'
+}
+
+function usdcUnits(value: string) {
+  const normalized = String(value || '0').trim()
+  if (!/^\d+(\.\d{0,6})?$/.test(normalized)) throw new Error('Invalid USDC amount')
+  const [whole, fraction = ''] = normalized.split('.')
+  return BigInt(whole) * 1_000_000n + BigInt((fraction + '000000').slice(0, 6))
+}
+
+function formatUsdcUnits(value: bigint) {
+  const whole = value / 1_000_000n
+  const fraction = (value % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole.toString()
+}
 
 function swapTokenParam(symbol: string) {
   const token = getArcToken(symbol)

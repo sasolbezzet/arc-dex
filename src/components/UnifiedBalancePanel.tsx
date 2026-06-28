@@ -99,11 +99,11 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
 
         <div className='glass sandbox-card'>
           <h3>Withdraw Unified Balance</h3>
-          <p className='pay-muted'>Withdraw has two steps: initiate removal, wait until the withdrawal block is ready, then complete withdraw on the same chain.</p>
+          <p className='pay-muted'>Preview the route, then spend Unified Balance back to your connected wallet on the selected chain.</p>
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>Withdraw Chain</span>
-              <CompactChainPicker value={withdrawChain} options={UB_CHAINS} onChange={value => setWithdrawChain(value as UbChain)} />
+              <CompactChainPicker value={withdrawChain} options={UB_CHAINS} onChange={value => { setWithdrawChain(value as UbChain); setWithdraw(null) }} />
             </div>
             <div className='ub-token-field'>
               <span>Token</span>
@@ -112,13 +112,13 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
           </div>
           <label className='sandbox-field'>
             <span>Amount USDC</span>
-            <input className='input' value={withdrawAmount} onChange={event => setWithdrawAmount(event.target.value)} />
+            <input className='input' value={withdrawAmount} onChange={event => { setWithdrawAmount(event.target.value); setWithdraw(null) }} />
           </label>
           <div className='button-row wrap'>
             <button className='btn btn-secondary' disabled={busy === 'withdraw'} onClick={() => run('withdraw', () => initiateUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain }))}>
               {busy === 'withdraw' ? 'Initiating...' : 'Initiate Withdraw'}
             </button>
-            <button className='btn btn-primary' disabled={busy === 'completeWithdraw'} onClick={() => run('completeWithdraw', () => completeUnifiedBalanceWithdrawWithAppKit({ chain: withdrawChain }))}>
+            <button className='btn btn-primary' disabled={busy === 'completeWithdraw' || !withdraw || !!(withdraw as any).txHash} onClick={() => run('completeWithdraw', () => completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain }))}>
               {busy === 'completeWithdraw' ? 'Completing...' : 'Complete Withdraw'}
             </button>
           </div>
@@ -126,8 +126,10 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
             <div className='pay-grid'>
               <Info label='Tx Hash' value={(withdraw as any).txHash || '-'} mono />
               <Info label='Chain' value={withdrawChain} />
-              <Info label='Withdrawal Block' value={String((withdraw as any).withdrawalBlock || '-')} />
-              <Info label='Status' value='Check block readiness before complete' />
+              <Info label='Receive' value={`${withdrawAmount} USDC`} />
+              <Info label='Gateway Fees' value={`${(withdraw as any).totalFee || '0'} USDC`} />
+              <Info label='Total Spend' value={`${(withdraw as any).spendAmount || withdrawAmount} USDC`} />
+              <Info label='Status' value={(withdraw as any).txHash ? 'Submitted' : 'Estimate ready'} />
             </div>
           )}
         </div>

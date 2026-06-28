@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
   addUnifiedBalanceDelegateWithAppKit,
+  confirmedUnifiedBalanceChains,
   getUnifiedBalanceDelegateStatusWithAppKit,
   getUnifiedBalanceWithAppKit,
   removeUnifiedBalanceDelegateWithAppKit,
+  UNIFIED_BALANCE_EVM_CHAINS,
 } from '../appKit'
 import { ensureAuthSession } from '../auth'
 import {
@@ -74,28 +76,46 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
       return
     }
     if (!await authReady()) return
-    if (!sameAddress(delegateAddress, address)) {
+    const balance = unifiedBalance || await runRequired('balance', getUnifiedBalanceWithAppKit)
+    if (!unifiedBalance) setUnifiedBalance(balance)
+    const sourceChains = confirmedUnifiedBalanceChains(balance)
+    if (!sourceChains.length) {
+      setError('Deposit USDC to Unified Balance before enabling Auto Pay.')
+      return
+    }
+    setBusy('autoPaySetup')
+    const delegateChains: Array<{ chain: string; status: string }> = []
+    const failures: string[] = []
+    for (const chain of sourceChains) {
       try {
-        await runRequired('autoPaySetup', () => addUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
-      } catch {
-        return
+        let chainStatus: any = sameAddress(delegateAddress, address)
+          ? 'ready'
+          : await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain })
+        if (!sameAddress(delegateAddress, address) && chainStatus === 'none') {
+          await addUnifiedBalanceDelegateWithAppKit({ delegateAddress, chain })
+          chainStatus = await waitForAutoPayReady(delegateAddress, chain)
+        }
+        delegateChains.push({ chain, status: normalizeAutoPayStatus(chainStatus) })
+      } catch (error) {
+        delegateChains.push({ chain, status: 'not_configured' })
+        failures.push(`${chain}: ${error instanceof Error ? error.message : 'setup failed'}`)
       }
     }
-    const delegateStatus = sameAddress(delegateAddress, address)
-      ? 'ready'
-      : await run('autoPayStatus', () => getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress }))
-    const normalizedStatus = normalizeAutoPayStatus(delegateStatus, true)
+    const normalizedStatus = delegateChains.some(item => item.status === 'ready') ? 'ready' : delegateChains.some(item => item.status === 'pending') ? 'pending' : 'not_configured'
     await run('autoPay', () => setAiRouterAutoPay({
       ownerAddress: address,
-      enabled: true,
+      enabled: normalizedStatus === 'ready',
       delegateStatus: normalizedStatus,
       delegateAddress,
+      delegateChains,
     }))
     setStatus((prev: any) => prev ? {
       ...prev,
-      autoPay: { ...prev.autoPay, enabled: true, delegateStatus: normalizedStatus, status: normalizedStatus === 'ready' ? 'ready' : 'auto_pay_required' },
-      delegate: { ...prev.delegate, status: normalizedStatus, address: delegateAddress },
+      autoPay: { ...prev.autoPay, enabled: normalizedStatus === 'ready', delegateStatus: normalizedStatus, delegateChains, status: normalizedStatus === 'ready' ? 'ready' : 'auto_pay_required' },
+      delegate: { ...prev.delegate, status: normalizedStatus, address: delegateAddress, chains: delegateChains },
     } : prev)
+    if (failures.length) setError(`Auto Pay belum siap di semua chain. ${failures.join(' | ')}`)
+    setBusy('')
     await refresh()
   }
 
@@ -106,19 +126,22 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
       return
     }
     if (!await authReady()) return
+    setBusy('autoPayRemove')
     if (!sameAddress(delegateAddress, address)) {
-      try {
-        await runRequired('autoPayRemove', () => removeUnifiedBalanceDelegateWithAppKit({ delegateAddress }))
-      } catch {
-        return
+      for (const chain of UNIFIED_BALANCE_EVM_CHAINS) {
+        try {
+          const chainStatus = await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain })
+          if (chainStatus !== 'none') await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress, chain })
+        } catch {}
       }
     }
-    await run('autoPay', () => setAiRouterAutoPay({ ownerAddress: address, enabled: false }))
+    await run('autoPay', () => setAiRouterAutoPay({ ownerAddress: address, enabled: false, delegateChains: [] }))
     setStatus((prev: any) => prev ? {
       ...prev,
       autoPay: { ...prev.autoPay, enabled: false, delegateStatus: 'not_configured', status: 'off' },
       delegate: { ...prev.delegate, status: 'not_configured', address: delegateAddress },
     } : prev)
+    setBusy('')
     await refresh()
   }
 
@@ -142,6 +165,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const autoPayStatus = delegate?.status || autoPay?.delegateStatus || autoPay?.status || 'not ready'
   const autoPayReady = autoPay?.enabled && autoPayStatus === 'ready'
   const autoPayLabel = autoPayReady ? 'Ready - siap digunakan' : formatAutoPayStatus(autoPayStatus)
+  const readyChainCount = (autoPay?.delegateChains || delegate?.chains || []).filter((item: any) => item.status === 'ready').length
   const keys = status?.apiKeys || []
   const activeKeys = keys.filter((key: any) => key.status === 'active')
   const usage = (status?.usageLogs || []).slice(0, 5)
@@ -157,6 +181,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
         <div className='ai-router-status'>
           <StatusPill label='Unified Balance' value={formatUnifiedBalance(unifiedBalance)} />
           <StatusPill label='Auto Pay' value={autoPayReady ? 'Ready' : autoPay?.enabled ? 'Pending' : 'OFF'} tone={autoPayReady ? 'good' : 'warn'} />
+          <StatusPill label='Source Chains' value={readyChainCount ? `${readyChainCount} ready` : 'Not ready'} tone={readyChainCount ? 'good' : 'warn'} />
           <StatusPill label='Readiness' value={autoPayReady ? 'Siap digunakan' : autoPayLabel} tone={autoPayReady ? 'good' : 'warn'} />
           <StatusPill label='API Key' value={activeKeys.length ? 'Ready' : 'Not created'} tone={activeKeys.length ? 'good' : 'warn'} />
           <StatusPill label='Agent Identity' value={activeAgentIdentity ? `#${activeAgentIdentity.agentId}` : 'Personal'} tone={activeAgentIdentity ? 'good' : undefined} />
@@ -195,14 +220,14 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
         <div className='glass sandbox-card'>
           <h3>2. Auto Pay</h3>
-          <p className='pay-muted'>Enable once. This is only an approval; AI requests spend USDC from Unified Balance to ARCOX treasury.</p>
+          <p className='pay-muted'>Approve each funded source chain once. AI requests then spend USDC from Unified Balance to ARCOX treasury.</p>
           <div className='pay-grid'>
             <Info label='Auto Pay' value={autoPayLabel} />
             <Info label='Payment Source' value='Unified Balance' />
           </div>
           <div className='button-row wrap'>
-            <button className='btn btn-primary' disabled={!!busy || autoPayReady} onClick={enableAutoPay}>
-              {busy === 'autoPaySetup' || busy === 'autoPayStatus' || busy === 'autoPay' ? 'Enabling...' : 'Enable Auto Pay'}
+            <button className='btn btn-primary' disabled={!!busy} onClick={enableAutoPay}>
+              {busy === 'autoPaySetup' || busy === 'autoPayStatus' || busy === 'autoPay' ? 'Preparing...' : autoPayReady ? 'Sync Auto Pay Chains' : 'Enable Auto Pay'}
             </button>
             <button className='btn btn-secondary' disabled={!!busy || !autoPay?.enabled} onClick={disableAutoPay}>
               {busy === 'autoPayRemove' || busy === 'autoPay' ? 'Turning off...' : 'Turn OFF'}
@@ -367,23 +392,32 @@ function shortHash(value: string) {
   return value ? `${value.slice(0, 8)}...${value.slice(-6)}` : ''
 }
 
-function normalizeAutoPayStatus(value: any, setupSucceeded = false) {
+function normalizeAutoPayStatus(value: any) {
   if (value === true) return 'ready'
-  if (value === false || value === null) return setupSucceeded ? 'ready' : 'not_configured'
+  if (value === false || value === null) return 'not_configured'
   if (typeof value === 'string') {
     const normalized = value.toLowerCase().replaceAll('_', ' ').trim()
     if (['ready', 'enabled', 'active', 'approved', 'allowed', 'complete', 'completed', 'success', 'delegated'].includes(normalized)) return 'ready'
-    if (['none', 'missing', 'disabled', 'not configured', 'not ready'].includes(normalized)) return setupSucceeded ? 'ready' : 'not_configured'
+    if (['none', 'missing', 'disabled', 'not configured', 'not ready'].includes(normalized)) return 'not_configured'
     if (normalized.includes('ready') || normalized.includes('enabled') || normalized.includes('active')) return 'ready'
-    if (normalized.includes('pending') || normalized.includes('processing')) return setupSucceeded ? 'ready' : 'pending'
+    if (normalized.includes('pending') || normalized.includes('processing')) return 'pending'
     return value
   }
   if (typeof value === 'object') {
     const status = value.status || value.state || value.delegateStatus || value.readiness
-    if (status) return normalizeAutoPayStatus(status, setupSucceeded)
+    if (status) return normalizeAutoPayStatus(status)
     const flags = ['ready', 'isReady', 'enabled', 'isEnabled', 'delegated', 'isDelegated', 'allowed', 'hasDelegate']
     if (flags.some(flag => value[flag] === true)) return 'ready'
-    if (setupSucceeded) return 'ready'
   }
-  return setupSucceeded ? 'ready' : 'pending'
+  return 'pending'
+}
+
+async function waitForAutoPayReady(delegateAddress: string, chain: any) {
+  let status: any = 'pending'
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    status = await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain })
+    if (status === 'ready' || status === 'none') return status
+    await new Promise(resolve => window.setTimeout(resolve, 3000))
+  }
+  return status
 }

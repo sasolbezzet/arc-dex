@@ -288,7 +288,10 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     setPaying(true)
     setError('')
     try {
-      if (!unifiedEstimate) await estimateUnifiedPayment()
+      if (!unifiedEstimate) {
+        await estimateUnifiedPayment()
+        return
+      }
       const spend = await spendUnifiedBalanceWithAppKit({
         amount: String(requirement.amount || requirement.uniqueAmount),
         recipient: requirement.recipient,
@@ -403,7 +406,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
                     <span>Unified Balance Source</span>
                     <div className='compact-chain-grid compact-chain-grid--stacked'>
                       {UB_SOURCES.map(source => (
-                        <button key={source.id} type='button' className={unifiedSourceChain === source.id ? 'active' : ''} onClick={() => setUnifiedSourceChain(source.id)}>
+                        <button key={source.id} type='button' className={unifiedSourceChain === source.id ? 'active' : ''} onClick={() => { setUnifiedSourceChain(source.id); setUnifiedEstimate(null) }}>
                           {source.label}
                         </button>
                       ))}
@@ -422,7 +425,9 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
               {unifiedEstimate && (
                 <div className='pay-grid'>
                   <Info label='UB Route' value='Gateway spend to Arc Testnet' />
-                  <Info label='UB Fee Items' value={String((unifiedEstimate?.fees || []).length || 0)} />
+                  <Info label='Invoice Receive' value={`${unifiedEstimate.requestedReceiveAmount || requirement.amount} USDC`} />
+                  <Info label='Gateway Fees' value={`${unifiedEstimate.totalFee || '0'} USDC`} />
+                  <Info label='Total Unified Spend' value={`${unifiedEstimate.spendAmount || requirement.amount} USDC`} />
                 </div>
               )}
               {paymentTx && <p className='pay-muted'>Payment submitted. Waiting for on-chain settlement: {short(paymentTx, 10, 8)}</p>}
