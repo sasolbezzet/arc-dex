@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ViewportPopover } from './ViewportPopover'
 
 type LogoMeta = { name?:string; short?:string; color:string; mark:string; logo:string }
 
@@ -117,19 +118,21 @@ export function ChainLogo({ chain, size = 18 }: { chain:string; size?:number }) 
 
 export function CompactTokenPicker({ value, options, onChange, width = 96 }: { value:string; options:string[]; onChange:(token:string)=>void; width?:number }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const close = useCallback(() => setOpen(false), [])
   return (
     <div style={{position:'relative',width,flexShrink:0}}>
-      <button type='button' onClick={()=>setOpen(v=>!v)} className='input' style={{height:34,width:'100%',padding:'0 7px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:5,cursor:'pointer',fontSize:12}}>
+      <button ref={triggerRef} type='button' onClick={()=>setOpen(v=>!v)} className='input' aria-haspopup='listbox' aria-expanded={open} style={{height:34,width:'100%',padding:'0 7px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:5,cursor:'pointer',fontSize:12}}>
         <span style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}>
           <TokenLogo token={value} size={18} />
           <span style={{fontWeight:700,fontSize:11,whiteSpace:'nowrap'}}>{value}</span>
         </span>
         <span style={{color:'#64748b',fontSize:9}}>⌄</span>
       </button>
-      {open && (
-        <div className='glass' style={{position:'absolute',right:0,top:38,zIndex:30,width:128,borderRadius:8,border:'1px solid #1e1e2e',padding:4,boxShadow:'0 12px 28px rgba(0,0,0,0.32)'}}>
+      <ViewportPopover open={open} anchorRef={triggerRef} onClose={close} preferredWidth={176} className='glass compact-picker-menu'>
+        <div role='listbox' aria-label='Select token'>
           {options.map(t=>(
-            <button key={t} type='button' onClick={()=>{onChange(t);setOpen(false)}} style={{width:'100%',display:'flex',alignItems:'center',gap:7,padding:'7px 8px',borderRadius:7,border:'none',background:t===value?'rgba(99,102,241,0.16)':'transparent',color:'#e2e8f0',cursor:'pointer',textAlign:'left'}}>
+            <button key={t} type='button' role='option' aria-selected={t===value} onClick={()=>{onChange(t);setOpen(false)}} style={{width:'100%',display:'flex',alignItems:'center',gap:7,padding:'8px',borderRadius:7,border:'none',background:t===value?'rgba(99,102,241,0.16)':'transparent',color:'#e2e8f0',cursor:'pointer',textAlign:'left'}}>
               <TokenLogo token={t} size={20} />
               <span style={{display:'flex',flexDirection:'column',lineHeight:1.1}}>
                 <span style={{fontSize:11,fontWeight:700}}>{t}</span>
@@ -138,34 +141,36 @@ export function CompactTokenPicker({ value, options, onChange, width = 96 }: { v
             </button>
           ))}
         </div>
-      )}
+      </ViewportPopover>
     </div>
   )
 }
 
 export function CompactChainPicker({ value, options, onChange }: { value:string; options:Array<{id:string;label:string}>; onChange:(chain:string)=>void }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const close = useCallback(() => setOpen(false), [])
   const selected = options.find(c=>c.id===value)
   const meta = CHAIN_META[value] || { short:selected?.label || value, color:'#64748b', mark:value.slice(0,1), logo:'' }
   return (
     <div style={{position:'relative',width:'100%'}}>
-      <button type='button' onClick={()=>setOpen(v=>!v)} className='input' style={{height:36,width:'100%',padding:'0 9px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,cursor:'pointer'}}>
+      <button ref={triggerRef} type='button' onClick={()=>setOpen(v=>!v)} className='input' aria-haspopup='listbox' aria-expanded={open} style={{height:36,width:'100%',padding:'0 9px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,cursor:'pointer'}}>
         <span style={{display:'flex',alignItems:'center',gap:7,minWidth:0}}>
           <ChainLogo chain={value} size={19} />
           <span style={{fontWeight:700,fontSize:12,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{meta.short}</span>
         </span>
         <span style={{color:'#64748b',fontSize:10}}>⌄</span>
       </button>
-      {open && (
-        <div className='glass' style={{position:'absolute',left:0,right:0,top:40,zIndex:30,borderRadius:8,border:'1px solid #1e1e2e',padding:4,boxShadow:'0 12px 28px rgba(0,0,0,0.32)'}}>
+      <ViewportPopover open={open} anchorRef={triggerRef} onClose={close} preferredWidth={220} className='glass compact-picker-menu'>
+        <div role='listbox' aria-label='Select chain'>
           {options.map(c=>(
-            <button key={c.id} type='button' onClick={()=>{onChange(c.id);setOpen(false)}} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'7px 9px',borderRadius:7,border:'none',background:c.id===value?'rgba(99,102,241,0.16)':'transparent',color:'#e2e8f0',cursor:'pointer',textAlign:'left'}}>
+            <button key={c.id} type='button' role='option' aria-selected={c.id===value} onClick={()=>{onChange(c.id);setOpen(false)}} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'8px 9px',borderRadius:7,border:'none',background:c.id===value?'rgba(99,102,241,0.16)':'transparent',color:'#e2e8f0',cursor:'pointer',textAlign:'left'}}>
               <ChainLogo chain={c.id} size={20} />
               <span style={{fontSize:12,fontWeight:650,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.label}</span>
             </button>
           ))}
         </div>
-      )}
+      </ViewportPopover>
     </div>
   )
 }

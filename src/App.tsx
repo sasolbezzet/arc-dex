@@ -15,6 +15,7 @@ import { AiRouterPanel } from './components/AiRouterPanel'
 import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
+import { ViewportPopover } from './components/ViewportPopover'
 
 const API = ''
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
@@ -63,6 +64,7 @@ export default function App() {
   const [page, setPage] = useState<PageId>(() => currentPageFromLocation())
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [languageOpen, setLanguageOpen] = useState(false)
+  const languageTriggerRef = useRef<HTMLButtonElement>(null)
   const [address, setAddress] = useState<string|null>(null)
   const [circleWallet, setCircleWallet] = useState<{id:string;address:string}|null>(null)
   const [balances, setBalances] = useState<Record<string,string>>({...EMPTY_BAL})
@@ -322,24 +324,27 @@ export default function App() {
             </div>
             <div className='header-actions'>
               <div className={`language-menu ${languageOpen ? 'open' : ''}`}>
-                <button type='button' className='language-trigger' onClick={() => setLanguageOpen(v => !v)} aria-expanded={languageOpen} aria-label='Language'>
+                <button ref={languageTriggerRef} type='button' className='language-trigger' onClick={() => setLanguageOpen(v => !v)} aria-haspopup='listbox' aria-expanded={languageOpen} aria-label='Language'>
                   <span>{lang === 'zh' ? '中文' : lang.toUpperCase()}</span>
                 </button>
-                <div className='language-menu-list'>
+                <ViewportPopover open={languageOpen} anchorRef={languageTriggerRef} onClose={() => setLanguageOpen(false)} preferredWidth={176} className='language-menu-popover'>
+                  <div role='listbox' aria-label='Select language'>
                   {LANGUAGES.map(item => (
                   <button
                     key={item.code}
                     type='button'
                     className={lang === item.code ? 'active' : ''}
                     onClick={() => { setLang(item.code); setLanguageOpen(false) }}
-                    aria-pressed={lang === item.code}
+                    role='option'
+                    aria-selected={lang === item.code}
                     title={item.label}
                   >
                     <span>{item.code === 'zh' ? '中文' : item.code.toUpperCase()}</span>
                     <small>{item.label}</small>
                   </button>
                   ))}
-                </div>
+                  </div>
+                </ViewportPopover>
               </div>
               <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
             </div>
