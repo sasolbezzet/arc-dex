@@ -54,8 +54,9 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
     setLoading(true); setStatus(null)
     try {
       if (source === 'eoa') {
-        setStatus({ type:'warning', msg:'MetaMask akan meminta approval/swap signature dari wallet EOA Anda.' })
+        setStatus({ type:'warning', msg:'USDC memakai permit + satu transaksi swap. Token tanpa permit mungkin meminta approval lebih dulu.' })
         const result = await swapFromEoa({ metamaskAddress: address, tokenIn, tokenOut, amountIn })
+        const feeText = result?.platformFee?.amount ? ` • fee ${result.platformFee.amount} ${result.platformFee.token}` : ''
         txHistory.add({
           id: `swap-${Date.now()}-${(result?.txHash || result?.transactionHash || tokenOut).slice(-6)}`,
           ts: Date.now(),
@@ -72,7 +73,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
           note: `EOA swap to ${result?.amountOut || result?.raw?.estimatedOutput?.amount || ''} ${tokenOut}. Platform fee ${result?.platformFee?.amount || '0'} ${tokenIn}${result?.platformFee?.error ? ` failed: ${result.platformFee.error}` : ''}.`,
         })
         const feeWarning = result?.platformFee?.error ? `\nPlatform fee gagal: ${result.platformFee.error}` : ''
-        setStatus({ type:'success', msg:`✓ ${result?.amountIn || amountIn} ${tokenIn} → ${result?.amountOut || result?.raw?.estimatedOutput?.amount || ''} ${tokenOut}${feeWarning}`, link:result?.explorerUrl })
+        setStatus({ type:'success', msg:`✓ ${result?.amountIn || amountIn} ${tokenIn} → ${result?.amountOut || result?.raw?.estimatedOutput?.amount || ''} ${tokenOut}${feeText}${feeWarning}`, link:result?.explorerUrl })
       } else {
         if (!circleWallet) return
         const d = await swapFromCircleWallet({metamaskAddress:address,tokenIn,tokenOut,amountIn})

@@ -1,11 +1,9 @@
 import { safePost } from '../api'
 import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
-import { getArcToken } from '../domain/tokens'
-import { encodeFunctionData, erc20Abi, parseUnits } from 'viem'
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbiParameters, parseSignature } from 'viem'
 
 const API = ''
-const EVM_FEE_TREASURY = import.meta.env.VITE_ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
-const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_SWAP_FEE_BPS || '30')
+const ARC_CHAIN_ID = 5042002
 const ADAPTER_EXECUTE_ABI = [{
   type: 'function',
   name: 'execute',
@@ -87,23 +85,25 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   }
   const steps: any[] = []
   for (const leg of prepared.legs) {
-    const approveData = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [prepared.adapterContract as `0x${string}`, BigInt(leg.amountBaseUnits)],
+    const tokenInput = await buildTokenInput({
+      ethereum,
+      owner: from,
+      spender: prepared.adapterContract,
+      token: leg.tokenInAddress,
+      tokenSymbol: leg.tokenIn,
+      amount: BigInt(leg.amountBaseUnits),
     })
-    const approvalTx = await sendBufferedTx({ from, to: leg.tokenInAddress, data: approveData, value: '0x0' })
-    await waitForReceipt(approvalTx)
-    steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: approvalTx })
+    if (tokenInput.approvalTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: tokenInput.approvalTx })
+    if (tokenInput.permitType === 1) steps.push({ name: `Permit ${leg.tokenIn}`, state: 'success' })
 
     const executeData = encodeFunctionData({
       abi: ADAPTER_EXECUTE_ABI,
       functionName: 'execute',
       args: [normalizeExecutionParams(leg.executionParams), [{
-        permitType: 0,
+        permitType: tokenInput.permitType,
         token: leg.tokenInAddress,
         amount: BigInt(leg.amountBaseUnits),
-        permitCalldata: '0x',
+        permitCalldata: tokenInput.permitCalldata,
       }], leg.signature],
     })
     const swapTx = await sendBufferedTx({ from, to: prepared.adapterContract, data: executeData, value: '0x0' })
@@ -111,24 +111,6 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
     steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
   }
   const txHash = steps.filter(step => step.name.includes('→')).at(-1)?.txHash || ''
-  let feeTx = ''
-  let feeError = ''
-  const feeToken = getArcToken(args.tokenIn)
-  const feeAmount = calculateInputFee(args.amountIn, feeToken?.decimals ?? 6)
-  const feeUnits = feeToken ? parseUnits(feeAmount, feeToken.decimals) : 0n
-  if (feeUnits > 0n && feeToken) {
-    try {
-      const feeData = encodeFunctionData({
-        abi: erc20Abi,
-        functionName: 'transfer',
-        args: [EVM_FEE_TREASURY as `0x${string}`, feeUnits],
-      })
-      feeTx = await sendBufferedTx({ from, to: feeToken.address, data: feeData, value: '0x0' })
-      await waitForReceipt(feeTx)
-    } catch (error) {
-      feeError = error instanceof Error ? error.message : String(error)
-    }
-  }
   return {
     success: true,
     source: 'browser-prepared-adapter',
@@ -142,16 +124,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
     transactionHash: txHash,
     explorerUrl: txHash ? `${ARC_TESTNET_EXPLORER_TX}${txHash}` : '',
     raw: { ...prepared, steps },
-    platformFee: {
-      bps: PLATFORM_FEE_BPS,
-      token: args.tokenIn,
-      treasury: EVM_FEE_TREASURY,
-      amount: feeAmount,
-      amountBaseUnits: feeUnits.toString(),
-      collectedBy: 'post-swap-browser-transfer',
-      txHash: feeTx || undefined,
-      error: feeError || undefined,
-    },
+    platformFee: prepared.platformFee,
   }
 }
 
@@ -167,9 +140,73 @@ export async function quoteEoaSwap(args: { metamaskAddress: string | null; token
   }
 }
 
-function calculateInputFee(amount: string, decimals: number) {
-  const units = parseUnits(amount || '0', decimals)
-  return formatTokenUnits((units * BigInt(Math.max(0, Math.floor(PLATFORM_FEE_BPS)))) / 10_000n, decimals)
+async function buildTokenInput(args: {
+  ethereum: any
+  owner: string
+  spender: string
+  token: string
+  tokenSymbol: string
+  amount: bigint
+}) {
+  if (args.tokenSymbol === 'USDC') {
+    try {
+      const nonceData = encodeFunctionData({
+        abi: [{ type: 'function', name: 'nonces', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] }],
+        functionName: 'nonces',
+        args: [args.owner as `0x${string}`],
+      })
+      const nonce = BigInt(await args.ethereum.request({ method: 'eth_call', params: [{ to: args.token, data: nonceData }, 'latest'] }))
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
+      const typedData = {
+        types: {
+          EIP712Domain: [
+            { name: 'name', type: 'string' },
+            { name: 'version', type: 'string' },
+            { name: 'chainId', type: 'uint256' },
+            { name: 'verifyingContract', type: 'address' },
+          ],
+          Permit: [
+            { name: 'owner', type: 'address' },
+            { name: 'spender', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'deadline', type: 'uint256' },
+          ],
+        },
+        primaryType: 'Permit',
+        domain: { name: 'USDC', version: '2', chainId: ARC_CHAIN_ID, verifyingContract: args.token },
+        message: { owner: args.owner, spender: args.spender, value: args.amount.toString(), nonce: nonce.toString(), deadline: deadline.toString() },
+      }
+      const rawSignature = await args.ethereum.request({ method: 'eth_signTypedData_v4', params: [args.owner, JSON.stringify(typedData)] })
+      const signature = parseSignature(rawSignature)
+      const v = signature.v ?? BigInt((signature.yParity || 0) + 27)
+      return {
+        permitType: 1,
+        permitCalldata: encodeAbiParameters(
+          parseAbiParameters('uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s'),
+          [args.amount, deadline, Number(v), signature.r, signature.s],
+        ),
+      }
+    } catch (error: any) {
+      if (error?.code === 4001 || /reject|cancel/i.test(error?.message || '')) throw error
+    }
+  }
+
+  const allowanceData = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [args.owner as `0x${string}`, args.spender as `0x${string}`],
+  })
+  const allowance = BigInt(await args.ethereum.request({ method: 'eth_call', params: [{ to: args.token, data: allowanceData }, 'latest'] }))
+  if (allowance >= args.amount) return { permitType: 0, permitCalldata: '0x' as const, approvalTx: '' }
+  const approveData = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [args.spender as `0x${string}`, args.amount],
+  })
+  const approvalTx = await sendBufferedTx({ from: args.owner, to: args.token, data: approveData, value: '0x0' })
+  await waitForReceipt(approvalTx)
+  return { permitType: 0, permitCalldata: '0x' as const, approvalTx }
 }
 
 function normalizeExecutionParams(params: any) {
@@ -188,13 +225,6 @@ function normalizeExecutionParams(params: any) {
     deadline: BigInt(params.deadline),
     metadata: params.metadata,
   }
-}
-
-function formatTokenUnits(units: bigint, decimals: number) {
-  const base = 10n ** BigInt(decimals)
-  const whole = units / base
-  const frac = (units % base).toString().padStart(decimals, '0').replace(/0+$/, '')
-  return `${whole.toString()}${frac ? `.${frac}` : ''}`
 }
 
 function toHex(value: bigint) {

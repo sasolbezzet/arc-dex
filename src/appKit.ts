@@ -84,6 +84,46 @@ function getKit(): AppKit {
   return kitInstance
 }
 
+async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
+  const originalFetch = window.fetch
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url
+    if (!url.startsWith('https://gateway-api-testnet.circle.com/')) {
+      return originalFetch.call(window, input, init)
+    }
+    const target = new URL(url)
+    const proxyPreferred = ['/v1/info', '/v1/balances', '/v1/deposits', '/v1/estimate'].includes(target.pathname)
+    if (!proxyPreferred) {
+      return originalFetch.call(window, input, { ...init, signal: AbortSignal.timeout(20_000) })
+    }
+    const stored = localStorage.getItem('arc-dex-auth')
+    let authToken = ''
+    try { authToken = stored ? JSON.parse(stored)?.token || '' : '' } catch {}
+    const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined))
+    if (authToken) headers.set('Authorization', `Bearer ${authToken}`)
+    const method = init?.method || (input instanceof Request ? input.method : 'GET')
+    const body = init?.body || (input instanceof Request && method !== 'GET' ? await input.clone().text() : undefined)
+    return originalFetch.call(window, `/api/unified-balance/gateway-proxy?path=${encodeURIComponent(`${target.pathname}${target.search}`)}`, {
+      ...init,
+      method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(20_000),
+    })
+  }
+  try {
+    return await operation()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/Maximum retry attempts|Service temporarily unavailable|Failed to fetch|Gateway API error/i.test(message)) {
+      throw new Error('Circle Gateway testnet is temporarily unavailable. No successful transfer response was received. Check Unified Balance, then retry the same action.', { cause: error })
+    }
+    throw error
+  } finally {
+    window.fetch = originalFetch
+  }
+}
+
 export type AppKitChain =
   | 'Arc_Testnet'
   | 'Ethereum_Sepolia'
@@ -416,11 +456,11 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, args.chain)
-  return await kit.unifiedBalance.deposit({
+  return await withGatewayProxy(() => kit.unifiedBalance.deposit({
     from: { adapter, chain: args.chain },
     amount: args.amount,
     token: 'USDC',
-  } as any)
+  } as any))
 }
 
 export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
@@ -441,12 +481,20 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
   const adapter = await buildEvmAdapter()
   const recipientAddress = await getConnectedEvmAddress()
   const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
-  return await kit.unifiedBalance.spend({
+  const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
     from: { adapter, allocations: plan.allocations },
-    to: { chain: args.chain, recipientAddress, useForwarder: true },
+    to: { adapter, chain: args.chain, recipientAddress },
     amount: plan.spendAmount,
     token: 'USDC',
-  } as any)
+  } as any))
+  const feeUnits = totalFeeUnits((result as any)?.fees || plan.fees)
+  return {
+    ...(result as any),
+    requestedReceiveAmount: plan.requestedReceiveAmount,
+    spendAmount: plan.spendAmount,
+    totalFee: formatUsdcUnits(feeUnits),
+    totalDebit: formatUsdcUnits(usdcUnits(plan.spendAmount) + feeUnits),
+  }
 }
 
 export async function estimateUnifiedBalanceSpendWithAppKit(args: {
@@ -469,12 +517,20 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   const adapter = await buildEvmAdapter()
   if (args.sourceChain && args.sourceChain !== 'auto') await ensureUnifiedEvmChain(adapter, args.sourceChain)
   const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
-  return await kit.unifiedBalance.spend({
+  const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
     from: { adapter, allocations: plan.allocations },
-    to: { chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
+    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
     amount: plan.spendAmount,
     token: 'USDC',
-  } as any)
+  } as any))
+  const feeUnits = totalFeeUnits((result as any)?.fees || plan.fees)
+  return {
+    ...(result as any),
+    requestedReceiveAmount: plan.requestedReceiveAmount,
+    spendAmount: plan.spendAmount,
+    totalFee: formatUsdcUnits(feeUnits),
+    totalDebit: formatUsdcUnits(usdcUnits(plan.spendAmount) + feeUnits),
+  }
 }
 
 export async function addUnifiedBalanceDelegateWithAppKit(args: {
@@ -485,10 +541,10 @@ export async function addUnifiedBalanceDelegateWithAppKit(args: {
   const adapter = await buildEvmAdapter()
   const chain = args.chain || 'Arc_Testnet'
   await ensureUnifiedEvmChain(adapter, chain)
-  return await kit.unifiedBalance.addDelegate({
+  return await withGatewayProxy(() => kit.unifiedBalance.addDelegate({
     from: { adapter, chain },
     delegateAddress: args.delegateAddress,
-  } as any)
+  } as any))
 }
 
 export async function removeUnifiedBalanceDelegateWithAppKit(args: {
@@ -499,10 +555,10 @@ export async function removeUnifiedBalanceDelegateWithAppKit(args: {
   const adapter = await buildEvmAdapter()
   const chain = args.chain || 'Arc_Testnet'
   await ensureUnifiedEvmChain(adapter, chain)
-  return await kit.unifiedBalance.removeDelegate({
+  return await withGatewayProxy(() => kit.unifiedBalance.removeDelegate({
     from: { adapter, chain },
     delegateAddress: args.delegateAddress,
-  } as any)
+  } as any))
 }
 
 export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
@@ -513,10 +569,10 @@ export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
   const adapter = await buildEvmAdapter()
   const chain = args.chain || 'Arc_Testnet'
   await ensureUnifiedEvmChain(adapter, chain)
-  return await kit.unifiedBalance.getDelegateStatus({
+  return await withGatewayProxy(() => kit.unifiedBalance.getDelegateStatus({
     from: { adapter, chain },
     delegateAddress: args.delegateAddress,
-  } as any)
+  } as any))
 }
 
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
@@ -545,12 +601,12 @@ async function prepareUnifiedBalanceSpend(args: {
     if (available < receiveUnits) continue
     const allocations = [{ chain, amount: spendAmount }]
     try {
-      const estimate = await args.kit.unifiedBalance.estimateSpend({
+      const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
         from: { adapter: args.adapter, allocations },
-        to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
+        to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
         amount: spendAmount,
         token: 'USDC',
-      } as any)
+      } as any))
       const feeUnits = totalFeeUnits(estimate?.fees)
       if (available < receiveUnits + feeUnits) continue
       return {
@@ -567,12 +623,12 @@ async function prepareUnifiedBalanceSpend(args: {
   }
   try {
     const from = await allocatedUnifiedBalanceFrom(args.adapter, spendAmount, args.sourceChain, balance)
-    const estimate = await args.kit.unifiedBalance.estimateSpend({
+    const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
       from,
-      to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
+      to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
       amount: spendAmount,
       token: 'USDC',
-    } as any)
+    } as any))
     const feeUnits = totalFeeUnits(estimate?.fees)
     const selected = new Set((from.allocations || []).map((item: any) => item.chain))
     const available = UNIFIED_BALANCE_EVM_CHAINS
