@@ -201,6 +201,8 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const autoPayReady = autoPay?.enabled && autoPayStatus === 'ready'
   const autoPayLabel = autoPayReady ? 'Ready - siap digunakan' : formatAutoPayStatus(autoPayStatus)
   const readyChainCount = (autoPay?.delegateChains || delegate?.chains || []).filter((item: any) => item.status === 'ready').length
+  const fundedChainCount = unifiedBalance ? confirmedUnifiedBalanceChains(unifiedBalance).length : 0
+  const sourceChainCount = Math.max(fundedChainCount, (autoPay?.delegateChains || delegate?.chains || []).length)
   const hasAutoPaySetup = Boolean(autoPay?.enabled) || (autoPay?.delegateChains || delegate?.chains || []).some((item: any) => ['ready', 'pending'].includes(normalizeAutoPayStatus(item.status)))
   const keys = status?.apiKeys || []
   const activeKeys = keys.filter((key: any) => key.status === 'active')
@@ -217,7 +219,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
         <div className='ai-router-status'>
           <StatusPill label='Unified Balance' value={formatUnifiedBalance(unifiedBalance)} />
           <StatusPill label='Auto Pay' value={autoPayReady ? 'Ready' : autoPay?.enabled ? 'Pending' : 'OFF'} tone={autoPayReady ? 'good' : 'warn'} />
-          <StatusPill label='Source Chains' value={readyChainCount ? `${readyChainCount} ready` : 'Not ready'} tone={readyChainCount ? 'good' : 'warn'} />
+          <StatusPill label='Source Chains' value={sourceChainCount ? `${readyChainCount}/${sourceChainCount} ready` : 'Not ready'} tone={sourceChainCount > 0 && readyChainCount === sourceChainCount ? 'good' : 'warn'} />
           <StatusPill label='Readiness' value={autoPayReady ? 'Siap digunakan' : autoPayLabel} tone={autoPayReady ? 'good' : 'warn'} />
           <StatusPill label='API Key' value={activeKeys.length ? 'Ready' : 'Not created'} tone={activeKeys.length ? 'good' : 'warn'} />
           <StatusPill label='Agent Identity' value={activeAgentIdentity ? `#${activeAgentIdentity.agentId}` : 'Personal'} tone={activeAgentIdentity ? 'good' : undefined} />

@@ -522,7 +522,7 @@ export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
 
 export function confirmedUnifiedBalanceChains(balance: any) {
-  return UNIFIED_BALANCE_EVM_CHAINS.filter(chain => Number(confirmedBalanceForChain(balance, chain)) > 0)
+  return UNIFIED_BALANCE_EVM_CHAINS.filter(chain => Number(confirmedBalanceForChain(balance, chain)) > 0 || Number(pendingBalanceForChain(balance, chain)) > 0)
 }
 
 async function prepareUnifiedBalanceSpend(args: {
@@ -574,6 +574,14 @@ function confirmedBalanceForChain(balance: any, chain: Exclude<UnifiedBalanceSou
   for (const source of Array.isArray(balance?.breakdown) ? balance.breakdown : []) {
     const entry = (source?.breakdown || []).find((item: any) => item?.chain === chain)
     if (entry) return String(entry.confirmedBalance || '0')
+  }
+  return '0'
+}
+
+function pendingBalanceForChain(balance: any, chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
+  for (const source of Array.isArray(balance?.breakdown) ? balance.breakdown : []) {
+    const entry = (source?.breakdown || []).find((item: any) => item?.chain === chain)
+    if (entry) return String(entry.pendingBalance || '0')
   }
   return '0'
 }
