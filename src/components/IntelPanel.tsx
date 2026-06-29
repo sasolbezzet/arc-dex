@@ -427,7 +427,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
                   <Info label='UB Route' value='Gateway spend to Arc Testnet' />
                   <Info label='Invoice Receive' value={`${unifiedEstimate.requestedReceiveAmount || requirement.amount} USDC`} />
                   <Info label='Gateway Fees' value={`${unifiedEstimate.totalFee || '0'} USDC`} />
-                  <Info label='Total Unified Spend' value={`${unifiedEstimate.spendAmount || requirement.amount} USDC`} />
+                  <Info label='Total Unified Debit' value={`${unifiedEstimate.totalDebit || unifiedEstimate.spendAmount || requirement.amount} USDC`} />
                 </div>
               )}
               {paymentTx && <p className='pay-muted'>Payment submitted. Waiting for on-chain settlement: {short(paymentTx, 10, 8)}</p>}

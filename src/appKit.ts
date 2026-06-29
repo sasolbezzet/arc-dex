@@ -534,40 +534,77 @@ async function prepareUnifiedBalanceSpend(args: {
   sourceChain?: UnifiedBalanceSourceChain
 }) {
   const receiveUnits = usdcUnits(args.receiveAmount)
-  let spendUnits = receiveUnits
-  let estimate: any = null
-  let allocations: any[] = []
-  let stable = false
-  const balance = !args.sourceChain || args.sourceChain === 'auto' ? await getUnifiedBalanceWithAppKit() : null
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const spendAmount = formatUsdcUnits(spendUnits)
+  const spendAmount = formatUsdcUnits(receiveUnits)
+  const balance = await getUnifiedBalanceWithAppKit()
+  const requestedChains = args.sourceChain && args.sourceChain !== 'auto'
+    ? [args.sourceChain]
+    : [...UNIFIED_BALANCE_EVM_CHAINS].sort((left, right) => sourcePriority(left, args.destinationChain) - sourcePriority(right, args.destinationChain))
+  let lastError: unknown = null
+  for (const chain of requestedChains) {
+    const available = usdcUnits(confirmedBalanceForChain(balance, chain))
+    if (available < receiveUnits) continue
+    const allocations = [{ chain, amount: spendAmount }]
+    try {
+      const estimate = await args.kit.unifiedBalance.estimateSpend({
+        from: { adapter: args.adapter, allocations },
+        to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
+        amount: spendAmount,
+        token: 'USDC',
+      } as any)
+      const feeUnits = totalFeeUnits(estimate?.fees)
+      if (available < receiveUnits + feeUnits) continue
+      return {
+        ...estimate,
+        requestedReceiveAmount: spendAmount,
+        spendAmount,
+        totalFee: formatUsdcUnits(feeUnits),
+        totalDebit: formatUsdcUnits(receiveUnits + feeUnits),
+        allocations,
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+  try {
     const from = await allocatedUnifiedBalanceFrom(args.adapter, spendAmount, args.sourceChain, balance)
-    allocations = from.allocations || []
-    estimate = await args.kit.unifiedBalance.estimateSpend({
+    const estimate = await args.kit.unifiedBalance.estimateSpend({
       from,
       to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
       amount: spendAmount,
       token: 'USDC',
     } as any)
-    const nextSpend = receiveUnits + totalFeeUnits(estimate?.fees)
-    if (nextSpend === spendUnits) {
-      stable = true
-      break
+    const feeUnits = totalFeeUnits(estimate?.fees)
+    const selected = new Set((from.allocations || []).map((item: any) => item.chain))
+    const available = UNIFIED_BALANCE_EVM_CHAINS
+      .filter(chain => selected.has(chain))
+      .reduce((total, chain) => total + usdcUnits(confirmedBalanceForChain(balance, chain)), 0n)
+    if (available < receiveUnits + feeUnits) throw new Error('Unified Balance cannot cover amount and Gateway fee.')
+    return {
+      ...estimate,
+      requestedReceiveAmount: spendAmount,
+      spendAmount,
+      totalFee: formatUsdcUnits(feeUnits),
+      totalDebit: formatUsdcUnits(receiveUnits + feeUnits),
+      allocations: from.allocations || [],
     }
-    spendUnits = nextSpend
-  }
-  if (!stable) throw new Error('Gateway fee estimate did not stabilize. Try again.')
-  return {
-    ...estimate,
-    requestedReceiveAmount: formatUsdcUnits(receiveUnits),
-    spendAmount: formatUsdcUnits(spendUnits),
-    totalFee: formatUsdcUnits(spendUnits - receiveUnits),
-    allocations,
+  } catch (error) {
+    if (lastError instanceof Error) throw lastError
+    throw error
   }
 }
 
+function sourcePriority(chain: Exclude<UnifiedBalanceSourceChain, 'auto'>, destinationChain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
+  if (chain === destinationChain) return 0
+  return ({ Base_Sepolia: 1, Arbitrum_Sepolia: 2, Arc_Testnet: 3, Ethereum_Sepolia: 4 })[chain]
+}
+
 function totalFeeUnits(fees: any) {
-  return (Array.isArray(fees) ? fees : []).reduce((total: bigint, fee: any) => total + usdcUnits(String(fee?.amount || '0')), 0n)
+  const entries = Array.isArray(fees) ? fees : []
+  const gasFeeIncludesForwarder = entries.some((fee: any) => fee?.type === 'gasFee')
+  return entries.reduce((total: bigint, fee: any) => {
+    if (gasFeeIncludesForwarder && fee?.type === 'forwarder') return total
+    return total + usdcUnits(String(fee?.amount || '0'))
+  }, 0n)
 }
 
 function confirmedBalanceForChain(balance: any, chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {

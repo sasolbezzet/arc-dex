@@ -128,7 +128,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
               <Info label='Chain' value={withdrawChain} />
               <Info label='Receive' value={`${withdrawAmount} USDC`} />
               <Info label='Gateway Fees' value={`${(withdraw as any).totalFee || '0'} USDC`} />
-              <Info label='Total Spend' value={`${(withdraw as any).spendAmount || withdrawAmount} USDC`} />
+              <Info label='Total Debit' value={`${(withdraw as any).totalDebit || (withdraw as any).spendAmount || withdrawAmount} USDC`} />
               <Info label='Status' value={(withdraw as any).txHash ? 'Submitted' : 'Estimate ready'} />
             </div>
           )}
