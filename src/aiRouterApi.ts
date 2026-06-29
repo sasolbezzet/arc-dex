@@ -15,6 +15,12 @@ export async function getAiRouterDelegateStatus(input: { ownerAddress: string; d
   return res.json()
 }
 
+export async function refreshAiRouterAutoPayReadiness(ownerAddress: string) {
+  const res = await fetch(`${API}/api/ai-router/auto-pay/readiness?ownerAddress=${encodeURIComponent(ownerAddress)}`)
+  if (!res.ok) throw new Error(await responseError(res))
+  return res.json()
+}
+
 export async function setAiRouterAutoPay(input: { ownerAddress: string; enabled: boolean; monthlyLimit?: string; delegateStatus?: string; delegateAddress?: string; delegateChains?: Array<{ chain: string; status: string }> }) {
   return safePost(API, '/api/ai-router/auto-pay', input)
 }

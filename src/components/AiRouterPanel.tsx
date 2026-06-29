@@ -13,6 +13,7 @@ import {
   getAiRouterDelegateStatus,
   getAiRouterModels,
   getAiRouterStatus,
+  refreshAiRouterAutoPayReadiness,
   revokeAiRouterApiKey,
   setAiRouterAutoPay,
 } from '../aiRouterApi'
@@ -64,6 +65,23 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   useEffect(() => {
     refresh().catch(err => setError(err instanceof Error ? err.message : 'Failed to load AI Router'))
   }, [address])
+
+  useEffect(() => {
+    const pending = (status?.autoPay?.delegateChains || status?.delegate?.chains || []).some((item: any) => item.status === 'pending')
+    if (!pending) return
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await refreshAiRouterAutoPayReadiness(address)
+        if (!result?.autoPay) return
+        setStatus((prev: any) => prev ? {
+          ...prev,
+          autoPay: result.autoPay,
+          delegate: { ...prev.delegate, status: result.autoPay.delegateStatus, chains: result.autoPay.delegateChains },
+        } : prev)
+      } catch {}
+    }, 10_000)
+    return () => window.clearInterval(timer)
+  }, [address, status?.autoPay?.delegateChains, status?.delegate?.chains])
 
   async function checkUnified() {
     const result = await run('balance', getUnifiedBalanceWithAppKit)
