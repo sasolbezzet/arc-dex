@@ -329,7 +329,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
             {(models.length ? models : [{ id: 'arcox/auto', owned_by: 'arcox' }]).map(model => (
               <div className='model-row' key={model.id}>
                 <strong>{model.id}</strong>
-                <span>{model.owned_by || 'provider'}</span>
+                <span>{model.price_usdc ? `${model.price_usdc} USDC/request` : model.owned_by || 'provider'}</span>
               </div>
             ))}
           </div>
