@@ -127,10 +127,12 @@ Open `/ai-router` or the “AI Router” menu.
 Flow:
 
 ```text
-Connect wallet -> Deposit USDC to Unified Balance -> Auto Pay ON -> Create API Key -> Use AI Router
+Connect wallet -> Deposit USDC to Unified Balance -> Auto Pay ON -> Create API Key -> Mint API Pass -> Use AI Router
 ```
 
 AI Router pays each AI request from the user’s Unified Balance through Auto Pay. It does not ask users for provider API keys and does not use NowPayments or sandbox payments.
+
+ARCOX API keys are not bearer credentials. Each new key is bound to a locked API Pass SBT on Arc Testnet. Hermes/OpenClaw should use the local `arcox-agent serve` proxy, which signs one short-lived session challenge with the owner or authorized session signer.
 
 Auto Pay authorization is tracked per funded source chain. Cross-chain x402 and AI Router spends estimate Gateway fees first and spend enough for the recipient to receive the exact service amount.
 
@@ -139,7 +141,7 @@ Agent Identity is auto-detected from Arc Testnet ERC-8004. AI Router remains ava
 OpenAI-compatible client config:
 
 ```text
-base_url = https://arc-dex-bice.vercel.app/v1
+base_url = http://127.0.0.1:8787/v1
 api_key = arx_sk_...
 model = arcox/auto
 ```

@@ -9,15 +9,18 @@ import {
 } from '../appKit'
 import { ensureAuthSession } from '../auth'
 import {
+  activateAiRouterApiKey,
   createAiRouterApiKey,
+  disableAiRouterApiKey,
+  finalizeAiRouterApiKeyRevocation,
   getAiRouterDelegateStatus,
   getAiRouterModels,
   getAiRouterStatus,
   refreshAiRouterAutoPayReadiness,
-  revokeAiRouterApiKey,
   setAiRouterAutoPay,
 } from '../aiRouterApi'
 import type { AgentIdentity } from '../services/agentIdentity'
+import { burnApiPass, mintApiPass } from '../services/apiPass'
 
 export function AiRouterPanel({ address, activeAgentIdentity }: { address: string; activeAgentIdentity: AgentIdentity | null }) {
   const [status, setStatus] = useState<any>(null)
@@ -200,17 +203,15 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
   async function createKey() {
     if (!await authReady()) return
-    const result = await run('apiKey', () => createAiRouterApiKey({ ownerAddress: address }))
-    if (result?.apiKey) {
-      setNewKey(result.apiKey)
-    }
-    if (result?.key) {
-      setStatus((prev: any) => prev ? {
-        ...prev,
-        apiKeys: [result.key, ...(prev.apiKeys || []).filter((key: any) => key.id !== result.key.id)],
-      } : prev)
-    }
+    const prepared = await runRequired('apiKey', () => createAiRouterApiKey({ ownerAddress: address }))
+    const result = await completePendingKey(prepared.key, prepared.apiPassAddress)
+    setNewKey(result.apiKey || '')
     await refresh()
+  }
+
+  async function completePendingKey(key: any, contractAddress = status?.apiPassAddress) {
+    const minted = await runRequired('apiKey', () => mintApiPass({ contractAddress, ownerAddress: address, apiKeyIdHash: key.apiKeyIdHash }))
+    return runRequired('apiKey', () => activateAiRouterApiKey({ ownerAddress: address, keyId: key.id, ...minted }))
   }
 
   const autoPay = status?.autoPay
@@ -224,6 +225,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const hasAutoPaySetup = Boolean(autoPay?.enabled) || (autoPay?.delegateChains || delegate?.chains || []).some((item: any) => ['ready', 'pending'].includes(normalizeAutoPayStatus(item.status)))
   const keys = status?.apiKeys || []
   const activeKeys = keys.filter((key: any) => key.status === 'active')
+  const visibleKeys = keys.filter((key: any) => key.status !== 'revoked')
   const usage = (status?.usageLogs || []).slice(0, 5)
 
   return (
@@ -293,21 +295,26 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
         <div className='glass sandbox-card'>
           <h3>3. API Key</h3>
-          <p className='pay-muted'>Use this key in Hermes, OpenClaw, or OpenAI-compatible clients.</p>
+          <p className='pay-muted'>Each key is protected by a non-transferable API Pass on Arc and a signed local session.</p>
           <div className='button-row wrap'>
             <button className='btn btn-primary' disabled={busy === 'apiKey'} onClick={createKey}>
               {busy === 'apiKey' ? 'Creating...' : 'Create API Key'}
             </button>
           </div>
           <div className='api-key-list'>
-            {activeKeys.length ? activeKeys.map((key: any) => (
+            {visibleKeys.length ? visibleKeys.map((key: any) => (
               <div className='api-key-row' key={key.id}>
                 <div>
                   <strong>{key.keyPreview}</strong>
-                  <span>{key.agentId ? `Agent #${key.agentId} · ` : 'Personal · '}{key.scopes?.join(', ')}</span>
+                  <span>{key.agentId ? `Agent #${key.agentId} · ` : 'Personal · '}Pass #{key.sbtTokenId || 'legacy'} · {key.status}</span>
                 </div>
                 <div className='button-row'>
-                  <button className='btn btn-secondary small danger' disabled={busy === 'delete'} onClick={() => deleteKey(key.id)}>Delete</button>
+                  {key.status === 'pending_mint' && <button className='btn btn-primary small' disabled={busy === 'apiKey'} onClick={async () => {
+                    const result = await completePendingKey(key)
+                    setNewKey(result.apiKey || '')
+                    await refresh()
+                  }}>Mint Pass</button>}
+                  <button className='btn btn-secondary small danger' disabled={busy === 'delete'} onClick={() => deleteKey(key)}>{key.status === 'disabled_pending_burn' ? 'Retry Burn' : 'Delete'}</button>
                 </div>
               </div>
             )) : <p className='pay-muted'>No active API key yet.</p>}
@@ -348,7 +355,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
         <div className='glass sandbox-card'>
           <h3>Client Config</h3>
           <div className='config-snippet'>
-            <code>base_url = https://arc-dex-bice.vercel.app/v1</code>
+            <code>base_url = http://127.0.0.1:8787/v1</code>
             <code>api_key = arx_sk_...</code>
             <code>model = arcox/auto</code>
           </div>
@@ -357,15 +364,15 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     </div>
   )
 
-  async function deleteKey(keyId: string) {
+  async function deleteKey(key: any) {
     if (!await authReady()) return
-    const result = await run('delete', () => revokeAiRouterApiKey({ ownerAddress: address, keyId }))
-    if (result?.ok) {
-      setStatus((prev: any) => prev ? {
-        ...prev,
-        apiKeys: (prev.apiKeys || []).map((key: any) => key.id === keyId ? { ...key, status: 'revoked' } : key),
-      } : prev)
+    if (key.status !== 'disabled_pending_burn') await runRequired('delete', () => disableAiRouterApiKey({ ownerAddress: address, keyId: key.id }))
+    let burnTxHash = ''
+    if (key.sbtTokenId && key.apiPassAddress) {
+      const burned = await runRequired('delete', () => burnApiPass({ contractAddress: key.apiPassAddress, ownerAddress: address, sbtTokenId: key.sbtTokenId }))
+      burnTxHash = burned.txHash
     }
+    await runRequired('delete', () => finalizeAiRouterApiKeyRevocation({ ownerAddress: address, keyId: key.id, burnTxHash }))
     await refresh()
   }
 

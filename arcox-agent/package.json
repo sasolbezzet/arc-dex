@@ -13,7 +13,9 @@
     "compile:router": "node scripts/compile-router.mjs",
     "deploy:router": "node scripts/deploy-router.mjs",
     "deploy:native-swap-bridge-router": "node scripts/deploy-native-swap-bridge-router.mjs",
-    "deploy:solana-router": "node scripts/deploy-solana-router.mjs"
+    "deploy:solana-router": "node scripts/deploy-solana-router.mjs",
+    "compile:api-pass": "node scripts/compile-api-pass.mjs",
+    "deploy:api-pass": "node scripts/deploy-api-pass.mjs"
   },
   "dependencies": {
     "viem": "^2.50.4"
