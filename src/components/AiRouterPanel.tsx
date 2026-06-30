@@ -242,6 +242,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
           <StatusPill label='Source Chains' value={sourceChainCount ? `${readyChainCount}/${sourceChainCount} ready` : 'Not ready'} tone={sourceChainCount > 0 && readyChainCount === sourceChainCount ? 'good' : 'warn'} />
           <StatusPill label='Readiness' value={autoPayReady ? 'Siap digunakan' : autoPayLabel} tone={autoPayReady ? 'good' : 'warn'} />
           <StatusPill label='API Key' value={activeKeys.length ? 'Ready' : 'Not created'} tone={activeKeys.length ? 'good' : 'warn'} />
+          <StatusPill label='Transaction Security' value={status?.security?.transactionWalletMatchRequired ? 'Wallet-bound' : 'Unavailable'} tone={status?.security?.transactionWalletMatchRequired ? 'good' : 'warn'} />
           <StatusPill label='Agent Identity' value={activeAgentIdentity ? `#${activeAgentIdentity.agentId}` : 'Personal'} tone={activeAgentIdentity ? 'good' : undefined} />
         </div>
       </section>
