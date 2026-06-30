@@ -13,6 +13,7 @@ import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
+import { createPublicClient, fallback, http } from 'viem'
 import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
@@ -137,8 +138,22 @@ export async function buildEvmAdapter() {
   if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
   return await createViemAdapterFromProvider({
     provider: window.ethereum,
+    getPublicClient: ({ chain }: any) => createPublicClient({
+      chain,
+      transport: fallback(publicRpcUrls(chain?.id).map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
+    }),
     capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet, BaseSepolia, EthereumSepolia, ArbitrumSepolia] },
   } as any)
+}
+
+function publicRpcUrls(chainId: number): string[] {
+  const urls: Record<number, string[]> = {
+    5042002: ['https://rpc.testnet.arc.network/'],
+    11155111: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://rpc.sepolia.org'],
+    84532: ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com'],
+    421614: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],
+  }
+  return urls[Number(chainId)] || ['https://rpc.testnet.arc.network/']
 }
 
 // ── Solana adapter ──────────────────────────────────────────────
