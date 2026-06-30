@@ -16,6 +16,7 @@ import { createSolanaRpc } from '@solana/kit'
 import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
+import { findChain } from './chains'
 
 declare global {
   interface Window {
@@ -439,7 +440,22 @@ async function allocatedUnifiedBalanceFrom(adapter: any, amount: string, sourceC
 async function ensureUnifiedEvmChain(adapter: any, chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
   const resolved = resolveChainIdentifier(chain)
   if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
-  await adapter.ensureChain(resolved)
+  try {
+    await adapter.ensureChain(resolved)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const config = findChain(chain)?.addParams
+    if (!config || !/rpc endpoint|failed to fetch|network|chain/i.test(message)) throw error
+    try {
+      await window.ethereum?.request?.({ method: 'wallet_addEthereumChain', params: [config] })
+      await window.ethereum?.request?.({ method: 'wallet_switchEthereumChain', params: [{ chainId: config.chainId }] })
+    } catch (recoveryError) {
+      const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
+      if (/reject|denied|cancel/i.test(recoveryMessage)) throw recoveryError
+      throw new Error(`${resolved.name} RPC endpoint is unavailable in the connected wallet. Update the chain RPC, then retry.`)
+    }
+    await adapter.ensureChain(resolved)
+  }
 }
 
 async function getConnectedEvmAddress() {

@@ -98,7 +98,7 @@ export const CHAINS: ChainCfg[] = [
       chainId: '0x66eee',
       chainName: 'Arbitrum Sepolia',
       nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
-      rpcUrls: ['https://sepolia-rollup.arbitrum.io/rpc'],
+      rpcUrls: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],
       blockExplorerUrls: ['https://sepolia.arbiscan.io'],
     },
   },
