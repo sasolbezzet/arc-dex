@@ -221,10 +221,12 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const [solanaAddress, setSolanaAddress] = useState<string|null>(null)
   const [solanaUsdc, setSolanaUsdc] = useState('0')
   useEffect(() => {
+    txHistory.setOwner(address)
     const unsub = txHistory.subscribe(() => setHistory(txHistory.list()))
+    queueMicrotask(() => setHistory(txHistory.list()))
     txHistory.syncRemote()
     return unsub
-  }, [])
+  }, [address])
   const refreshSolana = async () => {
     const provider = (window as any).solflare || (window as any).solana
     if (!provider) return

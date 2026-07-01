@@ -13,7 +13,7 @@ import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
 import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
 import { createSolanaRpc } from '@solana/kit'
-import { createPublicClient, fallback, http } from 'viem'
+import { createPublicClient, defineChain, fallback, http } from 'viem'
 import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
@@ -138,10 +138,23 @@ export async function buildEvmAdapter() {
   if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
   return await createViemAdapterFromProvider({
     provider: window.ethereum,
-    getPublicClient: ({ chain }: any) => createPublicClient({
-      chain,
-      transport: fallback(publicRpcUrls(chain?.id).map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
-    }),
+    getPublicClient: ({ chain }: any) => {
+      const chainId = Number(chain?.chainId ?? chain?.id)
+      if (!Number.isInteger(chainId) || chainId <= 0) throw new Error('Circle returned an invalid EVM chain ID.')
+      const rpcUrls = publicRpcUrls(chainId)
+      const viemChain = defineChain({
+        id: chainId,
+        name: String(chain?.name || chain?.chain || `Chain ${chainId}`),
+        nativeCurrency: chainId === Number(ARC_TESTNET_CHAIN_ID)
+          ? { name: 'USDC', symbol: 'USDC', decimals: 18 }
+          : { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        rpcUrls: { default: { http: rpcUrls } },
+      })
+      return createPublicClient({
+        chain: viemChain,
+        transport: fallback(rpcUrls.map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
+      })
+    },
     capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet, BaseSepolia, EthereumSepolia, ArbitrumSepolia] },
   } as any)
 }

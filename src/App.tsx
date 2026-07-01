@@ -17,6 +17,7 @@ import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
 import { ViewportPopover } from './components/ViewportPopover'
 import { listAgentIdentities, selectAgentIdentity, type AgentIdentity } from './services/agentIdentity'
+import { txHistory } from './txHistory'
 
 const API = ''
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
@@ -76,6 +77,10 @@ export default function App() {
   const [agentIdentities, setAgentIdentities] = useState<AgentIdentity[]>([])
   const [activeAgentIdentity, setActiveAgentIdentity] = useState<AgentIdentity|null>(null)
   const connectInFlightRef = useRef('')
+
+  useEffect(() => {
+    txHistory.setOwner(address)
+  }, [address])
 
   const routeMode = ['/pay/status', '/pay/sandbox'].includes(window.location.pathname)
     ? 'pay-console'

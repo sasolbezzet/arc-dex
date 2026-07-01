@@ -20,16 +20,26 @@ export type TxRecord = {
   dstDomain?: number
   error?: string
   note?: string
+  owner?: string
 }
 
 type ChainName = string
 
-const KEY = 'arc-dex.tx-history.v1'
+const KEY_PREFIX = 'arc-dex.tx-history.v2'
 const MAX_ITEMS = 100
+let activeOwner = ''
+
+function normalizeOwner(address?: string | null): string {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(address || '')) ? String(address).toLowerCase() : ''
+}
+
+function storageKey(): string {
+  return `${KEY_PREFIX}:${activeOwner || 'disconnected'}`
+}
 
 function read(): TxRecord[] {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(storageKey())
     if (!raw) return []
     const arr = JSON.parse(raw) as TxRecord[]
     return Array.isArray(arr) ? arr : []
@@ -40,7 +50,7 @@ function read(): TxRecord[] {
 
 function write(items: TxRecord[]) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(items.slice(0, MAX_ITEMS)))
+    localStorage.setItem(storageKey(), JSON.stringify(items.slice(0, MAX_ITEMS)))
     window.dispatchEvent(new CustomEvent('arc-dex.tx-history'))
   } catch {
     /* ignore quota */
@@ -70,10 +80,16 @@ async function postRemote(rec: TxRecord) {
 }
 
 export const txHistory = {
+  setOwner(address?: string | null) {
+    activeOwner = normalizeOwner(address)
+    window.dispatchEvent(new CustomEvent('arc-dex.tx-history'))
+  },
   list(): TxRecord[] {
     return read().sort((a, b) => b.ts - a.ts)
   },
   add(rec: TxRecord) {
+    if (!activeOwner) return
+    rec = { ...rec, owner: activeOwner }
     const items = read()
     items.unshift(rec)
     write(items)
@@ -96,11 +112,13 @@ export const txHistory = {
     const byId = new Map<string, TxRecord>()
     for (const item of [...read(), ...items]) {
       if (!item?.id) continue
+      if (item.owner && normalizeOwner(item.owner) !== activeOwner) continue
       byId.set(item.id, item)
     }
     write([...byId.values()].sort((a, b) => b.ts - a.ts))
   },
   async syncRemote() {
+    if (!activeOwner) return
     try {
       const resp = await fetch('/api/tx-history', { headers: authHeaders() })
       if (!resp.ok) return
@@ -108,14 +126,6 @@ export const txHistory = {
       if (Array.isArray(data?.history)) txHistory.merge(data.history)
     } catch {
       /* ignore */
-    }
-    try {
-      const resp = await fetch('http://127.0.0.1:8787/history')
-      if (!resp.ok) return
-      const data = await resp.json()
-      if (Array.isArray(data?.history)) txHistory.merge(data.history)
-    } catch {
-      /* local agent may be offline */
     }
   },
   subscribe(cb: () => void) {
