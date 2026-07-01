@@ -1,3 +1,5 @@
+import { safePost } from './api'
+
 export type InvoiceStatus = 'unpaid' | 'pending' | 'paid' | 'expired' | 'failed' | 'cancelled'
 
 export type InvoiceTimelineItem = {
@@ -128,4 +130,12 @@ export function markX402UnifiedBalanceSpendSubmitted(invoiceId: string, input: R
 
 export function getTreasuryStatus() {
   return request('/api/treasury/status')
+}
+
+export function estimateDelegatedUnifiedBalance(input: Record<string, unknown>) {
+  return safePost('', '/api/unified-balance/delegated/estimate', input)
+}
+
+export function spendDelegatedUnifiedBalance(input: Record<string, unknown>) {
+  return safePost('', '/api/unified-balance/delegated/spend', input)
 }

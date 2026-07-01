@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { getTreasuryStatus } from '../payApi'
+import { estimateDelegatedUnifiedBalance, getTreasuryStatus, spendDelegatedUnifiedBalance } from '../payApi'
 import { completeUnifiedBalanceWithdrawWithAppKit, depositUnifiedBalanceWithAppKit, getUnifiedBalanceWithAppKit, initiateUnifiedBalanceWithdrawWithAppKit } from '../appKit'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 
@@ -36,6 +36,30 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
       setError(e instanceof Error ? e.message : `${label} failed`)
     } finally {
       setBusy('')
+    }
+  }
+
+  async function estimateWithdraw() {
+    try {
+      return await initiateUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
+    } catch (error) {
+      if (!delegatedFallbackError(error)) throw error
+      const result = await estimateDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto' })
+      return { ...result.estimate, delegated: true }
+    }
+  }
+
+  async function completeWithdraw() {
+    if ((withdraw as any)?.delegated) {
+      const result = await spendDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto', maxTotalDebit: (withdraw as any)?.totalDebit })
+      return { ...result.spend, delegated: true }
+    }
+    try {
+      return await completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
+    } catch (error) {
+      if (!delegatedFallbackError(error)) throw error
+      const result = await spendDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto', maxTotalDebit: (withdraw as any)?.totalDebit })
+      return { ...result.spend, delegated: true }
     }
   }
 
@@ -115,10 +139,10 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
             <input className='input' value={withdrawAmount} onChange={event => { setWithdrawAmount(event.target.value); setWithdraw(null) }} />
           </label>
           <div className='button-row wrap'>
-            <button className='btn btn-secondary' disabled={busy === 'withdraw'} onClick={() => run('withdraw', () => initiateUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain }))}>
+            <button className='btn btn-secondary' disabled={busy === 'withdraw'} onClick={() => run('withdraw', estimateWithdraw)}>
               {busy === 'withdraw' ? 'Initiating...' : 'Initiate Withdraw'}
             </button>
-            <button className='btn btn-primary' disabled={busy === 'completeWithdraw' || !withdraw || !!(withdraw as any).txHash} onClick={() => run('completeWithdraw', () => completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain }))}>
+            <button className='btn btn-primary' disabled={busy === 'completeWithdraw' || !withdraw || !!(withdraw as any).txHash} onClick={() => run('completeWithdraw', completeWithdraw)}>
               {busy === 'completeWithdraw' ? 'Completing...' : 'Complete Withdraw'}
             </button>
           </div>
@@ -130,6 +154,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
               <Info label='Gateway Fees' value={`${(withdraw as any).totalFee || '0'} USDC`} />
               <Info label='Total Debit' value={`${(withdraw as any).totalDebit || (withdraw as any).spendAmount || withdrawAmount} USDC`} />
               <Info label='Status' value={(withdraw as any).txHash ? 'Submitted' : 'Estimate ready'} />
+              <Info label='Execution' value={(withdraw as any).delegated ? 'Auto Pay fallback' : 'Wallet'} />
             </div>
           )}
         </div>
@@ -152,6 +177,10 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
       </section>
     </div>
   )
+}
+
+function delegatedFallbackError(error: unknown) {
+  return /chainId.*NaN|Maximum retry attempts|Failed to fetch|Gateway API error|Request timed out|temporarily unavailable/i.test(error instanceof Error ? error.message : String(error))
 }
 
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

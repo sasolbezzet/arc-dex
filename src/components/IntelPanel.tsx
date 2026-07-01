@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { switchToArcTestnet } from '../domain/arcNetwork'
 import { ARC_TOKENS } from '../domain/tokens'
-import { estimateX402UnifiedBalance, markX402UnifiedBalanceSpendSubmitted } from '../payApi'
+import { estimateDelegatedUnifiedBalance, estimateX402UnifiedBalance, markX402UnifiedBalanceSpendSubmitted, spendDelegatedUnifiedBalance } from '../payApi'
 import { estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
 import type { AgentIdentity } from '../services/agentIdentity'
 
@@ -277,7 +277,17 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
       })
       setRequirement(result.invoice || result.x402)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unified Balance estimate failed.')
+      if (!delegatedFallbackError(e)) {
+        setError(e instanceof Error ? e.message : 'Unified Balance estimate failed.')
+      } else {
+        try {
+          const result = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain })
+          setUnifiedEstimate({ ...result.estimate, delegated: true })
+          setRequirement(result.invoice || requirement)
+        } catch (fallbackError) {
+          setError(fallbackError instanceof Error ? fallbackError.message : 'Unified Balance estimate failed.')
+        }
+      }
     } finally {
       setPaying(false)
     }
@@ -288,6 +298,15 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     setPaying(true)
     setError('')
     try {
+      if ((unifiedEstimate as any)?.delegated) {
+        const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.totalDebit })
+        const txHash = result.spend?.txHash || ''
+        setPaymentTx(txHash)
+        setWalletPaymentSubmitted(true)
+        setRequirement(result.invoice || requirement)
+        await checkInvoiceStatus()
+        return
+      }
       if (!unifiedEstimate) {
         await estimateUnifiedPayment()
         return
@@ -308,7 +327,19 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
       setRequirement(result.invoice || result.x402)
       await checkInvoiceStatus()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unified Balance spend failed.')
+      if (!delegatedFallbackError(e)) {
+        setError(e instanceof Error ? e.message : 'Unified Balance spend failed.')
+      } else {
+        try {
+          const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.totalDebit })
+          setPaymentTx(result.spend?.txHash || '')
+          setWalletPaymentSubmitted(true)
+          setRequirement(result.invoice || requirement)
+          await checkInvoiceStatus()
+        } catch (fallbackError) {
+          setError(fallbackError instanceof Error ? fallbackError.message : 'Unified Balance spend failed.')
+        }
+      }
     } finally {
       setPaying(false)
     }
@@ -444,6 +475,10 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
       </section>
     </div>
   )
+}
+
+function delegatedFallbackError(error: unknown) {
+  return /chainId.*NaN|Maximum retry attempts|Failed to fetch|Gateway API error|Request timed out|temporarily unavailable/i.test(error instanceof Error ? error.message : String(error))
 }
 
 function ServicePicker({ value, onChange }: { value: IntelType; onChange: (value: IntelType) => void }) {
