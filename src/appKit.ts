@@ -18,7 +18,7 @@ import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
-import { findConnectedWalletProvider, getWalletProvider } from './walletProvider'
+import { findConnectedWalletProvider, getWalletProvider, normalizeWalletProvider } from './walletProvider'
 
 declare global {
   interface Window {
@@ -139,7 +139,7 @@ export async function buildEvmAdapter() {
   const provider = await findConnectedWalletProvider()
   if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
   return await createViemAdapterFromProvider({
-    provider,
+    provider: normalizeWalletProvider(provider),
     getPublicClient: ({ chain }: any) => {
       const chainId = Number(chain?.chainId ?? chain?.id)
       if (!Number.isInteger(chainId) || chainId <= 0) throw new Error('Circle returned an invalid EVM chain ID.')
@@ -532,7 +532,7 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
   const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
   const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
     from: { adapter, allocations: plan.allocations },
-    to: { chain: args.chain, recipientAddress, useForwarder: true },
+    to: { adapter, chain: args.chain, recipientAddress },
     amount: plan.spendAmount,
     token: 'USDC',
   } as any))
@@ -568,7 +568,7 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
   const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
     from: { adapter, allocations: plan.allocations },
-    to: { chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
+    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
     amount: plan.spendAmount,
     token: 'USDC',
   } as any))
@@ -653,7 +653,7 @@ async function prepareUnifiedBalanceSpend(args: {
       await ensureUnifiedEvmChain(args.adapter, chain)
       const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
         from: { adapter: args.adapter, allocations },
-        to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
+        to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
         amount: spendAmount,
         token: 'USDC',
       } as any))
@@ -677,7 +677,7 @@ async function prepareUnifiedBalanceSpend(args: {
     if (firstSourceChain) await ensureUnifiedEvmChain(args.adapter, firstSourceChain)
     const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
       from,
-      to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
+      to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
       amount: spendAmount,
       token: 'USDC',
     } as any))

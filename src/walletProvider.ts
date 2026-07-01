@@ -8,6 +8,7 @@ export type Eip1193Provider = {
 
 let activeProvider: Eip1193Provider | null = null
 const announcedProviders: Eip1193Provider[] = []
+const normalizedProviders = new WeakMap<Eip1193Provider, Eip1193Provider>()
 
 function validProvider(value: any): value is Eip1193Provider {
   return Boolean(value && typeof value.request === 'function')
@@ -38,6 +39,55 @@ export function getWalletProvider(): Eip1193Provider | null {
 
 export function setWalletProvider(provider: Eip1193Provider | null) {
   activeProvider = provider
+}
+
+export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provider {
+  const cached = normalizedProviders.get(provider)
+  if (cached) return cached
+  const normalized: Eip1193Provider = {
+    request: async ({ method, params }) => {
+      const nextParams = normalizeRequestParams(method, params)
+      const result = await provider.request({ method, ...(nextParams === undefined ? {} : { params: nextParams }) })
+      if (method !== 'eth_chainId') return result
+      const chainId = normalizeChainId(result)
+      if (!chainId) throw new Error(`Wallet returned an invalid chain ID: ${String(result)}`)
+      return chainId
+    },
+    on: provider.on?.bind(provider),
+    removeListener: provider.removeListener?.bind(provider),
+    isOkxWallet: provider.isOkxWallet,
+    isBitKeep: provider.isBitKeep,
+  }
+  normalizedProviders.set(provider, normalized)
+  return normalized
+}
+
+function normalizeRequestParams(method: string, params: unknown[] | object | undefined) {
+  if (!Array.isArray(params) || !params.length) return params
+  if (method === 'wallet_switchEthereumChain' || method === 'wallet_addEthereumChain') {
+    const first = params[0] as Record<string, unknown> | undefined
+    const chainId = normalizeChainId(first?.chainId)
+    return first && chainId ? [{ ...first, chainId }, ...params.slice(1)] : params
+  }
+  if (method === 'eth_sendTransaction') {
+    const tx = params[0] as Record<string, unknown> | undefined
+    if (!tx || !('chainId' in tx)) return params
+    const chainId = normalizeChainId(tx.chainId)
+    const next = { ...tx }
+    if (chainId) next.chainId = chainId
+    else delete next.chainId
+    return [next, ...params.slice(1)]
+  }
+  return params
+}
+
+function normalizeChainId(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? `0x${value.toString(16)}` : null
+  if (typeof value === 'bigint') return value > 0n ? `0x${value.toString(16)}` : null
+  const text = String(value || '').trim()
+  if (/^0x[0-9a-f]+$/i.test(text)) return `0x${BigInt(text).toString(16)}`
+  if (/^[1-9]\d*$/.test(text)) return `0x${BigInt(text).toString(16)}`
+  return null
 }
 
 export async function findConnectedWalletProvider(expectedAddress?: string | null): Promise<Eip1193Provider | null> {
