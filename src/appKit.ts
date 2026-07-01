@@ -528,7 +528,7 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
   const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
   const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
     from: { adapter, allocations: plan.allocations },
-    to: { adapter, chain: args.chain, recipientAddress },
+    to: { chain: args.chain, recipientAddress, useForwarder: true },
     amount: plan.spendAmount,
     token: 'USDC',
   } as any))
@@ -564,7 +564,7 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
   const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
     from: { adapter, allocations: plan.allocations },
-    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
+    to: { chain: 'Arc_Testnet', recipientAddress: args.recipient, useForwarder: true },
     amount: plan.spendAmount,
     token: 'USDC',
   } as any))
@@ -646,9 +646,10 @@ async function prepareUnifiedBalanceSpend(args: {
     if (available < receiveUnits) continue
     const allocations = [{ chain, amount: spendAmount }]
     try {
+      await ensureUnifiedEvmChain(args.adapter, chain)
       const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
         from: { adapter: args.adapter, allocations },
-        to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
+        to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
         amount: spendAmount,
         token: 'USDC',
       } as any))
@@ -668,9 +669,11 @@ async function prepareUnifiedBalanceSpend(args: {
   }
   try {
     const from = await allocatedUnifiedBalanceFrom(args.adapter, spendAmount, args.sourceChain, balance)
+    const firstSourceChain = from.allocations?.[0]?.chain
+    if (firstSourceChain) await ensureUnifiedEvmChain(args.adapter, firstSourceChain)
     const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
       from,
-      to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
+      to: { chain: args.destinationChain, recipientAddress: args.recipientAddress, useForwarder: true },
       amount: spendAmount,
       token: 'USDC',
     } as any))
