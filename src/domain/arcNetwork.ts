@@ -1,3 +1,5 @@
+import { getWalletProvider } from '../walletProvider'
+
 export const ARC_TESTNET_CHAIN_ID = '0x4cef52'
 
 export const ARC_TESTNET_ADD_PARAMS = {
@@ -17,15 +19,16 @@ declare global {
 }
 
 export async function switchToArcTestnet() {
-  if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
+  const provider = getWalletProvider()
+  if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
   try {
-    await window.ethereum.request({
+    await provider.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: ARC_TESTNET_CHAIN_ID }],
     })
   } catch (e: any) {
     if (e?.code !== 4902 && e?.code !== -32603) throw e
-    await window.ethereum.request({
+    await provider.request({
       method: 'wallet_addEthereumChain',
       params: [ARC_TESTNET_ADD_PARAMS],
     })

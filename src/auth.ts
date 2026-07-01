@@ -1,5 +1,6 @@
 import { safePost } from './api'
 import { getAddress } from 'viem'
+import { findConnectedWalletProvider } from './walletProvider'
 
 const STORAGE_KEY = 'arc-dex-auth'
 
@@ -59,10 +60,11 @@ export async function ensureAuthSession(address: string, forceNew = false) {
   const normalized = checksumAddress.toLowerCase()
   const existing = readSession()
   if (!forceNew && existing?.token && existing.address.toLowerCase() === normalized) return existing.token
-  if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi')
+  const provider = await findConnectedWalletProvider(checksumAddress)
+  if (!provider) throw new Error('Wallet EVM tidak terdeteksi')
   const issuedAt = new Date().toISOString()
   const message = buildAuthMessage(checksumAddress, issuedAt)
-  const signature = await window.ethereum.request({
+  const signature = await provider.request({
     method: 'personal_sign',
     params: [message, checksumAddress],
   })

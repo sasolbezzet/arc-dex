@@ -18,6 +18,7 @@ import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
+import { findConnectedWalletProvider, getWalletProvider } from './walletProvider'
 
 declare global {
   interface Window {
@@ -135,9 +136,10 @@ export type AppKitChain =
 
 // ── EVM adapter ─────────────────────────────────────────────────
 export async function buildEvmAdapter() {
-  if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
+  const provider = await findConnectedWalletProvider()
+  if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
   return await createViemAdapterFromProvider({
-    provider: window.ethereum,
+    provider,
     getPublicClient: ({ chain }: any) => {
       const chainId = Number(chain?.chainId ?? chain?.id)
       if (!Number.isInteger(chainId) || chainId <= 0) throw new Error('Circle returned an invalid EVM chain ID.')
@@ -313,7 +315,7 @@ export async function swapEoaWithAppKit(args: {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
-  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
+  const accounts = await getWalletProvider()?.request({ method: 'eth_requestAccounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
   const from = { adapter, chain: SwapChain.Arc_Testnet }
@@ -365,7 +367,7 @@ export async function estimateEoaSwapWithAppKit(args: {
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
-  const accounts = await window.ethereum?.request?.({ method: 'eth_accounts' })
+  const accounts = await getWalletProvider()?.request({ method: 'eth_accounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
   const from = { adapter, chain: SwapChain.Arc_Testnet }
@@ -469,16 +471,17 @@ async function ensureUnifiedEvmChain(_adapter: any, chain: Exclude<UnifiedBalanc
   const resolved = resolveChainIdentifier(chain)
   if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
   const config = findChain(chain)?.addParams
-  if (!config || !window.ethereum?.request) throw new Error(`Connect an EVM wallet before using ${resolved.name}.`)
+  const provider = getWalletProvider()
+  if (!config || !provider) throw new Error(`Connect an EVM wallet before using ${resolved.name}.`)
   try {
-    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: config.chainId }] })
+    await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: config.chainId }] })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const code = Number((error as any)?.code)
     if (code !== 4902 && !/unrecognized chain|not added|rpc endpoint|failed to fetch|network/i.test(message)) throw error
     try {
-      await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [config] })
-      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: config.chainId }] })
+      await provider.request({ method: 'wallet_addEthereumChain', params: [config] })
+      await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: config.chainId }] })
     } catch (recoveryError) {
       const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
       if (/reject|denied|cancel/i.test(recoveryMessage)) throw recoveryError
@@ -488,7 +491,8 @@ async function ensureUnifiedEvmChain(_adapter: any, chain: Exclude<UnifiedBalanc
 }
 
 async function getConnectedEvmAddress() {
-  const accounts = await window.ethereum?.request?.({ method: 'eth_requestAccounts' })
+  const provider = await findConnectedWalletProvider()
+  const accounts = await provider?.request({ method: 'eth_requestAccounts' })
   const address = accounts?.[0]
   if (!/^0x[a-fA-F0-9]{40}$/.test(String(address || ''))) throw new Error('Connect EVM wallet first.')
   return address

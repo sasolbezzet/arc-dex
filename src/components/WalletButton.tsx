@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
 import { getAuthToken } from '../auth'
+import { findConnectedWalletProvider, getWalletProvider, setWalletProvider } from '../walletProvider'
 declare global { interface Window { ethereum?: any } }
 interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void }
 export function WalletButton({ address, onConnect, onDisconnect }: Props) {
@@ -14,21 +15,28 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
     onDisconnectRef.current = onDisconnect
   })
   useEffect(() => {
-    if (!window.ethereum) return
-    window.ethereum.request({ method: 'eth_accounts' }).then((a: string[]) => {
-      if (a[0] && getAuthToken()) onConnectRef.current(a[0])
-    })
+    let provider = getWalletProvider()
+    let disposed = false
     const handler = (a: string[]) => { if (a[0]) onConnectRef.current(a[0]); else onDisconnectRef.current() }
-    window.ethereum.on('accountsChanged', handler)
+    findConnectedWalletProvider().then(async active => {
+      if (disposed || !active) return
+      provider = active
+      const accounts = await active.request({ method: 'eth_accounts' })
+      if (accounts?.[0] && getAuthToken()) onConnectRef.current(accounts[0])
+      active.on?.('accountsChanged', handler)
+    }).catch(() => {})
     return () => {
-      window.ethereum?.removeListener?.('accountsChanged', handler)
+      disposed = true
+      provider?.removeListener?.('accountsChanged', handler)
     }
   }, [])
   const connect = async () => {
     setError(''); setLoading(true)
-    if (!window.ethereum) { setError(t('wallet.installMetamask')); setLoading(false); return }
+    const provider = getWalletProvider()
+    if (!provider) { setError(t('wallet.installMetamask')); setLoading(false); return }
     try {
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
+      const accounts = await provider.request({ method: 'eth_requestAccounts' })
+      setWalletProvider(provider)
       await onConnect(accounts[0])
     } catch(e:any) { setError(e?.message || t('wallet.connectFailed')) }
   setLoading(false)
