@@ -29,18 +29,6 @@ export async function createAiRouterApiKey(input: { ownerAddress: string; label?
   return safePost(API, '/api/ai-router/api-keys', input)
 }
 
-export async function activateAiRouterApiKey(input: { ownerAddress: string; keyId: string; sbtTokenId: string; mintTxHash: string }) {
-  return safePost(API, `/api/ai-router/api-keys/${encodeURIComponent(input.keyId)}/activate`, input)
-}
-
-export async function disableAiRouterApiKey(input: { ownerAddress: string; keyId: string }) {
-  return safePost(API, `/api/ai-router/api-keys/${encodeURIComponent(input.keyId)}/disable`, { ownerAddress: input.ownerAddress })
-}
-
-export async function finalizeAiRouterApiKeyRevocation(input: { ownerAddress: string; keyId: string; burnTxHash?: string }) {
-  return safePost(API, `/api/ai-router/api-keys/${encodeURIComponent(input.keyId)}/finalize-revoke`, input)
-}
-
 export async function revokeAiRouterApiKey(input: { ownerAddress: string; keyId: string }) {
   return safePost(API, `/api/ai-router/api-keys/${encodeURIComponent(input.keyId)}/revoke`, { ownerAddress: input.ownerAddress })
 }
