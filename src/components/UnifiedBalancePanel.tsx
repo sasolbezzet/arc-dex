@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { estimateDelegatedUnifiedBalance, getTreasuryStatus, spendDelegatedUnifiedBalance } from '../payApi'
+import { getTreasuryStatus } from '../payApi'
 import { completeUnifiedBalanceWithdrawWithAppKit, depositUnifiedBalanceWithAppKit, getUnifiedBalanceWithAppKit, initiateUnifiedBalanceWithdrawWithAppKit } from '../appKit'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 
@@ -40,31 +40,11 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
   }
 
   async function estimateWithdraw() {
-    try {
-      return await initiateUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
-    } catch (error) {
-      if (!delegatedFallbackError(error)) throw error
-      const result = await estimateDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto' })
-      return { ...result.estimate, delegated: true }
-    }
+    return initiateUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
   }
 
   async function completeWithdraw() {
-    if ((withdraw as any)?.delegated && (withdraw as any)?.maxTotalDebit) {
-      const result = await spendDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto', maxTotalDebit: (withdraw as any)?.maxTotalDebit || (withdraw as any)?.totalDebit })
-      return { ...result.spend, delegated: true }
-    }
-    if ((withdraw as any)?.delegated) {
-      const result = await estimateDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto' })
-      return { ...result.estimate, delegated: true }
-    }
-    try {
-      return await completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
-    } catch (error) {
-      if (!delegatedFallbackError(error)) throw error
-      const result = await estimateDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto' })
-      return { ...result.estimate, delegated: true }
-    }
+    return completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
   }
 
   return (
@@ -127,6 +107,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
         <div className='glass sandbox-card'>
           <h3>Withdraw USDC</h3>
           <p className='pay-muted'>Review the amount and fee, then send USDC to your connected wallet.</p>
+          <div className='inline-warning'>Your wallet approval is required to complete every withdrawal.</div>
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>To Network</span>
@@ -178,10 +159,6 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
       </section>
     </div>
   )
-}
-
-function delegatedFallbackError(error: unknown) {
-  return /chainId.*NaN|Maximum retry attempts|Failed to fetch|Gateway API error|Request timed out|temporarily unavailable/i.test(error instanceof Error ? error.message : String(error))
 }
 
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

@@ -25,14 +25,14 @@ const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 const NAV = [
   { id: 'intro', path: '/', label: 'Home', icon: 'IN' },
   { id: 'portfolio', path: '/portfolio', label: 'Balances', icon: 'PF' },
-  { id: 'swap', path: '/swap', label: 'Exchange', icon: 'SW' },
-  { id: 'bridge', path: '/bridge', label: 'Move Funds', icon: 'BR' },
+  { id: 'swap', path: '/swap', label: 'Swap', icon: 'SW' },
+  { id: 'bridge', path: '/bridge', label: 'Bridge', icon: 'BR' },
   { id: 'send', path: '/send', label: 'Send', icon: 'SE' },
   { id: 'receive', path: '/receive', label: 'Request', icon: 'RC' },
-  { id: 'unified', path: '/unified-balance', label: 'Deposits', icon: 'UB' },
+  { id: 'unified', path: '/unified-balance', label: 'Unified Balance', icon: 'UB' },
   { id: 'ai-router', path: '/ai-router', label: 'AI Router', icon: 'AR' },
   { id: 'agentic', path: '/agent-jobs', label: 'Jobs', icon: 'AI' },
-  { id: 'intel', path: '/intel', label: 'Insights', icon: 'IX' },
+  { id: 'intel', path: '/intel', label: 'x402', icon: 'IX' },
   { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
   { id: 'docs', path: '/docs', label: 'Docs', icon: 'DX' },
 ] as const
