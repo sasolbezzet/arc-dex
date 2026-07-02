@@ -679,8 +679,12 @@ async function prepareUnifiedBalanceSpend(args: {
 }) {
   const receiveUnits = usdcUnits(args.receiveAmount)
   const spendAmount = formatUsdcUnits(receiveUnits)
-  const evmAdapter = await buildEvmAdapter()
-  const destinationAdapter = args.destinationChain === 'Solana_Devnet' ? await buildSolanaAdapter() : evmAdapter
+  let evmAdapter: any = null
+  const getEvmAdapter = async () => {
+    if (!evmAdapter) evmAdapter = await buildEvmAdapter()
+    return evmAdapter
+  }
+  const destinationAdapter = args.destinationChain === 'Solana_Devnet' ? await buildSolanaAdapter() : await getEvmAdapter()
   const balance = await getUnifiedBalanceWithAppKit()
   const requestedChains = args.sourceChain && args.sourceChain !== 'auto'
     ? [args.sourceChain]
@@ -691,7 +695,7 @@ async function prepareUnifiedBalanceSpend(args: {
     if (available < receiveUnits) continue
     const allocations = [{ chain, amount: spendAmount }]
     try {
-      const sourceAdapter = chain === 'Solana_Devnet' ? await buildSolanaUnifiedSpendAdapter() : evmAdapter
+      const sourceAdapter = chain === 'Solana_Devnet' ? await buildSolanaUnifiedSpendAdapter() : await getEvmAdapter()
       if (chain !== 'Solana_Devnet') await ensureUnifiedEvmChain(sourceAdapter, chain)
       const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
         from: { adapter: sourceAdapter, allocations },
@@ -716,7 +720,10 @@ async function prepareUnifiedBalanceSpend(args: {
   }
   try {
     const allocations = unifiedBalanceAllocations(spendAmount, args.sourceChain, balance)
-    const sources = await unifiedBalanceSources(allocations, evmAdapter)
+    const sources = await unifiedBalanceSources(
+      allocations,
+      allocations.some(item => item.chain !== 'Solana_Devnet') ? await getEvmAdapter() : null,
+    )
     const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
       from: sources,
       to: { adapter: destinationAdapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
