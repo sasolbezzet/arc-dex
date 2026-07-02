@@ -51,14 +51,14 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
 
   async function completeWithdraw() {
     if ((withdraw as any)?.delegated) {
-      const result = await spendDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto', maxTotalDebit: (withdraw as any)?.totalDebit })
+      const result = await spendDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto', maxTotalDebit: (withdraw as any)?.maxTotalDebit || (withdraw as any)?.totalDebit })
       return { ...result.spend, delegated: true }
     }
     try {
       return await completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
     } catch (error) {
       if (!delegatedFallbackError(error)) throw error
-      const result = await spendDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto', maxTotalDebit: (withdraw as any)?.totalDebit })
+      const result = await spendDelegatedUnifiedBalance({ purpose: 'withdraw', amount: withdrawAmount, destinationChain: withdrawChain, sourceChain: 'auto', maxTotalDebit: (withdraw as any)?.maxTotalDebit || (withdraw as any)?.totalDebit })
       return { ...result.spend, delegated: true }
     }
   }
@@ -153,6 +153,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
               <Info label='Receive' value={`${withdrawAmount} USDC`} />
               <Info label='Gateway Fees' value={`${(withdraw as any).totalFee || '0'} USDC`} />
               <Info label='Total Debit' value={`${(withdraw as any).totalDebit || (withdraw as any).spendAmount || withdrawAmount} USDC`} />
+              {(withdraw as any).maxTotalDebit && <Info label='Max Approved Debit' value={`${(withdraw as any).maxTotalDebit} USDC`} />}
               <Info label='Status' value={(withdraw as any).txHash ? 'Submitted' : 'Estimate ready'} />
               <Info label='Execution' value={(withdraw as any).delegated ? 'Auto Pay fallback' : 'Wallet'} />
             </div>

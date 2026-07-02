@@ -299,7 +299,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     setError('')
     try {
       if ((unifiedEstimate as any)?.delegated) {
-        const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.totalDebit })
+        const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.maxTotalDebit || (unifiedEstimate as any)?.totalDebit })
         const txHash = result.spend?.txHash || ''
         setPaymentTx(txHash)
         setWalletPaymentSubmitted(true)
@@ -331,7 +331,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
         setError(e instanceof Error ? e.message : 'Unified Balance spend failed.')
       } else {
         try {
-          const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.totalDebit })
+          const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.maxTotalDebit || (unifiedEstimate as any)?.totalDebit })
           setPaymentTx(result.spend?.txHash || '')
           setWalletPaymentSubmitted(true)
           setRequirement(result.invoice || requirement)
@@ -459,6 +459,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
                   <Info label='Invoice Receive' value={`${unifiedEstimate.requestedReceiveAmount || requirement.amount} USDC`} />
                   <Info label='Gateway Fees' value={`${unifiedEstimate.totalFee || '0'} USDC`} />
                   <Info label='Total Unified Debit' value={`${unifiedEstimate.totalDebit || unifiedEstimate.spendAmount || requirement.amount} USDC`} />
+                  {unifiedEstimate.maxTotalDebit && <Info label='Max Approved Debit' value={`${unifiedEstimate.maxTotalDebit} USDC`} />}
                 </div>
               )}
               {paymentTx && <p className='pay-muted'>Payment submitted. Waiting for on-chain settlement: {short(paymentTx, 10, 8)}</p>}
