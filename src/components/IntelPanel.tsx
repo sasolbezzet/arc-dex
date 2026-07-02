@@ -299,6 +299,12 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     setError('')
     try {
       if ((unifiedEstimate as any)?.delegated) {
+        if (!(unifiedEstimate as any)?.maxTotalDebit) {
+          const estimate = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain })
+          setUnifiedEstimate({ ...estimate.estimate, delegated: true })
+          setRequirement(estimate.invoice || requirement)
+          return
+        }
         const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.maxTotalDebit || (unifiedEstimate as any)?.totalDebit })
         const txHash = result.spend?.txHash || ''
         setPaymentTx(txHash)
@@ -331,11 +337,9 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
         setError(e instanceof Error ? e.message : 'Unified Balance spend failed.')
       } else {
         try {
-          const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.maxTotalDebit || (unifiedEstimate as any)?.totalDebit })
-          setPaymentTx(result.spend?.txHash || '')
-          setWalletPaymentSubmitted(true)
+          const result = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain })
+          setUnifiedEstimate({ ...result.estimate, delegated: true })
           setRequirement(result.invoice || requirement)
-          await checkInvoiceStatus()
         } catch (fallbackError) {
           setError(fallbackError instanceof Error ? fallbackError.message : 'Unified Balance spend failed.')
         }
@@ -356,17 +360,17 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
   return (
     <div className='pay-page'>
       <section className='glass sandbox-hero'>
-        <div className='docs-kicker'>ARCOX Intel</div>
-        <h2>Arkham Intelligence via x402</h2>
-        <p>Choose a paid Intel service, pay the Arc USDC invoice with an attached transaction memo, then ARCOX API unlocks the Arkham result after the memo payment is detected.</p>
-        <div className='inline-warning'>Informational only. Not financial advice. Arkham API calls are served by ARCOX API; the browser never receives the Arkham API key.</div>
+        <div className='docs-kicker'>ARCOX Insights</div>
+        <h2>Wallet and market insights</h2>
+        <p>Choose a report, review the price, pay with USDC, and view the result.</p>
+        <div className='inline-warning'>Information only. Not financial advice.</div>
       </section>
 
       {error && <div className='inline-error'>{error}</div>}
 
       <section className='sandbox-grid'>
         <div className='glass sandbox-card'>
-          <h3>Analysis Request</h3>
+          <h3>Choose a Report</h3>
           <ServicePicker
             value={type}
             onChange={next => {
@@ -388,26 +392,25 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
           {selected.needsValue !== false && <Field label={selected.inputLabel || 'Input'} value={value} onChange={setValue} placeholder={selected.placeholder || selected.inputLabel || ''} />}
           <div className='pay-grid'>
             <Info label='Price' value={`${selected.price} USDC`} />
-            <Info label='Payment Network' value='Arc Testnet USDC' />
-            <Info label='Service Group' value={selected.group} />
-            <Info label='Backend Route' value={requestPath} mono />
+            <Info label='Pay With' value='USDC on Arc Testnet' />
+            <Info label='Category' value={selected.group} />
           </div>
           <button className='btn btn-primary' onClick={() => analyze()} disabled={loading}>{loading ? 'Analyzing...' : 'Analyze'}</button>
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>x402 Payment</h3>
+          <h3>Payment</h3>
           {requirement ? (
             <>
-              <p className='pay-muted'>Pay with the wallet button so ARCOX can attach the invoice memo on-chain. Manual txHash unlocks are not accepted.</p>
+              <p className='pay-muted'>Choose how to pay. Your report opens after payment is confirmed.</p>
               <div className='sandbox-field'>
                 <span>Payment Method</span>
                 <div className='payment-method-picker' role='radiogroup' aria-label='Payment method'>
                   <button type='button' role='radio' aria-checked={paymentMethod === 'arc'} className={paymentMethod === 'arc' ? 'active' : ''} onClick={() => setPaymentMethod('arc')}>
-                    <strong>Arc USDC</strong><small>Wallet memo payment</small>
+                    <strong>Arc USDC</strong><small>Pay from wallet</small>
                   </button>
                   <button type='button' role='radio' aria-checked={paymentMethod === 'unified'} className={paymentMethod === 'unified' ? 'active' : ''} onClick={() => setPaymentMethod('unified')}>
-                    <strong>Unified Balance</strong><small>Circle Gateway spend</small>
+                    <strong>Unified Balance</strong><small>Pay from deposited USDC</small>
                   </button>
                 </div>
               </div>
@@ -417,7 +420,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
                 <Info label='Recipient' value={requirement.recipient || '-'} mono />
                 <Info label='Exact Amount' value={`${requirement.uniqueAmount || requirement.amount} ${requirement.asset || 'USDC'}`} />
                 <Info label='Network' value={requirement.network || '-'} />
-                <Info label='Settlement' value={requirement.settlementStatus || requirement.status || '-'} />
+                <Info label='Payment Status' value={requirement.settlementStatus || requirement.status || '-'} />
                 <Info label='Payment ID' value={requirement.paymentId || '-'} mono />
                 <Info label='Resource' value={requirement.resource || '-'} mono />
                 <Info label='Memo ID' value={requirement.memoId || '-'} mono />
@@ -455,11 +458,10 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
               )}
               {unifiedEstimate && (
                 <div className='pay-grid'>
-                  <Info label='UB Route' value='Gateway spend to Arc Testnet' />
-                  <Info label='Invoice Receive' value={`${unifiedEstimate.requestedReceiveAmount || requirement.amount} USDC`} />
-                  <Info label='Gateway Fees' value={`${unifiedEstimate.totalFee || '0'} USDC`} />
-                  <Info label='Total Unified Debit' value={`${unifiedEstimate.totalDebit || unifiedEstimate.spendAmount || requirement.amount} USDC`} />
-                  {unifiedEstimate.maxTotalDebit && <Info label='Max Approved Debit' value={`${unifiedEstimate.maxTotalDebit} USDC`} />}
+                  <Info label='Report Price' value={`${unifiedEstimate.requestedReceiveAmount || requirement.amount} USDC`} />
+                  <Info label='Network Fee' value={`${unifiedEstimate.totalFee || '0'} USDC`} />
+                  <Info label='Estimated Total' value={`${unifiedEstimate.totalDebit || unifiedEstimate.spendAmount || requirement.amount} USDC`} />
+                  {unifiedEstimate.maxTotalDebit && <Info label='Maximum Total' value={`${unifiedEstimate.maxTotalDebit} USDC`} />}
                 </div>
               )}
               {paymentTx && <p className='pay-muted'>Payment submitted. Waiting for on-chain settlement: {short(paymentTx, 10, 8)}</p>}

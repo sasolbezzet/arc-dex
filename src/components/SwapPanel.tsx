@@ -106,7 +106,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   }
   const activeBalances = source === 'circle' ? balances : eoaBalances
   const maxBal = activeBalances[tokenIn] ? parseFloat(activeBalances[tokenIn]).toFixed(4) : '0'
-  const walletLabel = source === 'circle' ? 'Circle Wallet' : 'EOA MetaMask'
+  const walletLabel = source === 'circle' ? 'Circle Wallet' : 'Personal Wallet'
   const walletAddr = source === 'circle' ? circleWallet?.address : address
   const swapDisabled = !amountIn || !quote || quoteLoading || loading || tokenIn === tokenOut || (source === 'circle' && !circleWallet)
   const swapLabel = loading
@@ -120,7 +120,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
         <button onClick={()=>setSource('circle')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:source==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:source==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>Circle Wallet</button>
-        <button onClick={()=>setSource('eoa')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:source==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:source==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>EOA Wallet</button>
+        <button onClick={()=>setSource('eoa')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:source==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:source==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>Personal Wallet</button>
       </div>
       <div>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>

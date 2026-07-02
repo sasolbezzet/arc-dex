@@ -23,16 +23,16 @@ const API = ''
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 
 const NAV = [
-  { id: 'intro', path: '/', label: 'Intro', icon: 'IN' },
-  { id: 'portfolio', path: '/portfolio', label: 'Portfolio', icon: 'PF' },
-  { id: 'swap', path: '/swap', label: 'Swap', icon: 'SW' },
-  { id: 'bridge', path: '/bridge', label: 'Bridge', icon: 'BR' },
+  { id: 'intro', path: '/', label: 'Home', icon: 'IN' },
+  { id: 'portfolio', path: '/portfolio', label: 'Balances', icon: 'PF' },
+  { id: 'swap', path: '/swap', label: 'Exchange', icon: 'SW' },
+  { id: 'bridge', path: '/bridge', label: 'Move Funds', icon: 'BR' },
   { id: 'send', path: '/send', label: 'Send', icon: 'SE' },
-  { id: 'receive', path: '/receive', label: 'Receive', icon: 'RC' },
-  { id: 'unified', path: '/unified-balance', label: 'Unified', icon: 'UB' },
+  { id: 'receive', path: '/receive', label: 'Request', icon: 'RC' },
+  { id: 'unified', path: '/unified-balance', label: 'Deposits', icon: 'UB' },
   { id: 'ai-router', path: '/ai-router', label: 'AI Router', icon: 'AR' },
-  { id: 'agentic', path: '/agent-jobs', label: 'Agent Jobs', icon: 'AI' },
-  { id: 'intel', path: '/intel', label: 'Intel', icon: 'IX' },
+  { id: 'agentic', path: '/agent-jobs', label: 'Jobs', icon: 'AI' },
+  { id: 'intel', path: '/intel', label: 'Insights', icon: 'IX' },
   { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
   { id: 'docs', path: '/docs', label: 'Docs', icon: 'DX' },
 ] as const
@@ -294,7 +294,7 @@ export default function App() {
     : routeMode === 'pay-checkout'
       ? <PayCheckout address={address} onConnect={handleConnect} onRefresh={refresh} />
       : page === 'intro'
-        ? <IntroPage address={address} walletSetupError={walletSetupError} navigate={navigate} t={t} />
+        ? <IntroPage walletSetupError={walletSetupError} navigate={navigate} t={t} />
         : page === 'docs'
           ? <DocsPanel />
           : !address
@@ -394,18 +394,18 @@ export default function App() {
   )
 }
 
-function IntroPage({ address, walletSetupError, navigate, t }: { address: string|null; walletSetupError: string; navigate: (page: PageId) => void; t: any }) {
+function IntroPage({ walletSetupError, navigate, t }: { walletSetupError: string; navigate: (page: PageId) => void; t: any }) {
   return (
     <div className='page-grid intro-grid'>
       <section className='glass welcome-card'>
         <div className='welcome-logo'><ArcoxLogo /></div>
-        <h2>{address ? 'ARCOX DEX Console' : t('app.welcomeTitle')}</h2>
-        <p>{address ? 'Swap, bridge, send, receive, ARCOX Pay, and agent workflows on Arc Testnet.' : t('app.welcomeCopy')}</p>
+        <div className='intro-eyebrow'>ARCOX DEX</div>
+        <h2>{t('app.homeTitle')}</h2>
+        <p>{t('app.homeCopy')}</p>
         {[
           ['1', t('app.stepConnectTitle'), t('app.stepConnectDesc')],
-          ['2', t('app.stepCircleTitle'), t('app.stepCircleDesc')],
-          ['3', t('app.stepFundTitle'), t('app.stepFundDesc')],
-          ['4', t('app.stepTradeTitle'), t('app.stepTradeDesc')],
+          ['2', t('app.stepFundTitle'), t('app.stepFundDesc')],
+          ['3', t('app.stepTradeTitle'), t('app.stepTradeDesc')],
         ].map(([n,title,desc])=>(
           <div key={n} className='welcome-step'>
             <div className='welcome-step-number'>{n}</div>
@@ -415,12 +415,14 @@ function IntroPage({ address, walletSetupError, navigate, t }: { address: string
         {walletSetupError && <div className='inline-error'>{walletSetupError}</div>}
       </section>
       <section className='glass action-board'>
-        <h3>Quick Actions</h3>
-        <button onClick={() => navigate('portfolio')}>Portfolio</button>
-        <button onClick={() => navigate('swap')}>Swap</button>
-        <button onClick={() => navigate('bridge')}>Bridge</button>
-        <button onClick={() => navigate('send')}>Send</button>
-        <button onClick={() => navigate('receive')}>Receive / Invoice</button>
+        <div className='intro-eyebrow'>{t('app.startHere')}</div>
+        <h3>{t('app.chooseAction')}</h3>
+        <button onClick={() => navigate('portfolio')}><strong>{t('app.actionBalances')}</strong><span>{t('app.actionBalancesDesc')}</span></button>
+        <button onClick={() => navigate('swap')}><strong>{t('app.actionExchange')}</strong><span>{t('app.actionExchangeDesc')}</span></button>
+        <button onClick={() => navigate('bridge')}><strong>{t('app.actionMove')}</strong><span>{t('app.actionMoveDesc')}</span></button>
+        <button onClick={() => navigate('send')}><strong>{t('app.actionSend')}</strong><span>{t('app.actionSendDesc')}</span></button>
+        <button onClick={() => navigate('receive')}><strong>{t('app.actionRequest')}</strong><span>{t('app.actionRequestDesc')}</span></button>
+        <button onClick={() => navigate('ai-router')}><strong>{t('app.actionAi')}</strong><span>{t('app.actionAiDesc')}</span></button>
       </section>
     </div>
   )
@@ -474,7 +476,7 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
     <div className='portfolio-page'>
       <section className='glass portfolio-card wallet-card'>
         <div>
-          <span>MetaMask EOA</span>
+          <span>Connected Wallet</span>
           <strong>{address.slice(0,6)}...{address.slice(-4)}</strong>
         </div>
         <div>
@@ -486,8 +488,8 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
           <div>
-            <h3>EOA Wallet</h3>
-            <p>Saldo langsung di MetaMask/user wallet untuk sign transaksi sendiri.</p>
+            <h3>Personal Wallet</h3>
+            <p>Funds held directly in your connected wallet.</p>
           </div>
           <span>MetaMask</span>
         </div>
@@ -501,8 +503,8 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
           <div>
-            <h3>Circle Wallet Proxy</h3>
-            <p>Saldo proxy wallet ARCOX untuk flow Circle Wallet dan pembayaran terotomasi.</p>
+            <h3>Circle Wallet</h3>
+            <p>Funds available in your ARCOX Circle wallet.</p>
           </div>
           <span>Circle</span>
         </div>
@@ -517,14 +519,14 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
         <div className='portfolio-section-head'>
           <div>
             <h3>Unified Balance</h3>
-            <p>Saldo USDC routing layer Circle Gateway. Ini berbeda dari saldo EOA dan Circle proxy wallet.</p>
+            <p>Your deposited USDC available across supported networks.</p>
           </div>
-          <span>Gateway</span>
+          <span>Deposited</span>
         </div>
         <div className='portfolio-grid'>
-          {renderBalance('UB-USDC', formatUnifiedBalanceValue(unifiedBalance), '#fbbf24')}
+          {renderBalance('USDC', formatUnifiedBalanceValue(unifiedBalance), '#fbbf24')}
           <div className='glass portfolio-card'>
-            <span>Chains</span>
+            <span>Networks</span>
             <strong>{formatUnifiedChainCount(unifiedBalance)}</strong>
           </div>
         </div>

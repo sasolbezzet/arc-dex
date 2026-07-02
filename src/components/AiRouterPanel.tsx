@@ -225,15 +225,15 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
         <div>
           <div className='docs-kicker'>AI Router</div>
           <h2>Deposit USDC. Create API key. Use AI models.</h2>
-          <p>Auto Pay only approves delegated spend. Each AI request is paid from your Unified Balance, not from your wallet balance.</p>
+          <p>Each AI request is paid automatically from your deposited USDC.</p>
         </div>
         <div className='ai-router-status'>
           <StatusPill label='Unified Balance' value={formatUnifiedBalance(unifiedBalance)} />
           <StatusPill label='Auto Pay' value={autoPayReady ? 'Ready' : autoPay?.enabled ? 'Pending' : 'OFF'} tone={autoPayReady ? 'good' : 'warn'} />
-          <StatusPill label='Source Chains' value={sourceChainCount ? `${readyChainCount}/${sourceChainCount} ready` : 'Not ready'} tone={sourceChainCount > 0 && readyChainCount === sourceChainCount ? 'good' : 'warn'} />
+          <StatusPill label='Available Networks' value={sourceChainCount ? `${readyChainCount}/${sourceChainCount} ready` : 'Not ready'} tone={sourceChainCount > 0 && readyChainCount === sourceChainCount ? 'good' : 'warn'} />
           <StatusPill label='Readiness' value={autoPayReady ? 'Siap digunakan' : autoPayLabel} tone={autoPayReady ? 'good' : 'warn'} />
           <StatusPill label='API Key' value={activeKeys.length ? 'Ready' : 'Not created'} tone={activeKeys.length ? 'good' : 'warn'} />
-          <StatusPill label='Transaction Security' value={status?.security?.transactionWalletMatchRequired ? 'Wallet-bound' : 'Unavailable'} tone={status?.security?.transactionWalletMatchRequired ? 'good' : 'warn'} />
+          <StatusPill label='Security' value={status?.security?.transactionWalletMatchRequired ? 'Protected' : 'Unavailable'} tone={status?.security?.transactionWalletMatchRequired ? 'good' : 'warn'} />
           <StatusPill label='Agent Identity' value={activeAgentIdentity ? `#${activeAgentIdentity.agentId}` : 'Personal'} tone={activeAgentIdentity ? 'good' : undefined} />
         </div>
       </section>
@@ -270,7 +270,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
         <div className='glass sandbox-card'>
           <h3>2. Auto Pay</h3>
-          <p className='pay-muted'>Approve each funded source chain once. AI requests then spend USDC from Unified Balance to ARCOX treasury.</p>
+          <p className='pay-muted'>Approve each funded network once. Future AI requests are then paid automatically.</p>
           <div className='pay-grid'>
             <Info label='Auto Pay' value={autoPayLabel} />
             <Info label='Payment Source' value='Unified Balance' />
@@ -287,7 +287,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
         <div className='glass sandbox-card'>
           <h3>3. API Key</h3>
-          <p className='pay-muted'>Create a standard ARCOX API key for OpenAI-compatible clients. Copy it when created; only its hash is stored.</p>
+          <p className='pay-muted'>Create a key for Hermes and other supported AI apps. Copy it now because it cannot be shown again.</p>
           <div className='button-row wrap'>
             <button className='btn btn-primary' disabled={busy === 'apiKey'} onClick={createKey}>
               {busy === 'apiKey' ? 'Creating...' : 'Create API Key'}

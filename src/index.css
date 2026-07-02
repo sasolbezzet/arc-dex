@@ -793,6 +793,15 @@ button, a, select {
   color: #b7c3d8;
 }
 
+.intro-eyebrow {
+  margin-bottom: 8px;
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .welcome-step {
   border-top-color: rgba(148, 163, 184, 0.15);
 }
@@ -824,11 +833,25 @@ button, a, select {
 }
 
 .action-board button {
-  min-height: 44px;
+  min-height: 58px;
   border-radius: 8px;
   background: rgba(15, 23, 42, 0.68);
   border-color: rgba(148, 163, 184, 0.14);
   color: #d6deec;
+  display: grid;
+  gap: 3px;
+  align-content: center;
+}
+
+.action-board button strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.action-board button span {
+  color: #8fa0b8;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .action-board button:hover {
