@@ -95,10 +95,8 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
       return originalFetch.call(window, input, init)
     }
     const target = new URL(url)
-    const proxyPreferred = ['/v1/info', '/v1/balances', '/v1/deposits', '/v1/estimate'].includes(target.pathname)
-    if (!proxyPreferred) {
-      return originalFetch.call(window, input, { ...init, signal: AbortSignal.timeout(20_000) })
-    }
+    const proxyPreferred = /^\/v1\/(?:info|balances|deposits|estimate|transfer(?:\/[0-9a-f-]+)?)$/.test(target.pathname)
+    if (!proxyPreferred) return originalFetch.call(window, input, init)
     const stored = localStorage.getItem('arc-dex-auth')
     let authToken = ''
     try { authToken = stored ? JSON.parse(stored)?.token || '' : '' } catch {}
@@ -111,7 +109,7 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
       method,
       headers,
       body,
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(45_000),
     })
   }
   try {

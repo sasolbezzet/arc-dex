@@ -28,6 +28,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const [copied, setCopied] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const solanaDelegateForPolling = autoPaySolanaAddress(status)
 
   async function run(label: string, fn: () => Promise<any>) {
     try {
@@ -74,15 +75,34 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
       try {
         const result = await refreshAiRouterAutoPayReadiness(address)
         if (!result?.autoPay) return
+        let refreshedAutoPay = result.autoPay
+        const solanaEntry = (refreshedAutoPay.delegateChains || []).find((item: any) => item.chain === 'Solana_Devnet' && item.status === 'pending')
+        const solanaOwnerAddress = String(refreshedAutoPay.solanaOwnerAddress || '')
+        const solanaDelegateAddress = solanaDelegateForPolling
+        if (solanaEntry && solanaOwnerAddress && solanaDelegateAddress && await getConnectedSolanaAddress(false) === solanaOwnerAddress) {
+          const solanaStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' }))
+          if (solanaStatus === 'ready') {
+            const delegateChains = refreshedAutoPay.delegateChains.map((item: any) => item.chain === 'Solana_Devnet' ? { ...item, status: 'ready' } : item)
+            const saved = await setAiRouterAutoPay({
+              ownerAddress: address,
+              solanaOwnerAddress,
+              enabled: true,
+              delegateStatus: 'ready',
+              delegateAddress: refreshedAutoPay.delegateAddress,
+              delegateChains,
+            })
+            refreshedAutoPay = saved?.autoPay || { ...refreshedAutoPay, delegateStatus: 'ready', delegateChains }
+          }
+        }
         setStatus((prev: any) => prev ? {
           ...prev,
-          autoPay: result.autoPay,
-          delegate: { ...prev.delegate, status: result.autoPay.delegateStatus, chains: result.autoPay.delegateChains },
+          autoPay: refreshedAutoPay,
+          delegate: { ...prev.delegate, status: refreshedAutoPay.delegateStatus, chains: refreshedAutoPay.delegateChains },
         } : prev)
       } catch {}
     }, 10_000)
     return () => window.clearInterval(timer)
-  }, [address, status?.autoPay?.delegateChains, status?.delegate?.chains])
+  }, [address, solanaDelegateForPolling, status?.autoPay?.delegateChains, status?.delegate?.chains])
 
   async function checkUnified() {
     const result = await run('balance', getUnifiedBalanceWithAppKit)
