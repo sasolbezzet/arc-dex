@@ -3,12 +3,13 @@ import { getTreasuryStatus } from '../payApi'
 import { completeUnifiedBalanceWithdrawWithAppKit, depositUnifiedBalanceWithAppKit, getUnifiedBalanceWithAppKit, initiateUnifiedBalanceWithdrawWithAppKit } from '../appKit'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 
-type UbChain = 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia'
+type UbChain = 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia' | 'Solana_Devnet'
 const UB_CHAINS: Array<{ id: UbChain; label: string }> = [
   { id: 'Arc_Testnet', label: 'Arc Testnet' },
   { id: 'Base_Sepolia', label: 'Base Sepolia' },
   { id: 'Ethereum_Sepolia', label: 'Ethereum Sepolia' },
   { id: 'Arbitrum_Sepolia', label: 'Arbitrum Sepolia' },
+  { id: 'Solana_Devnet', label: 'Solana Devnet' },
 ]
 
 export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null }) {
@@ -33,6 +34,9 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
       if (label === 'deposit') setDeposit(result)
       if (label === 'withdraw' || label === 'completeWithdraw') setWithdraw(result)
     } catch (e) {
+      if (label === 'completeWithdraw' && (e as any)?.retryConfig) {
+        setWithdraw((current: any) => ({ ...current, retryConfig: (e as any).retryConfig, recoveryRequired: true }))
+      }
       setError(e instanceof Error ? e.message : `${label} failed`)
     } finally {
       setBusy('')
@@ -44,7 +48,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
   }
 
   async function completeWithdraw() {
-    return completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain })
+    return completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain, retryConfig: (withdraw as any)?.retryConfig })
   }
 
   return (
@@ -77,6 +81,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
         <div className='glass sandbox-card'>
           <h3>Add USDC</h3>
           <p className='pay-muted'>Add USDC from a supported wallet to your available balance.</p>
+          {(depositChain === 'Solana_Devnet') && <div className='inline-warning'>Solana uses your connected Solflare Devnet wallet.</div>}
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>From Network</span>
@@ -108,6 +113,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
           <h3>Withdraw USDC</h3>
           <p className='pay-muted'>Review the amount and fee, then send USDC to your connected wallet.</p>
           <div className='inline-warning'>Your wallet approval is required to complete every withdrawal.</div>
+          {(withdrawChain === 'Solana_Devnet') && <div className='inline-warning'>Connect Solflare on Devnet before reviewing this withdrawal.</div>}
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>To Network</span>
@@ -127,7 +133,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
               {busy === 'withdraw' ? 'Checking...' : 'Review Withdrawal'}
             </button>
             <button className='btn btn-primary' disabled={busy === 'completeWithdraw' || !withdraw || !!(withdraw as any).txHash} onClick={() => run('completeWithdraw', completeWithdraw)}>
-              {busy === 'completeWithdraw' ? 'Confirming...' : 'Confirm Withdrawal'}
+              {busy === 'completeWithdraw' ? 'Confirming...' : (withdraw as any)?.recoveryRequired ? 'Retry Receive' : 'Confirm Withdrawal'}
             </button>
           </div>
           {withdraw && (
@@ -138,7 +144,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
               <Info label='Network Fee' value={`${(withdraw as any).totalFee || '0'} USDC`} />
               <Info label='Estimated Total' value={`${(withdraw as any).totalDebit || (withdraw as any).spendAmount || withdrawAmount} USDC`} />
               {(withdraw as any).maxTotalDebit && <Info label='Maximum Total' value={`${(withdraw as any).maxTotalDebit} USDC`} />}
-              <Info label='Status' value={(withdraw as any).txHash ? 'Sent' : 'Ready to confirm'} />
+              <Info label='Status' value={(withdraw as any).txHash ? 'Sent' : (withdraw as any).recoveryRequired ? 'Receive pending - retry safely' : 'Ready to confirm'} />
             </div>
           )}
         </div>

@@ -432,31 +432,28 @@ function swapStep(name: string, result: any) {
 
 export async function getUnifiedBalanceWithAppKit() {
   const address = await getConnectedEvmAddress()
+  const solanaAddress = await getConnectedSolanaAddress(false)
   const response = await fetch('/api/unified-balance/balances', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address }),
+    body: JSON.stringify({ address, ...(solanaAddress ? { solanaAddress } : {}) }),
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(data?.error || 'Unified Balance API temporarily unavailable')
   return data
 }
 
-export type UnifiedBalanceSourceChain = 'auto' | 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia'
-export const UNIFIED_BALANCE_EVM_CHAINS: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
+export type UnifiedBalanceSourceChain = 'auto' | 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia' | 'Solana_Devnet'
+type UnifiedBalanceEvmChain = Exclude<UnifiedBalanceSourceChain, 'auto' | 'Solana_Devnet'>
+export const UNIFIED_BALANCE_EVM_CHAINS: UnifiedBalanceEvmChain[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
+export const UNIFIED_BALANCE_CHAINS: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = [...UNIFIED_BALANCE_EVM_CHAINS, 'Solana_Devnet']
 
-async function unifiedBalanceFrom(adapter: any, amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto') {
-  if (sourceChain === 'auto') return { adapter }
-  return { adapter, allocations: [{ amount, chain: sourceChain }] }
-}
-
-async function allocatedUnifiedBalanceFrom(adapter: any, amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto', knownBalance?: any) {
-  if (sourceChain !== 'auto') return unifiedBalanceFrom(adapter, amount, sourceChain)
-  const balance = knownBalance || await getUnifiedBalanceWithAppKit()
+function unifiedBalanceAllocations(amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto', balance: any) {
   const requested = usdcUnits(amount)
   let remaining = requested
   const allocations: Array<{ amount: string; chain: Exclude<UnifiedBalanceSourceChain, 'auto'> }> = []
-  for (const chain of UNIFIED_BALANCE_EVM_CHAINS) {
+  const chains = sourceChain === 'auto' ? UNIFIED_BALANCE_CHAINS : [sourceChain]
+  for (const chain of chains) {
     const available = usdcUnits(confirmedBalanceForChain(balance, chain))
     if (available <= 0n || remaining <= 0n) continue
     const allocated = available < remaining ? available : remaining
@@ -464,10 +461,19 @@ async function allocatedUnifiedBalanceFrom(adapter: any, amount: string, sourceC
     remaining -= allocated
   }
   if (remaining > 0n) throw new Error(`Unified Balance insufficient. Available ${formatUsdcUnits(requested - remaining)} USDC.`)
-  return { adapter, allocations }
+  return allocations
 }
 
-async function ensureUnifiedEvmChain(_adapter: any, chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
+async function unifiedBalanceSources(allocations: Array<{ amount: string; chain: Exclude<UnifiedBalanceSourceChain, 'auto'> }>, evmAdapter: any) {
+  const sources: any[] = []
+  const evmAllocations = allocations.filter(item => item.chain !== 'Solana_Devnet')
+  const solanaAllocations = allocations.filter(item => item.chain === 'Solana_Devnet')
+  if (evmAllocations.length) sources.push({ adapter: evmAdapter, allocations: evmAllocations })
+  if (solanaAllocations.length) sources.push({ adapter: await buildSolanaUnifiedSpendAdapter(), allocations: solanaAllocations })
+  return sources
+}
+
+async function ensureUnifiedEvmChain(_adapter: any, chain: UnifiedBalanceEvmChain) {
   const resolved = resolveChainIdentifier(chain)
   if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
   const config = findChain(chain)?.addParams
@@ -498,11 +504,31 @@ async function getConnectedEvmAddress() {
   return address
 }
 
+export async function getConnectedSolanaAddress(connect = false) {
+  const detected = autoDetectSolanaProvider()
+  if (!detected) {
+    if (connect) throw new Error('Connect Solflare on Solana Devnet first.')
+    return ''
+  }
+  if (connect && !detected.raw.isConnected) await detected.raw.connect()
+  const address = detected.raw.publicKey?.toString?.() || ''
+  if (!address && connect) throw new Error('Connect Solflare on Solana Devnet first.')
+  return address
+}
+
 export async function depositUnifiedBalanceWithAppKit(args: {
   amount: string
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
+  if (args.chain === 'Solana_Devnet') {
+    const adapter = await buildSolanaAdapter()
+    return await withGatewayProxy(() => kit.unifiedBalance.deposit({
+      from: { adapter, chain: args.chain },
+      amount: args.amount,
+      token: 'USDC',
+    } as any))
+  }
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, args.chain)
   return await withGatewayProxy(() => kit.unifiedBalance.deposit({
@@ -517,25 +543,33 @@ export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
-  const recipientAddress = await getConnectedEvmAddress()
-  return prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
+  const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
+  return prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
 }
 
 export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
   amount: string
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
+  retryConfig?: { attestation: string; signature: string }
 }) {
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
-  const recipientAddress = await getConnectedEvmAddress()
-  const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
-  const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
-    from: { adapter, allocations: plan.allocations },
-    to: { adapter, chain: args.chain, recipientAddress },
+  const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
+  if (args.retryConfig) {
+    const destinationAdapter = args.chain === 'Solana_Devnet' ? await buildSolanaAdapter() : await buildEvmAdapter()
+    return await withGatewayProxy(() => kit.unifiedBalance.spend({
+      to: { adapter: destinationAdapter, chain: args.chain, recipientAddress },
+      amount: args.amount,
+      token: 'USDC',
+      config: { retry: args.retryConfig },
+    } as any))
+  }
+  const plan = await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
+  const result = await spendUnifiedBalanceWithRetry(kit, {
+    from: plan.sources,
+    to: { adapter: plan.destinationAdapter, chain: args.chain, recipientAddress },
     amount: plan.spendAmount,
     token: 'USDC',
-  } as any))
+  })
   const feeUnits = totalFeeUnits((result as any)?.fees || plan.fees)
   return {
     ...(result as any),
@@ -552,9 +586,7 @@ export async function estimateUnifiedBalanceSpendWithAppKit(args: {
   sourceChain?: UnifiedBalanceSourceChain
 }) {
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
-  if (args.sourceChain && args.sourceChain !== 'auto') await ensureUnifiedEvmChain(adapter, args.sourceChain)
-  return prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
+  return prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
 }
 
 export async function spendUnifiedBalanceWithAppKit(args: {
@@ -563,15 +595,13 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   sourceChain?: UnifiedBalanceSourceChain
 }) {
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
-  if (args.sourceChain && args.sourceChain !== 'auto') await ensureUnifiedEvmChain(adapter, args.sourceChain)
-  const plan = await prepareUnifiedBalanceSpend({ kit, adapter, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
-  const result = await withGatewayProxy(() => kit.unifiedBalance.spend({
-    from: { adapter, allocations: plan.allocations },
-    to: { adapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
+  const plan = await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
+  const result = await spendUnifiedBalanceWithRetry(kit, {
+    from: plan.sources,
+    to: { adapter: plan.destinationAdapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
     amount: plan.spendAmount,
     token: 'USDC',
-  } as any))
+  })
   const feeUnits = totalFeeUnits((result as any)?.fees || plan.fees)
   return {
     ...(result as any),
@@ -587,8 +617,12 @@ export async function addUnifiedBalanceDelegateWithAppKit(args: {
   chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
   const chain = args.chain || 'Arc_Testnet'
+  if (chain === 'Solana_Devnet') {
+    const adapter = await buildSolanaAdapter()
+    return await withGatewayProxy(() => kit.unifiedBalance.addDelegate({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
+  }
+  const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, chain)
   return await withGatewayProxy(() => kit.unifiedBalance.addDelegate({
     from: { adapter, chain },
@@ -601,8 +635,12 @@ export async function removeUnifiedBalanceDelegateWithAppKit(args: {
   chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
   const chain = args.chain || 'Arc_Testnet'
+  if (chain === 'Solana_Devnet') {
+    const adapter = await buildSolanaAdapter()
+    return await withGatewayProxy(() => kit.unifiedBalance.removeDelegate({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
+  }
+  const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, chain)
   return await withGatewayProxy(() => kit.unifiedBalance.removeDelegate({
     from: { adapter, chain },
@@ -615,8 +653,12 @@ export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
   chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  const adapter = await buildEvmAdapter()
   const chain = args.chain || 'Arc_Testnet'
+  if (chain === 'Solana_Devnet') {
+    const adapter = await buildSolanaAdapter()
+    return await withGatewayProxy(() => kit.unifiedBalance.getDelegateStatus({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
+  }
+  const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, chain)
   return await withGatewayProxy(() => kit.unifiedBalance.getDelegateStatus({
     from: { adapter, chain },
@@ -627,12 +669,11 @@ export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
 export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
 
 export function confirmedUnifiedBalanceChains(balance: any) {
-  return UNIFIED_BALANCE_EVM_CHAINS.filter(chain => Number(confirmedBalanceForChain(balance, chain)) > 0 || Number(pendingBalanceForChain(balance, chain)) > 0)
+  return UNIFIED_BALANCE_CHAINS.filter(chain => Number(confirmedBalanceForChain(balance, chain)) > 0 || Number(pendingBalanceForChain(balance, chain)) > 0)
 }
 
 async function prepareUnifiedBalanceSpend(args: {
   kit: AppKit
-  adapter: any
   receiveAmount: string
   destinationChain: Exclude<UnifiedBalanceSourceChain, 'auto'>
   recipientAddress: string
@@ -640,20 +681,23 @@ async function prepareUnifiedBalanceSpend(args: {
 }) {
   const receiveUnits = usdcUnits(args.receiveAmount)
   const spendAmount = formatUsdcUnits(receiveUnits)
+  const evmAdapter = await buildEvmAdapter()
+  const destinationAdapter = args.destinationChain === 'Solana_Devnet' ? await buildSolanaAdapter() : evmAdapter
   const balance = await getUnifiedBalanceWithAppKit()
   const requestedChains = args.sourceChain && args.sourceChain !== 'auto'
     ? [args.sourceChain]
-    : [...UNIFIED_BALANCE_EVM_CHAINS].sort((left, right) => sourcePriority(left, args.destinationChain) - sourcePriority(right, args.destinationChain))
+    : [...UNIFIED_BALANCE_CHAINS].sort((left, right) => sourcePriority(left, args.destinationChain) - sourcePriority(right, args.destinationChain))
   let lastError: unknown = null
   for (const chain of requestedChains) {
     const available = usdcUnits(confirmedBalanceForChain(balance, chain))
     if (available < receiveUnits) continue
     const allocations = [{ chain, amount: spendAmount }]
     try {
-      await ensureUnifiedEvmChain(args.adapter, chain)
+      const sourceAdapter = chain === 'Solana_Devnet' ? await buildSolanaUnifiedSpendAdapter() : evmAdapter
+      if (chain !== 'Solana_Devnet') await ensureUnifiedEvmChain(sourceAdapter, chain)
       const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
-        from: { adapter: args.adapter, allocations },
-        to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
+        from: { adapter: sourceAdapter, allocations },
+        to: { adapter: destinationAdapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
         amount: spendAmount,
         token: 'USDC',
       } as any))
@@ -665,25 +709,25 @@ async function prepareUnifiedBalanceSpend(args: {
         spendAmount,
         totalFee: formatUsdcUnits(feeUnits),
         totalDebit: formatUsdcUnits(receiveUnits + feeUnits),
-        allocations,
+        sources: [{ adapter: sourceAdapter, allocations }],
+        destinationAdapter,
       }
     } catch (error) {
       lastError = error
     }
   }
   try {
-    const from = await allocatedUnifiedBalanceFrom(args.adapter, spendAmount, args.sourceChain, balance)
-    const firstSourceChain = from.allocations?.[0]?.chain
-    if (firstSourceChain) await ensureUnifiedEvmChain(args.adapter, firstSourceChain)
+    const allocations = unifiedBalanceAllocations(spendAmount, args.sourceChain, balance)
+    const sources = await unifiedBalanceSources(allocations, evmAdapter)
     const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
-      from,
-      to: { adapter: args.adapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
+      from: sources,
+      to: { adapter: destinationAdapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
       amount: spendAmount,
       token: 'USDC',
     } as any))
     const feeUnits = totalFeeUnits(estimate?.fees)
-    const selected = new Set((from.allocations || []).map((item: any) => item.chain))
-    const available = UNIFIED_BALANCE_EVM_CHAINS
+    const selected = new Set(allocations.map((item: any) => item.chain))
+    const available = UNIFIED_BALANCE_CHAINS
       .filter(chain => selected.has(chain))
       .reduce((total, chain) => total + usdcUnits(confirmedBalanceForChain(balance, chain)), 0n)
     if (available < receiveUnits + feeUnits) throw new Error('Unified Balance cannot cover amount and Gateway fee.')
@@ -693,7 +737,8 @@ async function prepareUnifiedBalanceSpend(args: {
       spendAmount,
       totalFee: formatUsdcUnits(feeUnits),
       totalDebit: formatUsdcUnits(receiveUnits + feeUnits),
-      allocations: from.allocations || [],
+      sources,
+      destinationAdapter,
     }
   } catch (error) {
     if (lastError instanceof Error) throw lastError
@@ -703,7 +748,51 @@ async function prepareUnifiedBalanceSpend(args: {
 
 function sourcePriority(chain: Exclude<UnifiedBalanceSourceChain, 'auto'>, destinationChain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
   if (chain === destinationChain) return 0
-  return ({ Base_Sepolia: 1, Arbitrum_Sepolia: 2, Arc_Testnet: 3, Ethereum_Sepolia: 4 })[chain]
+  return ({ Base_Sepolia: 1, Arbitrum_Sepolia: 2, Arc_Testnet: 3, Ethereum_Sepolia: 4, Solana_Devnet: 5 })[chain]
+}
+
+async function spendUnifiedBalanceWithRetry(kit: AppKit, params: any) {
+  try {
+    return await withGatewayProxy(() => kit.unifiedBalance.spend(params))
+  } catch (error) {
+    const trace = (error as any)?.cause?.trace
+    const attestation = trace?.attestation
+    const signature = trace?.signature
+    if (!isHexPayload(attestation) || !isHexPayload(signature)) throw error
+    try {
+      if (params.to?.chain !== 'Solana_Devnet') await refreshUnifiedEvmRpc(params.to?.chain)
+      return await withGatewayProxy(() => kit.unifiedBalance.spend({
+        to: params.to,
+        amount: params.amount,
+        token: params.token || 'USDC',
+        config: { retry: { attestation, signature } },
+      } as any))
+    } catch (retryError) {
+      const pending = new Error('Destination receive is pending. Reconnect the destination wallet network, then use Retry Receive. Do not start a new withdrawal.', { cause: retryError }) as Error & { retryConfig?: { attestation: string; signature: string } }
+      pending.retryConfig = { attestation, signature }
+      throw pending
+    }
+  }
+}
+
+async function refreshUnifiedEvmRpc(chain: UnifiedBalanceEvmChain) {
+  const config = findChain(chain)?.addParams
+  const provider = getWalletProvider()
+  if (!config || !provider) return
+  try { await provider.request({ method: 'wallet_addEthereumChain', params: [config] }) } catch (error) {
+    if (/reject|denied|cancel/i.test(error instanceof Error ? error.message : String(error))) throw error
+  }
+  await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: config.chainId }] })
+}
+
+function isHexPayload(value: unknown) {
+  return typeof value === 'string' && /^0x[0-9a-f]+$/i.test(value) && value.length > 2
+}
+
+async function buildSolanaUnifiedSpendAdapter() {
+  const detected = autoDetectSolanaProvider()
+  if (!detected || detected.kind !== 'solflare') throw new Error('Solflare on Solana Devnet is required to spend deposited Solana USDC.')
+  return buildSolanaAdapter()
 }
 
 function totalFeeUnits(fees: any) {

@@ -21,7 +21,7 @@ export async function refreshAiRouterAutoPayReadiness(ownerAddress: string) {
   return res.json()
 }
 
-export async function setAiRouterAutoPay(input: { ownerAddress: string; enabled: boolean; monthlyLimit?: string; delegateStatus?: string; delegateAddress?: string; delegateChains?: Array<{ chain: string; status: string }> }) {
+export async function setAiRouterAutoPay(input: { ownerAddress: string; solanaOwnerAddress?: string; enabled: boolean; monthlyLimit?: string; delegateStatus?: string; delegateAddress?: string; delegateChains?: Array<{ chain: string; status: string }> }) {
   return safePost(API, '/api/ai-router/auto-pay', input)
 }
 

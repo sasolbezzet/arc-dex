@@ -110,6 +110,7 @@ const UB_SOURCES = [
   { id: 'Base_Sepolia', label: 'Base' },
   { id: 'Ethereum_Sepolia', label: 'ETH' },
   { id: 'Arbitrum_Sepolia', label: 'ARB' },
+  { id: 'Solana_Devnet', label: 'SOL' },
 ]
 
 export function IntelPanel({ address, activeAgentIdentity }: { address: string; activeAgentIdentity: AgentIdentity | null }) {

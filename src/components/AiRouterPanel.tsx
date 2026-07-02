@@ -4,8 +4,9 @@ import {
   confirmedUnifiedBalanceChains,
   getUnifiedBalanceDelegateStatusWithAppKit,
   getUnifiedBalanceWithAppKit,
+  getConnectedSolanaAddress,
   removeUnifiedBalanceDelegateWithAppKit,
-  UNIFIED_BALANCE_EVM_CHAINS,
+  UNIFIED_BALANCE_CHAINS,
 } from '../appKit'
 import { ensureAuthSession } from '../auth'
 import {
@@ -90,6 +91,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
   async function enableAutoPay() {
     const delegateAddress = autoPayAddress(status)
+    const solanaDelegateAddress = autoPaySolanaAddress(status)
     if (!delegateAddress) {
       setError('Auto Pay address is not configured in backend env. Isi AI_ROUTER_DELEGATE_ADDRESS atau CIRCLE_X402_TREASURY_ADDRESS dengan address 0x valid.')
       return
@@ -105,18 +107,27 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     setBusy('autoPaySetup')
     const delegateChains: Array<{ chain: string; status: string }> = []
     const failures: string[] = []
+    const solanaOwnerAddress = sourceChains.includes('Solana_Devnet') ? await getConnectedSolanaAddress(true) : String(autoPay?.solanaOwnerAddress || '')
     const previousChains = new Map((autoPay?.delegateChains || delegate?.chains || []).map((item: any) => [item.chain, item.status]))
     for (const chain of sourceChains) {
       try {
-        let chainStatus: any = sameAddress(delegateAddress, address)
+        const chainDelegate = chain === 'Solana_Devnet' ? solanaDelegateAddress : delegateAddress
+        const chainOwner = chain === 'Solana_Devnet' ? solanaOwnerAddress : address
+        if (!chainDelegate) throw new Error('Solana Auto Pay signer is not configured')
+        const isSelf = chain === 'Solana_Devnet' ? chainDelegate === chainOwner : sameAddress(chainDelegate, chainOwner)
+        let chainStatus: any = isSelf
           ? 'ready'
-          : await resolveAutoPayStatus(address, delegateAddress, chain, previousChains.get(chain))
-        if (!sameAddress(delegateAddress, address) && chainStatus === 'none') {
-          await addUnifiedBalanceDelegateWithAppKit({ delegateAddress, chain })
+          : await resolveAutoPayStatus(chainOwner, chainDelegate, chain, previousChains.get(chain))
+        if (!isSelf && chainStatus === 'none') {
+          await addUnifiedBalanceDelegateWithAppKit({ delegateAddress: chainDelegate, chain })
           chainStatus = 'pending'
           try {
+            if (chain === 'Solana_Devnet') {
+              chainStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: chainDelegate, chain }))
+            } else {
             const refreshed = await getAiRouterDelegateStatus({ ownerAddress: address, delegateAddress, chain })
             if (refreshed.status === 'ready') chainStatus = 'ready'
+            }
           } catch {}
         }
         delegateChains.push({ chain, status: normalizeAutoPayStatus(chainStatus) })
@@ -134,6 +145,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
       delegateStatus: normalizedStatus,
       delegateAddress,
       delegateChains,
+      solanaOwnerAddress,
     }))
     if (!savedPolicy) {
       setBusy('')
@@ -151,6 +163,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
   async function disableAutoPay() {
     const delegateAddress = autoPayAddress(status)
+    const solanaDelegateAddress = autoPaySolanaAddress(status)
     if (!delegateAddress) {
       setError('Auto Pay address is not configured in backend env. Isi AI_ROUTER_DELEGATE_ADDRESS atau CIRCLE_X402_TREASURY_ADDRESS dengan address 0x valid.')
       return
@@ -175,11 +188,14 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     const failures: string[] = []
     if (!sameAddress(delegateAddress, address)) {
       const configured = new Map<string, string>(currentChains.map((item: any) => [String(item.chain), normalizeAutoPayStatus(item.status)]))
-      const chains = UNIFIED_BALANCE_EVM_CHAINS.filter(chain => ['ready', 'pending'].includes(configured.get(chain) || ''))
+      const chains = UNIFIED_BALANCE_CHAINS.filter(chain => ['ready', 'pending'].includes(configured.get(chain) || ''))
       for (const chain of chains) {
         try {
-          const chainStatus = await resolveAutoPayStatus(address, delegateAddress, chain, configured.get(chain))
-          if (chainStatus !== 'none') await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress, chain })
+          const chainDelegate = chain === 'Solana_Devnet' ? solanaDelegateAddress : delegateAddress
+          const chainOwner = chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : address
+          if (!chainDelegate) throw new Error('Solana Auto Pay signer is not configured')
+          const chainStatus = await resolveAutoPayStatus(chainOwner, chainDelegate, chain, configured.get(chain))
+          if (chainStatus !== 'none') await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress: chainDelegate, chain })
           remainingChains.push({ chain, status: 'not_configured' })
         } catch (error) {
           remainingChains.push({ chain, status: configured.get(chain) || 'pending' })
@@ -432,6 +448,10 @@ function autoPayAddress(status: any) {
   return String(candidates.find(isEvmAddress) || '')
 }
 
+function autoPaySolanaAddress(status: any) {
+  return String(status?.solanaDelegateAddress || status?.delegate?.solanaAddress || '')
+}
+
 function shortHash(value: string) {
   return value ? `${value.slice(0, 8)}...${value.slice(-6)}` : ''
 }
@@ -457,6 +477,15 @@ function normalizeAutoPayStatus(value: any) {
 }
 
 async function resolveAutoPayStatus(ownerAddress: string, delegateAddress: string, chain: any, previousStatus?: any) {
+  if (chain === 'Solana_Devnet') {
+    try {
+      return normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain }))
+    } catch (error) {
+      const previous = normalizeAutoPayStatus(previousStatus)
+      if (previous === 'ready' || previous === 'pending') return previous
+      throw error
+    }
+  }
   try {
     const result = await getAiRouterDelegateStatus({ ownerAddress, delegateAddress, chain })
     return result.status
