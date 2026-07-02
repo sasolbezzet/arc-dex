@@ -29,15 +29,22 @@ function decodeB64(s: string): Uint8Array {
   return out
 }
 
-function serializeSigned(result: any): Uint8Array {
-  if (result instanceof Uint8Array) return result
-  if (result instanceof VersionedTransaction) return result.serialize()
-  if (result instanceof Transaction) return result.serialize()
-  // Object dengan .serialize()
-  if (result && typeof result.serialize === 'function') return result.serialize()
-  // Base64 string
-  if (typeof result === 'string') return decodeB64(result)
-  throw new Error(`signTransaction: unknown return type ${typeof result}`)
+function transactionInput(input: any) {
+  if (typeof input === 'string') return VersionedTransaction.deserialize(decodeB64(input))
+  if (input instanceof Uint8Array) return VersionedTransaction.deserialize(input)
+  return input
+}
+
+function assertFeePayerSigned(result: any) {
+  const signature = result instanceof VersionedTransaction
+    ? result.signatures?.[0]
+    : result instanceof Transaction
+      ? result.signatures?.[0]?.signature
+      : result?.signatures?.[0]?.signature || result?.signatures?.[0]
+  if (!(signature instanceof Uint8Array) || !signature.some(byte => byte !== 0)) {
+    throw new Error('Wallet did not sign the Solana fee payer transaction.')
+  }
+  return result
 }
 
 /**
@@ -66,27 +73,14 @@ export function wrapSolflare(raw: any): any {
       try { await raw.disconnect?.() } catch(e) { console.warn('disconnect error:', e instanceof Error ? e.message : String(e)) }
     },
 
-    async signTransaction(input: any): Promise<Uint8Array> {
-      // Solflare native expect VersionedTransaction; decode base64 if needed
-      const tx = typeof input === 'string'
-        ? VersionedTransaction.deserialize(decodeB64(input))
-        : input instanceof Uint8Array
-          ? VersionedTransaction.deserialize(input)
-          : input
-      const signed = await raw.signTransaction(tx)
-      return serializeSigned(signed)
+    async signTransaction(input: any) {
+      return assertFeePayerSigned(await raw.signTransaction(transactionInput(input)))
     },
 
-    async signAllTransactions(inputs: any[]): Promise<Uint8Array[]> {
-      const txs = inputs.map((i) =>
-        typeof i === 'string'
-          ? VersionedTransaction.deserialize(decodeB64(i))
-          : i instanceof Uint8Array
-            ? VersionedTransaction.deserialize(i)
-            : i,
-      )
+    async signAllTransactions(inputs: any[]) {
+      const txs = inputs.map(transactionInput)
       const signed = await raw.signAllTransactions(txs)
-      return signed.map(serializeSigned)
+      return signed.map(assertFeePayerSigned)
     },
 
     async signMessage(msg: Uint8Array) {
@@ -125,42 +119,14 @@ export function wrapPhantom(raw: any): any {
       try { await raw.disconnect?.() } catch(e) { console.warn('disconnect error:', e instanceof Error ? e.message : String(e)) }
     },
 
-    // Phantom: terima langsung tanpa decode (beda dari Solflare)
-    // Phantom internal handling lebih reliable dengan input asli
-    async signTransaction(input: any): Promise<Uint8Array> {
-      const signed = await raw.signTransaction(input)
-      // Coba serialize sebagai VersionedTransaction, fallback ke Transaction
-      try {
-        if (signed instanceof VersionedTransaction) return signed.serialize()
-        if (signed instanceof Transaction) return signed.serialize({ requireAllSignatures: false } as any)
-        if (signed && typeof signed.serialize === 'function') return signed.serialize()
-      } catch {
-        // Phantom kadang return format mixed — coba serialize manual
-        if (signed?.signatures && signed?.message) {
-          // Rekonstruksi sebagai VersionedTransaction
-          try {
-            const vt = new VersionedTransaction(signed.message)
-            // Copy signatures
-            for (const sig of signed.signatures) {
-              if (sig?.signature) vt.addSignature(sig.publicKey, sig.signature)
-            }
-            return vt.serialize()
-          } catch(e) { console.warn('manual serialize fallback error:', e instanceof Error ? e.message : String(e)) }
-        }
-      }
-      return serializeSigned(signed)
+    async signTransaction(input: any) {
+      return assertFeePayerSigned(await raw.signTransaction(transactionInput(input)))
     },
 
-    async signAllTransactions(inputs: any[]): Promise<Uint8Array[]> {
-      const txs = inputs.map((i) =>
-        typeof i === 'string'
-          ? VersionedTransaction.deserialize(decodeB64(i))
-          : i instanceof Uint8Array
-            ? VersionedTransaction.deserialize(i)
-            : i,
-      )
+    async signAllTransactions(inputs: any[]) {
+      const txs = inputs.map(transactionInput)
       const signed = await raw.signAllTransactions(txs)
-      return signed.map(serializeSigned)
+      return signed.map(assertFeePayerSigned)
     },
 
     async signMessage(msg: Uint8Array) {

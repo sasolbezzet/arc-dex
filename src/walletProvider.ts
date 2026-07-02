@@ -52,6 +52,9 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
         if (!activeChainId) throw new Error('Wallet returned an invalid active chain ID.')
         nextParams = [{ ...(Array.isArray(params) ? params[0] as Record<string, unknown> : {}), chainId: activeChainId }]
       }
+      if (method === 'eth_sendTransaction') {
+        nextParams = await refreshArbitrumFees(provider, nextParams)
+      }
       const result = await provider.request({ method, ...(nextParams === undefined ? {} : { params: nextParams }) })
       if (method !== 'eth_chainId') return result
       const chainId = normalizeChainId(result)
@@ -65,6 +68,31 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
   }
   normalizedProviders.set(provider, normalized)
   return normalized
+}
+
+async function refreshArbitrumFees(provider: Eip1193Provider, params: unknown[] | object | undefined) {
+  if (!Array.isArray(params) || !params.length) return params
+  const tx = params[0] as Record<string, unknown> | undefined
+  if (!tx) return params
+  try {
+    const chainId = normalizeChainId(tx.chainId) || normalizeChainId(await provider.request({ method: 'eth_chainId' }))
+    if (chainId !== '0x66eee') return params
+    const [block, rpcPriority] = await Promise.all([
+      provider.request({ method: 'eth_getBlockByNumber', params: ['pending', false] }),
+      provider.request({ method: 'eth_maxPriorityFeePerGas' }).catch(() => '0x186a0'),
+    ])
+    const baseFee = BigInt(block?.baseFeePerGas || 0)
+    const currentMax = BigInt(String(tx.maxFeePerGas || 0))
+    const currentPriority = BigInt(String(tx.maxPriorityFeePerGas || 0))
+    const priority = [BigInt(rpcPriority || 0), currentPriority, 100_000n].reduce((max, value) => value > max ? value : max, 0n)
+    const bufferedMax = (baseFee * 125n) / 100n + priority
+    const maxFeePerGas = bufferedMax > currentMax ? bufferedMax : currentMax
+    const next: Record<string, unknown> = { ...tx, maxFeePerGas: `0x${maxFeePerGas.toString(16)}`, maxPriorityFeePerGas: `0x${priority.toString(16)}` }
+    delete next.gasPrice
+    return [next, ...params.slice(1)]
+  } catch {
+    return params
+  }
 }
 
 function hasInvalidSwitchChain(params: unknown[] | object | undefined) {
