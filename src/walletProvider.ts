@@ -46,7 +46,12 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
   if (cached) return cached
   const normalized: Eip1193Provider = {
     request: async ({ method, params }) => {
-      const nextParams = normalizeRequestParams(method, params)
+      let nextParams = normalizeRequestParams(method, params)
+      if (method === 'wallet_switchEthereumChain' && hasInvalidSwitchChain(params)) {
+        const activeChainId = normalizeChainId(await provider.request({ method: 'eth_chainId' }))
+        if (!activeChainId) throw new Error('Wallet returned an invalid active chain ID.')
+        nextParams = [{ ...(Array.isArray(params) ? params[0] as Record<string, unknown> : {}), chainId: activeChainId }]
+      }
       const result = await provider.request({ method, ...(nextParams === undefined ? {} : { params: nextParams }) })
       if (method !== 'eth_chainId') return result
       const chainId = normalizeChainId(result)
@@ -60,6 +65,12 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
   }
   normalizedProviders.set(provider, normalized)
   return normalized
+}
+
+function hasInvalidSwitchChain(params: unknown[] | object | undefined) {
+  if (!Array.isArray(params) || !params.length) return false
+  const first = params[0] as Record<string, unknown> | undefined
+  return Boolean(first && !normalizeChainId(first.chainId))
 }
 
 function normalizeRequestParams(method: string, params: unknown[] | object | undefined) {
