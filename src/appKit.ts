@@ -11,12 +11,12 @@
 import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
 import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet, resolveChainIdentifier } from '@circle-fin/bridge-kit'
 import { ViemAdapter } from '@circle-fin/adapter-viem-v2'
-import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
-import { address as solanaAddress, createSolanaRpc } from '@solana/kit'
+import { SolanaKitAdapter } from '@circle-fin/adapter-solana-kit'
+import { address as solanaAddress, createSolanaRpc, getBase64EncodedWireTransaction } from '@solana/kit'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PublicKey } from '@solana/web3.js'
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from 'viem'
-import { wrapSolflare, wrapPhantom } from './solflareWrapper'
+import { solanaFeePayerSignature, wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
@@ -252,14 +252,26 @@ export async function buildSolanaAdapter() {
 
   const walletAddress = provider.address
   if (!walletAddress) throw new Error(`Wallet ${auto.kind} tidak mengembalikan public key.`)
+  // App Kit 1.7.0 + adapter-solana-kit 1.5.1 loses the fee-payer signature
+  // through createSolanaKitAdapterFromProvider (Solana error 5663012). Keep
+  // the Wallet Standard provider, but expose the signature-preserving Kit API.
+  const signerAddress = solanaAddress(walletAddress)
+  const signer: any = {
+    address: signerAddress,
+    signTransactions: async (transactions: readonly any[]) => Promise.all(transactions.map(async transaction => {
+      const encoded = getBase64EncodedWireTransaction(transaction)
+      const signed = await provider.signTransaction(encoded)
+      return { [signerAddress]: solanaFeePayerSignature(signed) }
+    })),
+    signVersionedTransaction: async (transaction: any) => provider.signTransaction(transaction),
+  }
   lastSolanaSimulationDiagnostic = null
-  return createSolanaKitAdapterFromProvider({
-    provider,
+  return new SolanaKitAdapter({
     getRpc: () => createDiagnosticSolanaRpc() as any,
-    capabilities: {
-      addressContext: 'user-controlled',
-      supportedChains: [SolanaDevnet],
-    },
+    getSigner: async () => signer,
+  }, {
+    addressContext: 'user-controlled',
+    supportedChains: [SolanaDevnet],
   } as any)
 }
 
