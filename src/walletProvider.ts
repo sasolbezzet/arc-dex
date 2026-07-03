@@ -53,6 +53,7 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
         nextParams = [{ ...(Array.isArray(params) ? params[0] as Record<string, unknown> : {}), chainId: activeChainId }]
       }
       if (method === 'eth_sendTransaction') {
+        nextParams = bufferTransactionGas(nextParams)
         nextParams = await refreshArbitrumFees(provider, nextParams)
       }
       const result = await provider.request({ method, ...(nextParams === undefined ? {} : { params: nextParams }) })
@@ -68,6 +69,22 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
   }
   normalizedProviders.set(provider, normalized)
   return normalized
+}
+
+function bufferTransactionGas(params: unknown[] | object | undefined) {
+  if (!Array.isArray(params) || !params.length) return params
+  const tx = params[0] as Record<string, unknown> | undefined
+  if (!tx?.gas) return params
+  try {
+    const gas = BigInt(String(tx.gas))
+    if (gas <= 0n) return params
+    // Gateway authorization calls can take a materially different path between
+    // estimation and execution. A generous limit is safe: users only pay gas used.
+    const bufferedGas = (gas * 8n) / 5n + 20_000n
+    return [{ ...tx, gas: `0x${bufferedGas.toString(16)}` }, ...params.slice(1)]
+  } catch {
+    return params
+  }
 }
 
 async function refreshArbitrumFees(provider: Eip1193Provider, params: unknown[] | object | undefined) {

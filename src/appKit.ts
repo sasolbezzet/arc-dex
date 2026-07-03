@@ -10,11 +10,11 @@
 
 import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
 import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet, resolveChainIdentifier } from '@circle-fin/bridge-kit'
-import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2'
-import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
-import { createSolanaRpc } from '@solana/kit'
-import { createPublicClient, defineChain, fallback, http } from 'viem'
-import { wrapSolflare, wrapPhantom } from './solflareWrapper'
+import { ViemAdapter } from '@circle-fin/adapter-viem-v2'
+import { SolanaKitAdapter } from '@circle-fin/adapter-solana-kit'
+import { address as solanaAddress, createSolanaRpc, getBase64EncodedWireTransaction } from '@solana/kit'
+import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from 'viem'
+import { solanaFeePayerSignature, wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
@@ -57,6 +57,14 @@ function getPhantomProvider(): any | null {
 }
 
 function autoDetectSolanaProvider(): { raw: any; kind: 'solflare' | 'phantom' } | null {
+  if (_solanaKind === 'phantom') {
+    const selected = getPhantomProvider()
+    if (selected) return { raw: selected, kind: 'phantom' }
+  }
+  if (_solanaKind === 'solflare') {
+    const selected = getSolflareProvider()
+    if (selected) return { raw: selected, kind: 'solflare' }
+  }
   const sf = getSolflareProvider()
   if (sf) { _solanaKind = 'solflare'; return { raw: sf, kind: 'solflare' } }
   const ph = getPhantomProvider()
@@ -136,11 +144,23 @@ export type AppKitChain =
 export async function buildEvmAdapter() {
   const provider = await findConnectedWalletProvider()
   if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
-  return await createViemAdapterFromProvider({
-    provider: normalizeWalletProvider(provider),
+  const normalizedProvider = normalizeWalletProvider(provider)
+  const capabilities = { addressContext: 'user-controlled' as const, supportedChains: [ArcTestnet, BaseSepolia, EthereumSepolia, ArbitrumSepolia] }
+  return new ViemAdapter({
+    getWalletClient: async ({ chain }: any) => {
+      const safeChain = normalizeViemChain(chain)
+      const accounts = await normalizedProvider.request({ method: 'eth_accounts' })
+      const walletAddress = accounts?.[0]
+      if (!/^0x[a-fA-F0-9]{40}$/.test(String(walletAddress || ''))) throw new Error('Connect EVM wallet first.')
+      return createWalletClient({
+        account: { address: walletAddress, type: 'json-rpc' },
+        chain: safeChain,
+        transport: custom(normalizedProvider as any),
+      }) as any
+    },
     getPublicClient: ({ chain }: any) => {
-      const chainId = Number(chain?.chainId ?? chain?.id)
-      if (!Number.isInteger(chainId) || chainId <= 0) throw new Error('Circle returned an invalid EVM chain ID.')
+      const safeChain = normalizeViemChain(chain)
+      const chainId = safeChain.id
       const rpcUrls = publicRpcUrls(chainId)
       const viemChain = defineChain({
         id: chainId,
@@ -155,8 +175,23 @@ export async function buildEvmAdapter() {
         transport: fallback(rpcUrls.map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
       })
     },
-    capabilities: { addressContext: 'user-controlled', supportedChains: [ArcTestnet, BaseSepolia, EthereumSepolia, ArbitrumSepolia] },
-  } as any)
+  }, capabilities as any)
+}
+
+function normalizeViemChain(chain: any) {
+  let chainId = Number(chain?.id ?? chain?.chainId)
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) {
+    const name = String(chain?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    chainId = ({
+      arctestnet: 5042002,
+      basesepolia: 84532,
+      ethereumsepolia: 11155111,
+      sepolia: 11155111,
+      arbitrumsepolia: 421614,
+    } as Record<string, number>)[name]
+  }
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new Error(`Circle returned an invalid EVM chain ID for ${String(chain?.name || 'unknown chain')}.`)
+  return { ...chain, id: chainId }
 }
 
 function publicRpcUrls(chainId: number): string[] {
@@ -186,13 +221,24 @@ export async function buildSolanaAdapter() {
   // Bungkus provider — expose .address (string base58) yang adapter butuhkan.
   const provider = auto.kind === 'phantom' ? wrapPhantom(raw) : wrapSolflare(raw)
 
-  return await createSolanaKitAdapterFromProvider({
-    provider,
+  const walletAddress = provider.address
+  if (!walletAddress) throw new Error(`Wallet ${auto.kind} tidak mengembalikan public key.`)
+  const signerAddress = solanaAddress(walletAddress)
+  const signer: any = {
+    address: signerAddress,
+    signTransactions: async (transactions: readonly any[]) => Promise.all(transactions.map(async transaction => {
+      const encoded = getBase64EncodedWireTransaction(transaction)
+      const signed = await provider.signTransaction(encoded)
+      return { [signerAddress]: solanaFeePayerSignature(signed) }
+    })),
+    signVersionedTransaction: async (transaction: any) => provider.signTransaction(transaction),
+  }
+  return new SolanaKitAdapter({
     getRpc: () => createSolanaRpc(SOLANA_DEVNET_RPC),
-    capabilities: {
-      addressContext: 'user-controlled',
-      supportedChains: [SolanaDevnet],
-    },
+    getSigner: async () => signer,
+  }, {
+    addressContext: 'user-controlled',
+    supportedChains: [SolanaDevnet],
   } as any)
 }
 
@@ -489,7 +535,7 @@ async function ensureUnifiedEvmChain(_adapter: any, chain: UnifiedBalanceEvmChai
     } catch (recoveryError) {
       const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
       if (/reject|denied|cancel/i.test(recoveryMessage)) throw recoveryError
-      throw new Error(`${resolved.name} RPC endpoint is unavailable in the connected wallet. Update the chain RPC, then retry.`)
+      throw new Error(`${resolved.name} RPC endpoint is unavailable in the connected wallet. Update the chain RPC, then retry.`, { cause: recoveryError })
     }
   }
 }
