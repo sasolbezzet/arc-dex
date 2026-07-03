@@ -279,7 +279,7 @@ const _solanaRpc = createSolanaRpc(SOLANA_DEVNET_RPC)
 /** Cek saldo SOL (dalam SOL, bukan lamports) */
 export async function getSolBalance(pubkey: string): Promise<number> {
   try {
-    const resp = await (_solanaRpc.getBalance as any)(pubkey).send()
+    const resp = await (_solanaRpc.getBalance as any)(solanaAddress(pubkey)).send()
     return Number(resp.value) / 1e9
   } catch {
     return 0
@@ -289,9 +289,11 @@ export async function getSolBalance(pubkey: string): Promise<number> {
 /** Cek saldo USDC Devnet di associated token account (ATA) */
 export async function getUsdcBalance(pubkey: string): Promise<number> {
   try {
-    const resp = await (_solanaRpc.getTokenAccountsByOwner as any)(pubkey, {
-      programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
-    }).send()
+    const resp = await (_solanaRpc.getTokenAccountsByOwner as any)(
+      solanaAddress(pubkey),
+      { mint: solanaAddress(USDC_DEVNET_MINT) },
+      { encoding: 'jsonParsed' },
+    ).send()
     const accounts: any[] = [...(resp.value ?? [])]
     for (const acc of accounts) {
       const info = acc.account.data.parsed?.info
@@ -566,12 +568,17 @@ export async function depositUnifiedBalanceWithAppKit(args: {
 }) {
   const kit = getKit()
   if (args.chain === 'Solana_Devnet') {
+    await assertSolanaWalletReady(args.amount, true)
     const adapter = await buildSolanaAdapter()
-    return await withGatewayProxy(() => kit.unifiedBalance.deposit({
-      from: { adapter, chain: args.chain },
-      amount: args.amount,
-      token: 'USDC',
-    } as any))
+    try {
+      return await withGatewayProxy(() => kit.unifiedBalance.deposit({
+        from: { adapter, chain: args.chain },
+        amount: args.amount,
+        token: 'USDC',
+      } as any))
+    } catch (error) {
+      throw normalizeSolanaTransactionError(error, 'deposit')
+    }
   }
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, args.chain)
@@ -587,8 +594,14 @@ export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
+  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false)
   const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
-  return prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
+  try {
+    return await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
+  } catch (error) {
+    if (args.chain === 'Solana_Devnet') throw normalizeSolanaTransactionError(error, 'withdrawal estimate')
+    throw error
+  }
 }
 
 export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
@@ -597,30 +610,36 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
   retryConfig?: { attestation: string; signature: string }
 }) {
   const kit = getKit()
+  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false)
   const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
-  if (args.retryConfig) {
-    const destinationAdapter = args.chain === 'Solana_Devnet' ? await buildSolanaAdapter() : await buildEvmAdapter()
-    return await withGatewayProxy(() => kit.unifiedBalance.spend({
-      to: { adapter: destinationAdapter, chain: args.chain, recipientAddress },
-      amount: args.amount,
+  try {
+    if (args.retryConfig) {
+      const destinationAdapter = args.chain === 'Solana_Devnet' ? await buildSolanaAdapter() : await buildEvmAdapter()
+      return await withGatewayProxy(() => kit.unifiedBalance.spend({
+        to: { adapter: destinationAdapter, chain: args.chain, recipientAddress },
+        amount: args.amount,
+        token: 'USDC',
+        config: { retry: args.retryConfig },
+      } as any))
+    }
+    const plan = await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
+    const result = await spendUnifiedBalanceWithRetry(kit, {
+      from: plan.sources,
+      to: { adapter: plan.destinationAdapter, chain: args.chain, recipientAddress },
+      amount: plan.spendAmount,
       token: 'USDC',
-      config: { retry: args.retryConfig },
-    } as any))
-  }
-  const plan = await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
-  const result = await spendUnifiedBalanceWithRetry(kit, {
-    from: plan.sources,
-    to: { adapter: plan.destinationAdapter, chain: args.chain, recipientAddress },
-    amount: plan.spendAmount,
-    token: 'USDC',
-  })
-  const feeUnits = totalFeeUnits((result as any)?.fees || plan.fees)
-  return {
-    ...(result as any),
-    requestedReceiveAmount: plan.requestedReceiveAmount,
-    spendAmount: plan.spendAmount,
-    totalFee: formatUsdcUnits(feeUnits),
-    totalDebit: formatUsdcUnits(usdcUnits(plan.spendAmount) + feeUnits),
+    })
+    const feeUnits = totalFeeUnits((result as any)?.fees || plan.fees)
+    return {
+      ...(result as any),
+      requestedReceiveAmount: plan.requestedReceiveAmount,
+      spendAmount: plan.spendAmount,
+      totalFee: formatUsdcUnits(feeUnits),
+      totalDebit: formatUsdcUnits(usdcUnits(plan.spendAmount) + feeUnits),
+    }
+  } catch (error) {
+    if (args.chain === 'Solana_Devnet') throw normalizeSolanaTransactionError(error, 'withdrawal')
+    throw error
   }
 }
 
@@ -844,6 +863,89 @@ async function buildSolanaUnifiedSpendAdapter() {
   const detected = autoDetectSolanaProvider()
   if (!detected || detected.kind !== 'solflare') throw new Error('Solflare on Solana Devnet is required to spend deposited Solana USDC.')
   return buildSolanaAdapter()
+}
+
+async function assertSolanaWalletReady(amount: string, requireUsdc: boolean) {
+  const walletAddress = await getConnectedSolanaAddress(true)
+  const [solBalance, usdcBalance] = await Promise.all([
+    getSolBalance(walletAddress),
+    requireUsdc ? getUsdcBalance(walletAddress) : Promise.resolve(0),
+  ])
+  if (solBalance < 0.005) {
+    throw new Error(`Solana Devnet needs at least 0.005 SOL for transaction fees. Available: ${solBalance.toFixed(6)} SOL.`)
+  }
+  if (requireUsdc) {
+    const requested = Number(formatUsdcUnits(usdcUnits(amount)))
+    if (usdcBalance < requested) {
+      throw new Error(`Insufficient Solana Devnet USDC. Required: ${requested} USDC; available: ${usdcBalance} USDC.`)
+    }
+  }
+}
+
+function normalizeSolanaTransactionError(error: unknown, operation: string): Error {
+  const original = error as any
+  const message = original instanceof Error ? original.message : String(original)
+  if (!/-32002|simulation failed/i.test(message)) return original instanceof Error ? original : new Error(message)
+
+  const context = collectSolanaErrorContext(original)
+  const detail = context.logs
+    .filter(line => /Program log:|Program .* failed|insufficient|custom program error|Error:/i.test(line))
+    .slice(-4)
+    .map(line => line.replace(/^Program log:\s*/i, ''))
+    .join(' | ')
+  const reason = detail || context.err || 'the Solana program rejected the simulated transaction'
+  const normalized = new Error(`Solana ${operation} simulation failed: ${reason}. Verify Devnet SOL, Devnet USDC, and the selected wallet account before retrying.`, { cause: error }) as Error & { retryConfig?: any }
+  if (original?.retryConfig) normalized.retryConfig = original.retryConfig
+  return normalized
+}
+
+function collectSolanaErrorContext(error: any): { err: string; logs: string[] } {
+  const nodes: any[] = []
+  const seen = new Set<any>()
+  let current = error
+  while (current && !seen.has(current) && nodes.length < 8) {
+    seen.add(current)
+    nodes.push(current)
+    current = current.cause
+  }
+  let err = ''
+  const logs: string[] = []
+  for (const node of nodes) {
+    const contexts = [node, node?.context, node?.data, node?.cause?.context, decodeSolanaErrorPayload(node?.message)]
+    for (const value of contexts) {
+      if (!value || typeof value !== 'object') continue
+      const candidateLogs = parseSolanaLogs(value.logs)
+      for (const line of candidateLogs) if (!logs.includes(line)) logs.push(line)
+      const candidateErr = value.err ?? value.error
+      if (!err && candidateErr != null && candidateErr !== 'null') {
+        err = typeof candidateErr === 'string' ? candidateErr : JSON.stringify(candidateErr)
+      }
+    }
+  }
+  return { err, logs }
+}
+
+function decodeSolanaErrorPayload(message: unknown): Record<string, unknown> | null {
+  const encoded = String(message || '').match(/decode\s+--\s+-?\d+\s+['"]([A-Za-z0-9_=-]+)['"]/i)?.[1]
+  if (!encoded) return null
+  try {
+    const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - encoded.length % 4) % 4)
+    const params = new URLSearchParams(atob(base64))
+    return Object.fromEntries(params.entries())
+  } catch {
+    return null
+  }
+}
+
+function parseSolanaLogs(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String)
+  if (typeof value !== 'string' || !value || value === 'null') return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return [value]
+  }
 }
 
 function totalFeeUnits(fees: any) {
