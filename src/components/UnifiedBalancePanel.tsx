@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { getTreasuryStatus } from '../payApi'
-import { completeUnifiedBalanceWithdrawWithAppKit, depositUnifiedBalanceWithAppKit, getUnifiedBalanceWithAppKit, initiateUnifiedBalanceWithdrawWithAppKit } from '../appKit'
+import { completeUnifiedBalanceWithdrawWithAppKit, depositUnifiedBalanceWithAppKit, getConnectedSolanaAddress, getSolanaWalletDiagnostics, getUnifiedBalanceWithAppKit, initiateUnifiedBalanceWithdrawWithAppKit } from '../appKit'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 
 type UbChain = 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia' | 'Solana_Devnet'
@@ -17,6 +17,7 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
   const [balance, setBalance] = useState<any>(null)
   const [deposit, setDeposit] = useState<any>(null)
   const [withdraw, setWithdraw] = useState<any>(null)
+  const [solanaDiagnostics, setSolanaDiagnostics] = useState<any>(null)
   const [depositAmount, setDepositAmount] = useState('1')
   const [withdrawAmount, setWithdrawAmount] = useState('1')
   const [depositChain, setDepositChain] = useState<UbChain>('Arc_Testnet')
@@ -51,6 +52,13 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
     return completeUnifiedBalanceWithdrawWithAppKit({ amount: withdrawAmount, chain: withdrawChain, retryConfig: (withdraw as any)?.retryConfig })
   }
 
+  async function checkSolanaReadiness() {
+    const walletAddress = await getConnectedSolanaAddress(true)
+    const diagnostics = await getSolanaWalletDiagnostics(walletAddress)
+    setSolanaDiagnostics(diagnostics)
+    return diagnostics
+  }
+
   return (
     <div className='pay-page'>
       <section className='glass sandbox-hero'>
@@ -82,6 +90,12 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
           <h3>Add USDC</h3>
           <p className='pay-muted'>Add USDC from a supported wallet to your available balance.</p>
           {(depositChain === 'Solana_Devnet') && <div className='inline-warning'>Solana uses your connected Solflare Devnet wallet.</div>}
+          {(depositChain === 'Solana_Devnet') && (
+            <button className='btn btn-secondary' disabled={busy === 'solanaDiagnostics'} onClick={() => run('solanaDiagnostics', checkSolanaReadiness)}>
+              {busy === 'solanaDiagnostics' ? 'Checking Solana...' : 'Check Solana Wallet Readiness'}
+            </button>
+          )}
+          {depositChain === 'Solana_Devnet' && solanaDiagnostics && <SolanaDiagnostics value={solanaDiagnostics} />}
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>From Network</span>
@@ -114,6 +128,12 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
           <p className='pay-muted'>Review the amount and fee, then send USDC to your connected wallet.</p>
           <div className='inline-warning'>Your wallet approval is required to complete every withdrawal.</div>
           {(withdrawChain === 'Solana_Devnet') && <div className='inline-warning'>Connect Solflare on Devnet before reviewing this withdrawal.</div>}
+          {(withdrawChain === 'Solana_Devnet') && (
+            <button className='btn btn-secondary' disabled={busy === 'solanaDiagnostics'} onClick={() => run('solanaDiagnostics', checkSolanaReadiness)}>
+              {busy === 'solanaDiagnostics' ? 'Checking Solana...' : 'Check Solana Wallet Readiness'}
+            </button>
+          )}
+          {withdrawChain === 'Solana_Devnet' && solanaDiagnostics && <SolanaDiagnostics value={solanaDiagnostics} />}
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>To Network</span>
@@ -172,6 +192,18 @@ function Info({ label, value, mono }: { label: string; value: string; mono?: boo
     <div className='pay-info'>
       <span>{label}</span>
       <strong className={mono ? 'mono' : ''}>{value || '-'}</strong>
+    </div>
+  )
+}
+
+function SolanaDiagnostics({ value }: { value: any }) {
+  return (
+    <div className='pay-grid'>
+      <Info label='Solana Wallet' value={value.walletAddress || '-'} mono />
+      <Info label='USDC ATA' value={value.ataAddress || '-'} mono />
+      <Info label='ATA Status' value={value.ataExists ? 'Ready' : 'Missing'} />
+      <Info label='Devnet SOL' value={String(value.solBalance ?? '0')} />
+      <Info label='Devnet USDC' value={String(value.usdcBalance ?? '0')} />
     </div>
   )
 }

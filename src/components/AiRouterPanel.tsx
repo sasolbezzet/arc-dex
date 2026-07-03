@@ -234,6 +234,53 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     await refresh()
   }
 
+  async function setSolanaAutoPayOnly(enabled: boolean) {
+    const delegateAddress = autoPayAddress(status)
+    const solanaDelegateAddress = autoPaySolanaAddress(status)
+    if (!delegateAddress || !solanaDelegateAddress) {
+      setError('Solana Auto Pay signer is not configured on the backend.')
+      return
+    }
+    if (!await authReady()) return
+    setBusy(enabled ? 'solanaAutoPayOn' : 'solanaAutoPayOff')
+    setError('')
+    try {
+      const solanaOwnerAddress = await getConnectedSolanaAddress(true)
+      const currentChains = autoPay?.delegateChains || delegate?.chains || []
+      const previous = currentChains.find((item: any) => item.chain === 'Solana_Devnet')?.status
+      let chainStatus = await resolveAutoPayStatus(solanaOwnerAddress, solanaDelegateAddress, 'Solana_Devnet', previous)
+      if (enabled && chainStatus === 'not_configured') {
+        await addUnifiedBalanceDelegateWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' })
+        chainStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' }))
+      }
+      if (!enabled && chainStatus !== 'not_configured') {
+        await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' })
+        chainStatus = 'not_configured'
+      }
+      const delegateChains = mergeDelegateChain(currentChains, 'Solana_Devnet', normalizeAutoPayStatus(chainStatus))
+      const activeChains = delegateChains.filter(item => ['ready', 'pending'].includes(normalizeAutoPayStatus(item.status)))
+      const delegateStatus = activeChains.some(item => normalizeAutoPayStatus(item.status) === 'ready') ? 'ready' : activeChains.length ? 'pending' : 'not_configured'
+      const saved = await setAiRouterAutoPay({
+        ownerAddress: address,
+        solanaOwnerAddress,
+        enabled: activeChains.length > 0,
+        delegateStatus,
+        delegateAddress,
+        delegateChains,
+      })
+      setStatus((current: any) => current ? {
+        ...current,
+        autoPay: saved.autoPay,
+        delegate: { ...current.delegate, status: delegateStatus, address: delegateAddress, chains: delegateChains },
+      } : current)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : `Solana Auto Pay ${enabled ? 'enable' : 'disable'} failed`)
+    } finally {
+      setBusy('')
+    }
+    await refresh()
+  }
+
   async function createKey() {
     if (!await authReady()) return
     const result = await runRequired('apiKey', () => createAiRouterApiKey({ ownerAddress: address }))
@@ -246,6 +293,8 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const autoPayStatus = delegate?.status || autoPay?.delegateStatus || autoPay?.status || 'not ready'
   const autoPayReady = autoPay?.enabled && autoPayStatus === 'ready'
   const autoPayLabel = autoPayReady ? 'Ready - siap digunakan' : formatAutoPayStatus(autoPayStatus)
+  const solanaAutoPayStatus = normalizeAutoPayStatus((autoPay?.delegateChains || delegate?.chains || []).find((item: any) => item.chain === 'Solana_Devnet')?.status)
+  const solanaAutoPayReady = solanaAutoPayStatus === 'ready'
   const readyChainCount = (autoPay?.delegateChains || delegate?.chains || []).filter((item: any) => item.status === 'ready').length
   const fundedChainCount = unifiedBalance ? confirmedUnifiedBalanceChains(unifiedBalance).length : 0
   const sourceChainCount = Math.max(fundedChainCount, (autoPay?.delegateChains || delegate?.chains || []).length)
@@ -317,6 +366,18 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
             </button>
             <button className='btn btn-secondary' disabled={!!busy || !hasAutoPaySetup} onClick={disableAutoPay}>
               {busy === 'autoPayRemove' || busy === 'autoPay' ? 'Turning off...' : 'Turn OFF'}
+            </button>
+          </div>
+          <div className='pay-grid'>
+            <Info label='Solana Devnet Auto Pay' value={formatAutoPayStatus(solanaAutoPayStatus)} />
+            <Info label='Solana Delegate' value={autoPaySolanaAddress(status) || 'Not configured'} />
+          </div>
+          <div className='button-row wrap'>
+            <button className='btn btn-primary' disabled={!!busy || solanaAutoPayReady} onClick={() => setSolanaAutoPayOnly(true)}>
+              {busy === 'solanaAutoPayOn' ? 'Enabling Solana...' : 'Enable Solana Auto Pay'}
+            </button>
+            <button className='btn btn-secondary' disabled={!!busy || !solanaAutoPayReady} onClick={() => setSolanaAutoPayOnly(false)}>
+              {busy === 'solanaAutoPayOff' ? 'Disabling Solana...' : 'Turn OFF Solana Auto Pay'}
             </button>
           </div>
         </div>
@@ -478,7 +539,7 @@ function shortHash(value: string) {
 
 function normalizeAutoPayStatus(value: any) {
   if (value === true) return 'ready'
-  if (value === false || value === null) return 'not_configured'
+  if (value === false || value === null || value === undefined || value === '') return 'not_configured'
   if (typeof value === 'string') {
     const normalized = value.toLowerCase().replaceAll('_', ' ').trim()
     if (['ready', 'enabled', 'active', 'approved', 'allowed', 'complete', 'completed', 'success', 'delegated'].includes(normalized)) return 'ready'
@@ -494,6 +555,12 @@ function normalizeAutoPayStatus(value: any) {
     if (flags.some(flag => value[flag] === true)) return 'ready'
   }
   return 'pending'
+}
+
+function mergeDelegateChain(chains: any[], chain: string, status: string) {
+  const next = (Array.isArray(chains) ? chains : []).filter(item => item?.chain !== chain).map(item => ({ chain: String(item.chain), status: normalizeAutoPayStatus(item.status) }))
+  next.push({ chain, status })
+  return next
 }
 
 async function resolveAutoPayStatus(ownerAddress: string, delegateAddress: string, chain: any, previousStatus?: any) {

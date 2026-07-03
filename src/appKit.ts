@@ -13,6 +13,8 @@ import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet
 import { ViemAdapter } from '@circle-fin/adapter-viem-v2'
 import { SolanaKitAdapter } from '@circle-fin/adapter-solana-kit'
 import { address as solanaAddress, createSolanaRpc, getBase64EncodedWireTransaction } from '@solana/kit'
+import { getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { PublicKey } from '@solana/web3.js'
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from 'viem'
 import { solanaFeePayerSignature, wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
@@ -288,22 +290,29 @@ export async function getSolBalance(pubkey: string): Promise<number> {
 
 /** Cek saldo USDC Devnet di associated token account (ATA) */
 export async function getUsdcBalance(pubkey: string): Promise<number> {
+  return (await getSolanaWalletDiagnostics(pubkey)).usdcBalance
+}
+
+export async function getSolanaWalletDiagnostics(pubkey: string) {
+  const owner = new PublicKey(pubkey)
+  const mint = new PublicKey(USDC_DEVNET_MINT)
+  const ata = getAssociatedTokenAddressSync(mint, owner).toBase58()
   try {
-    const resp = await (_solanaRpc.getTokenAccountsByOwner as any)(
-      solanaAddress(pubkey),
-      { mint: solanaAddress(USDC_DEVNET_MINT) },
-      { encoding: 'jsonParsed' },
-    ).send()
-    const accounts: any[] = [...(resp.value ?? [])]
-    for (const acc of accounts) {
-      const info = acc.account.data.parsed?.info
-      if (info?.mint?.toLowerCase() === USDC_DEVNET_MINT.toLowerCase()) {
-        return parseFloat(info.tokenAmount.uiAmountString ?? '0')
-      }
+    const [solBalance, tokenBalance] = await Promise.all([
+      getSolBalance(pubkey),
+      (_solanaRpc.getTokenAccountBalance as any)(solanaAddress(ata)).send().catch(() => null),
+    ])
+    return {
+      walletAddress: pubkey,
+      ataAddress: ata,
+      ataExists: Boolean(tokenBalance?.value),
+      solBalance,
+      usdcBalance: Number(tokenBalance?.value?.uiAmountString || '0'),
+      mintAddress: USDC_DEVNET_MINT,
+      network: 'Solana Devnet',
     }
-    return 0
   } catch {
-    return 0
+    return { walletAddress: pubkey, ataAddress: ata, ataExists: false, solBalance: 0, usdcBalance: 0, mintAddress: USDC_DEVNET_MINT, network: 'Solana Devnet' }
   }
 }
 
@@ -594,7 +603,7 @@ export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false)
+  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false, true)
   const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
   try {
     return await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
@@ -610,7 +619,7 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
   retryConfig?: { attestation: string; signature: string }
 }) {
   const kit = getKit()
-  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false)
+  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false, true)
   const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
   try {
     if (args.retryConfig) {
@@ -682,8 +691,13 @@ export async function addUnifiedBalanceDelegateWithAppKit(args: {
   const kit = getKit()
   const chain = args.chain || 'Arc_Testnet'
   if (chain === 'Solana_Devnet') {
+    await assertSolanaWalletReady('0', false)
     const adapter = await buildSolanaAdapter()
-    return await withGatewayProxy(() => kit.unifiedBalance.addDelegate({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
+    try {
+      return await withGatewayProxy(() => kit.unifiedBalance.addDelegate({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
+    } catch (error) {
+      throw normalizeSolanaTransactionError(error, 'Auto Pay enable')
+    }
   }
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, chain)
@@ -700,8 +714,13 @@ export async function removeUnifiedBalanceDelegateWithAppKit(args: {
   const kit = getKit()
   const chain = args.chain || 'Arc_Testnet'
   if (chain === 'Solana_Devnet') {
+    await assertSolanaWalletReady('0', false)
     const adapter = await buildSolanaAdapter()
-    return await withGatewayProxy(() => kit.unifiedBalance.removeDelegate({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
+    try {
+      return await withGatewayProxy(() => kit.unifiedBalance.removeDelegate({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
+    } catch (error) {
+      throw normalizeSolanaTransactionError(error, 'Auto Pay disable')
+    }
   }
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, chain)
@@ -865,19 +884,19 @@ async function buildSolanaUnifiedSpendAdapter() {
   return buildSolanaAdapter()
 }
 
-async function assertSolanaWalletReady(amount: string, requireUsdc: boolean) {
+async function assertSolanaWalletReady(amount: string, requireUsdc: boolean, requireAta = requireUsdc) {
   const walletAddress = await getConnectedSolanaAddress(true)
-  const [solBalance, usdcBalance] = await Promise.all([
-    getSolBalance(walletAddress),
-    requireUsdc ? getUsdcBalance(walletAddress) : Promise.resolve(0),
-  ])
-  if (solBalance < 0.005) {
-    throw new Error(`Solana Devnet needs at least 0.005 SOL for transaction fees. Available: ${solBalance.toFixed(6)} SOL.`)
+  const diagnostics = await getSolanaWalletDiagnostics(walletAddress)
+  if (diagnostics.solBalance < 0.005) {
+    throw new Error(`Solana Devnet needs at least 0.005 SOL for transaction fees. Available: ${diagnostics.solBalance.toFixed(6)} SOL. Wallet: ${walletAddress}.`)
+  }
+  if (requireAta && !diagnostics.ataExists) {
+    throw new Error(`Solana Devnet USDC associated token account is missing. ATA: ${diagnostics.ataAddress}. Receive Devnet USDC in this wallet once, then retry.`)
   }
   if (requireUsdc) {
     const requested = Number(formatUsdcUnits(usdcUnits(amount)))
-    if (usdcBalance < requested) {
-      throw new Error(`Insufficient Solana Devnet USDC. Required: ${requested} USDC; available: ${usdcBalance} USDC.`)
+    if (diagnostics.usdcBalance < requested) {
+      throw new Error(`Insufficient Solana Devnet USDC in ATA ${diagnostics.ataAddress}. Required: ${requested} USDC; available: ${diagnostics.usdcBalance} USDC.`)
     }
   }
 }
@@ -889,40 +908,45 @@ function normalizeSolanaTransactionError(error: unknown, operation: string): Err
 
   const context = collectSolanaErrorContext(original)
   const detail = context.logs
-    .filter(line => /Program log:|Program .* failed|insufficient|custom program error|Error:/i.test(line))
-    .slice(-4)
+    .filter(line => /AnchorError|Error Code:|Error Message:|Program .* failed|insufficient|custom program error|Error:/i.test(line))
+    .slice(-6)
     .map(line => line.replace(/^Program log:\s*/i, ''))
     .join(' | ')
-  const reason = detail || context.err || 'the Solana program rejected the simulated transaction'
+  const sdkDetail = message.match(/(?:^|\n)(Error:\s*[^\n]+)/i)?.[1] || ''
+  const reason = detail || context.errorDetails || context.err || sdkDetail || 'the Solana program rejected the simulated transaction'
   const normalized = new Error(`Solana ${operation} simulation failed: ${reason}. Verify Devnet SOL, Devnet USDC, and the selected wallet account before retrying.`, { cause: error }) as Error & { retryConfig?: any }
   if (original?.retryConfig) normalized.retryConfig = original.retryConfig
   return normalized
 }
 
-function collectSolanaErrorContext(error: any): { err: string; logs: string[] } {
-  const nodes: any[] = []
+function collectSolanaErrorContext(error: any): { err: string; errorDetails: string; logs: string[] } {
+  const queue: Array<{ value: any; depth: number }> = [{ value: error, depth: 0 }]
   const seen = new Set<any>()
-  let current = error
-  while (current && !seen.has(current) && nodes.length < 8) {
-    seen.add(current)
-    nodes.push(current)
-    current = current.cause
-  }
   let err = ''
+  let errorDetails = ''
   const logs: string[] = []
-  for (const node of nodes) {
-    const contexts = [node, node?.context, node?.data, node?.cause?.context, decodeSolanaErrorPayload(node?.message)]
-    for (const value of contexts) {
-      if (!value || typeof value !== 'object') continue
-      const candidateLogs = parseSolanaLogs(value.logs)
-      for (const line of candidateLogs) if (!logs.includes(line)) logs.push(line)
-      const candidateErr = value.err ?? value.error
-      if (!err && candidateErr != null && candidateErr !== 'null') {
-        err = typeof candidateErr === 'string' ? candidateErr : JSON.stringify(candidateErr)
-      }
+  while (queue.length && seen.size < 40) {
+    const { value, depth } = queue.shift()!
+    if (!value || (typeof value !== 'object' && typeof value !== 'function') || seen.has(value)) continue
+    seen.add(value)
+    for (const line of parseSolanaLogs(value.logs)) if (!logs.includes(line)) logs.push(line)
+    const candidateErr = value.err ?? value.error
+    if (!err && candidateErr != null && candidateErr !== 'null') {
+      err = typeof candidateErr === 'string' ? candidateErr : safeDiagnosticJson(candidateErr)
+    }
+    if (!errorDetails && typeof value.errorDetails === 'string') errorDetails = value.errorDetails
+    const decoded = decodeSolanaErrorPayload(value.message)
+    if (decoded) queue.push({ value: decoded, depth: depth + 1 })
+    if (depth >= 6) continue
+    for (const key of ['cause', 'context', 'data', 'trace', 'rawError', 'originalError']) {
+      if (value[key]) queue.push({ value: value[key], depth: depth + 1 })
     }
   }
-  return { err, logs }
+  return { err, errorDetails, logs }
+}
+
+function safeDiagnosticJson(value: unknown) {
+  try { return JSON.stringify(value, (_, item) => typeof item === 'bigint' ? item.toString() : item) } catch { return String(value) }
 }
 
 function decodeSolanaErrorPayload(message: unknown): Record<string, unknown> | null {
