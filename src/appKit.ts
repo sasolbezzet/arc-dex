@@ -11,12 +11,12 @@
 import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
 import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet, resolveChainIdentifier } from '@circle-fin/bridge-kit'
 import { ViemAdapter } from '@circle-fin/adapter-viem-v2'
-import { SolanaKitAdapter } from '@circle-fin/adapter-solana-kit'
-import { address as solanaAddress, createSolanaRpc, getBase64EncodedWireTransaction } from '@solana/kit'
+import { createSolanaKitAdapterFromProvider } from '@circle-fin/adapter-solana-kit'
+import { address as solanaAddress, createSolanaRpc } from '@solana/kit'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PublicKey } from '@solana/web3.js'
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from 'viem'
-import { solanaFeePayerSignature, wrapSolflare, wrapPhantom } from './solflareWrapper'
+import { wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
@@ -34,6 +34,33 @@ declare global {
 const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com'
 // USDC Devnet mint di Solana
 const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+
+type SolanaSimulationDiagnostic = { err: unknown; logs: string[] }
+let lastSolanaSimulationDiagnostic: SolanaSimulationDiagnostic | null = null
+
+function createDiagnosticSolanaRpc() {
+  const rpc: any = createSolanaRpc(SOLANA_DEVNET_RPC)
+  return new Proxy(rpc, {
+    get(target, property, receiver) {
+      if (property !== 'simulateTransaction') return Reflect.get(target, property, receiver)
+      return (...args: any[]) => {
+        const request = target.simulateTransaction(...args)
+        return new Proxy(request, {
+          get(requestTarget, requestProperty, requestReceiver) {
+            if (requestProperty !== 'send') return Reflect.get(requestTarget, requestProperty, requestReceiver)
+            return async () => {
+              const response = await requestTarget.send()
+              lastSolanaSimulationDiagnostic = response?.value?.err
+                ? { err: response.value.err, logs: parseSolanaLogs(response.value.logs) }
+                : null
+              return response
+            }
+          },
+        })
+      }
+    },
+  })
+}
 
 // ── Wallet kind tracking ──────────────────────────────────────────
 let _solanaKind: 'solflare' | 'phantom' | null = null
@@ -225,22 +252,14 @@ export async function buildSolanaAdapter() {
 
   const walletAddress = provider.address
   if (!walletAddress) throw new Error(`Wallet ${auto.kind} tidak mengembalikan public key.`)
-  const signerAddress = solanaAddress(walletAddress)
-  const signer: any = {
-    address: signerAddress,
-    signTransactions: async (transactions: readonly any[]) => Promise.all(transactions.map(async transaction => {
-      const encoded = getBase64EncodedWireTransaction(transaction)
-      const signed = await provider.signTransaction(encoded)
-      return { [signerAddress]: solanaFeePayerSignature(signed) }
-    })),
-    signVersionedTransaction: async (transaction: any) => provider.signTransaction(transaction),
-  }
-  return new SolanaKitAdapter({
-    getRpc: () => createSolanaRpc(SOLANA_DEVNET_RPC),
-    getSigner: async () => signer,
-  }, {
-    addressContext: 'user-controlled',
-    supportedChains: [SolanaDevnet],
+  lastSolanaSimulationDiagnostic = null
+  return createSolanaKitAdapterFromProvider({
+    provider,
+    getRpc: () => createDiagnosticSolanaRpc() as any,
+    capabilities: {
+      addressContext: 'user-controlled',
+      supportedChains: [SolanaDevnet],
+    },
   } as any)
 }
 
@@ -907,13 +926,16 @@ function normalizeSolanaTransactionError(error: unknown, operation: string): Err
   if (!/-32002|simulation failed/i.test(message)) return original instanceof Error ? original : new Error(message)
 
   const context = collectSolanaErrorContext(original)
-  const detail = context.logs
+  const diagnosticLogs = [...context.logs, ...(lastSolanaSimulationDiagnostic?.logs || [])]
+    .filter((line, index, values) => values.indexOf(line) === index)
+  const detail = diagnosticLogs
     .filter(line => /AnchorError|Error Code:|Error Message:|Program .* failed|insufficient|custom program error|Error:/i.test(line))
     .slice(-6)
     .map(line => line.replace(/^Program log:\s*/i, ''))
     .join(' | ')
   const sdkDetail = message.match(/(?:^|\n)(Error:\s*[^\n]+)/i)?.[1] || ''
-  const reason = detail || context.errorDetails || context.err || sdkDetail || 'the Solana program rejected the simulated transaction'
+  const capturedError = lastSolanaSimulationDiagnostic?.err == null ? '' : safeDiagnosticJson(lastSolanaSimulationDiagnostic.err)
+  const reason = detail || context.errorDetails || context.err || capturedError || sdkDetail || 'the Solana program rejected the simulated transaction without RPC logs'
   const normalized = new Error(`Solana ${operation} simulation failed: ${reason}. Verify Devnet SOL, Devnet USDC, and the selected wallet account before retrying.`, { cause: error }) as Error & { retryConfig?: any }
   if (original?.retryConfig) normalized.retryConfig = original.retryConfig
   return normalized
