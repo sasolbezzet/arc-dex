@@ -21,9 +21,10 @@ function addProvider(list: Eip1193Provider[], value: any) {
 export function walletProviders(): Eip1193Provider[] {
   const win = window as any
   const providers: Eip1193Provider[] = []
+  addProvider(providers, (activeProvider as any)?.ethereum)
   addProvider(providers, activeProvider)
-  addProvider(providers, win.okxwallet)
   addProvider(providers, win.okxwallet?.ethereum)
+  addProvider(providers, win.okxwallet)
   addProvider(providers, win.bitkeep?.ethereum)
   addProvider(providers, win.bitgetWallet?.ethereum)
   addProvider(providers, win.bitgetWallet)
@@ -38,7 +39,8 @@ export function getWalletProvider(): Eip1193Provider | null {
 }
 
 export function setWalletProvider(provider: Eip1193Provider | null) {
-  activeProvider = provider
+  const evmProvider = (provider as any)?.ethereum
+  activeProvider = validProvider(evmProvider) ? evmProvider : provider
 }
 
 export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provider {
@@ -52,7 +54,8 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
         if (!activeChainId) throw new Error('Wallet returned an invalid active chain ID.')
         nextParams = [{ ...(Array.isArray(params) ? params[0] as Record<string, unknown> : {}), chainId: activeChainId }]
       }
-      if (method === 'eth_sendTransaction') {
+      if (method === 'eth_sendTransaction' || method === 'wallet_sendTransaction') {
+        nextParams = await attachActiveTransactionChainId(provider, nextParams)
         nextParams = bufferTransactionGas(nextParams)
         nextParams = await refreshArbitrumFees(provider, nextParams)
       }
@@ -69,6 +72,19 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
   }
   normalizedProviders.set(provider, normalized)
   return normalized
+}
+
+async function attachActiveTransactionChainId(provider: Eip1193Provider, params: unknown[] | object | undefined) {
+  if (!Array.isArray(params) || !params.length) return params
+  const tx = params[0] as Record<string, unknown> | undefined
+  if (!tx) return params
+  const activeChainId = normalizeChainId(await provider.request({ method: 'eth_chainId' }))
+  if (!activeChainId) throw new Error('Wallet returned an invalid active chain ID before sending the transaction.')
+  const providedChainId = normalizeChainId(tx.chainId)
+  if (providedChainId && providedChainId !== activeChainId) {
+    throw new Error(`Transaction chain ID ${providedChainId} does not match the active wallet chain ID ${activeChainId}.`)
+  }
+  return [{ ...tx, chainId: activeChainId }, ...params.slice(1)]
 }
 
 function bufferTransactionGas(params: unknown[] | object | undefined) {
@@ -125,7 +141,7 @@ function normalizeRequestParams(method: string, params: unknown[] | object | und
     const chainId = normalizeChainId(first?.chainId)
     return first && chainId ? [{ ...first, chainId }, ...params.slice(1)] : params
   }
-  if (method === 'eth_sendTransaction') {
+  if (method === 'eth_sendTransaction' || method === 'wallet_sendTransaction') {
     const tx = params[0] as Record<string, unknown> | undefined
     if (!tx || !('chainId' in tx)) return params
     const chainId = normalizeChainId(tx.chainId)
