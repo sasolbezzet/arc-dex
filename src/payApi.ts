@@ -1,4 +1,5 @@
 import { safePost } from './api'
+import { getAuthToken } from './auth'
 
 export type InvoiceStatus = 'unpaid' | 'pending' | 'paid' | 'expired' | 'failed' | 'cancelled'
 
@@ -28,10 +29,12 @@ export type ArcoxInvoice = {
 }
 
 async function request(path: string, init?: RequestInit) {
+  const authToken = getAuthToken()
   const resp = await fetch(path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(init?.headers || {}),
     },
   })

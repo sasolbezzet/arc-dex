@@ -1,3 +1,5 @@
+import { recoverTypedDataAddress } from 'viem'
+
 export type Eip1193Provider = {
   request: (args: { method: string; params?: unknown[] | object }) => Promise<any>
   on?: (event: string, listener: (...args: any[]) => void) => void
@@ -49,6 +51,9 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
   const normalized: Eip1193Provider = {
     request: async ({ method, params }) => {
       let nextParams = normalizeRequestParams(method, params)
+      if (method === 'eth_signTypedData_v4' && isOkxProvider(provider)) {
+        return signOkxChainlessTypedData(provider, nextParams)
+      }
       if (method === 'wallet_switchEthereumChain' && hasInvalidSwitchChain(params)) {
         const activeChainId = normalizeChainId(await provider.request({ method: 'eth_chainId' }))
         if (!activeChainId) throw new Error('Wallet returned an invalid active chain ID.')
@@ -72,6 +77,61 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
   }
   normalizedProviders.set(provider, normalized)
   return normalized
+}
+
+function isOkxProvider(provider: Eip1193Provider) {
+  const win = typeof window === 'undefined' ? null : window as any
+  return Boolean(
+    provider.isOkxWallet
+    || provider === win?.okxwallet
+    || provider === win?.okxwallet?.ethereum,
+  )
+}
+
+async function signOkxChainlessTypedData(provider: Eip1193Provider, params: unknown[] | object | undefined) {
+  if (!Array.isArray(params) || params.length < 2) {
+    return provider.request({ method: 'eth_signTypedData_v4', ...(params === undefined ? {} : { params }) })
+  }
+  const requestedAddress = String(params[0] || '').toLowerCase()
+  const serialized = params[1]
+  let typedData: any
+  try { typedData = typeof serialized === 'string' ? JSON.parse(serialized) : serialized } catch {
+    return provider.request({ method: 'eth_signTypedData_v4', params })
+  }
+  const domainFields = Array.isArray(typedData?.types?.EIP712Domain) ? typedData.types.EIP712Domain : []
+  const isGatewayBurnIntent = typedData?.domain?.name === 'GatewayWallet'
+    && String(typedData?.domain?.version) === '1'
+    && !domainFields.some((field: any) => field?.name === 'chainId')
+  if (!isGatewayBurnIntent || typedData.domain.chainId != null) {
+    return provider.request({ method: 'eth_signTypedData_v4', params })
+  }
+
+  // Circle Gateway intentionally signs a chainId-less EIP-712 domain. OKX
+  // Mobile validates domain.chainId even when EIP712Domain omits that field.
+  // Add it only to the display/validation object while keeping the declared
+  // domain type unchanged, then verify the returned signature against the
+  // original chainId-less digest before accepting it.
+  const activeChainHex = normalizeChainId(await provider.request({ method: 'eth_chainId' }))
+  if (!activeChainHex) throw new Error('OKX returned an invalid active chain ID for typed-data signing.')
+  const activeChainNumber = Number(BigInt(activeChainHex))
+  if (!Number.isSafeInteger(activeChainNumber)) throw new Error('OKX returned an unsupported active chain ID.')
+  const okxTypedData = {
+    ...typedData,
+    domain: { ...typedData.domain, chainId: activeChainNumber },
+  }
+  const nextParams = [params[0], typeof serialized === 'string' ? JSON.stringify(okxTypedData) : okxTypedData, ...params.slice(2)]
+  const signature = await provider.request({ method: 'eth_signTypedData_v4', params: nextParams })
+  const recoveredAddress = await recoverTypedDataAddress({
+    domain: typedData.domain,
+    types: typedData.types,
+    primaryType: typedData.primaryType,
+    message: typedData.message,
+    signature,
+  })
+  if (recoveredAddress.toLowerCase() !== requestedAddress) {
+    throw new Error('OKX signed a different Gateway digest. The withdrawal was stopped before submission.')
+  }
+  return signature
 }
 
 async function attachActiveTransactionChainId(provider: Eip1193Provider, params: unknown[] | object | undefined) {

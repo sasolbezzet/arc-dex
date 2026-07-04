@@ -8,6 +8,7 @@ import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
 import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } from 'viem'
 import { describeBridgeRoute, type BridgeRegistryToken } from '../domain/bridgeRouteRegistry'
 import { quoteEoaSwap, swapFromEoa } from '../services/swapService'
+import { getTreasuryStatus } from '../payApi'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -101,8 +102,14 @@ const CCTP_FAST_FINALITY_THRESHOLD = 1000n
 const INITIAL_FEE_MULTIPLIER = 3n
 const MAX_FEE_MULTIPLIER = 4n
 const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 30)
-const EVM_FEE_TREASURY = import.meta.env.VITE_ARCOX_FEE_TREASURY || '0xE34FF1D2C925DDafB28C95C2396fC49A6f64569e'
-const SOLANA_FEE_TREASURY = import.meta.env.VITE_SOLANA_FEE_TREASURY || '4kAf2Qxf9KnbnKo7ukPMMu8q1UButJYNik4yQtvWhExw'
+
+async function runtimeTreasury(kind: 'evm' | 'solana') {
+  const status = await getTreasuryStatus()
+  const value = String(kind === 'evm' ? status?.treasuryWallet : status?.solanaTreasuryWallet || '').trim()
+  const valid = kind === 'evm' ? /^0x[0-9a-fA-F]{40}$/.test(value) : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)
+  if (!valid) throw new Error(`${kind === 'evm' ? 'EVM' : 'Solana'} treasury is not configured in backend.`)
+  return value
+}
 
 function enc256(n: bigint) { return n.toString(16).padStart(64,'0') }
 function encAddr(a: string) { return a.slice(2).toLowerCase().padStart(64,'0') }
@@ -564,7 +571,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     if (!routerAddr && feeMicro > 0n) {
       setStep(`MetaMask: Platform fee ${bridgeTokenLabel}...`)
       setStatus({ type:'info', msg:`⏳ MetaMask popup: transfer platform fee ${bridgeTokenLabel}...`, steps:[...localSteps] })
-      const feeTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0xa9059cbb'+encAddr(EVM_FEE_TREASURY)+enc256(feeMicro) })
+      const feeTreasury = await runtimeTreasury('evm')
+      const feeTx = await sendEvmTxBuffered({ from:address, to:burnToken, data:'0xa9059cbb'+encAddr(feeTreasury)+enc256(feeMicro) })
       localSteps.push({ name:'platform-fee', state:'pending', txHash:feeTx })
       await waitEvmTx(feeTx)
       localSteps[localSteps.length-1].state='success'
@@ -977,7 +985,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const owner = new PublicKey(ownerAddr)
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
     const senderAta = await getAssociatedTokenAddress(mint, owner)
-    const treasury = new PublicKey(SOLANA_FEE_TREASURY)
+    const treasury = new PublicKey(await runtimeTreasury('solana'))
     const treasuryAta = await getAssociatedTokenAddress(mint, treasury)
 
     // EVM address sebagai bytes32 mintRecipient

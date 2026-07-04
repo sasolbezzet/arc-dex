@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { estimateSendTokenFromEoa, sendTokenFromEoa } from '../services/eoaTransactions'
 import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
-import { getInvoice, markInvoicePaid, patchInvoice, quoteEcoRoute } from '../payApi'
+import { getInvoice, markInvoicePaid, quoteEcoRoute } from '../payApi'
 import type { ArcoxInvoice } from '../payApi'
 
 type Props = {
@@ -110,12 +110,11 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
         amount: invoice.amount,
       })
       const txHash = sent.txHash
-      const pending = await patchInvoice(invoice.invoiceId, { status: 'pending', txHash, payerAddress: address })
-      setInvoice(pending)
+      setInvoice(current => current ? { ...current, status: 'pending', txHash, payerAddress: address } : current)
       setPreview(null)
       const receipt = await waitForReceipt(txHash)
       if (receipt?.status === '0x0') {
-        setInvoice(await patchInvoice(invoice.invoiceId, { status: 'failed', txHash, payerAddress: address }))
+        setInvoice(current => current ? { ...current, status: 'failed', txHash, payerAddress: address } : current)
       } else if (receipt?.status === '0x1') {
         setInvoice(await markInvoicePaid(invoice.invoiceId, { txHash, payerAddress: address }))
       }

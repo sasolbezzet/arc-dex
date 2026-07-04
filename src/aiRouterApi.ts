@@ -1,9 +1,10 @@
 import { safePost } from './api'
+import { getAuthToken } from './auth'
 
 const API = ''
 
 export async function getAiRouterStatus(ownerAddress: string) {
-  const res = await fetch(`${API}/api/ai-router/status?ownerAddress=${encodeURIComponent(ownerAddress)}`)
+  const res = await fetch(`${API}/api/ai-router/status?ownerAddress=${encodeURIComponent(ownerAddress)}`, { headers: authHeaders() })
   if (!res.ok) throw new Error(await responseError(res))
   return res.json()
 }
@@ -16,7 +17,7 @@ export async function getAiRouterDelegateStatus(input: { ownerAddress: string; d
 }
 
 export async function refreshAiRouterAutoPayReadiness(ownerAddress: string) {
-  const res = await fetch(`${API}/api/ai-router/auto-pay/readiness?ownerAddress=${encodeURIComponent(ownerAddress)}`)
+  const res = await fetch(`${API}/api/ai-router/auto-pay/readiness?ownerAddress=${encodeURIComponent(ownerAddress)}`, { headers: authHeaders() })
   if (!res.ok) throw new Error(await responseError(res))
   return res.json()
 }
@@ -47,4 +48,9 @@ async function responseError(res: Response) {
   } catch {
     return text || `HTTP ${res.status}`
   }
+}
+
+function authHeaders(): HeadersInit {
+  const token = getAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
