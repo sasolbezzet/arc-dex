@@ -71,27 +71,32 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       },
     ],
     agentMcp: {
-      intro: 'ARCOX MCP membuat agent lokal seperti Codex atau Hermes bisa memahami dan menjalankan fitur ARCOX DEX dari terminal, dengan private key tetap berada di komputer user.',
+      intro: 'ARCOX Agent memasang runtime MCP lokal agar agent seperti Codex atau Hermes bisa memahami dan menjalankan fitur ARCOX DEX dari terminal, dengan private key tetap berada di komputer user.',
       sections: [
         {
           title: 'Instalasi sekali pakai',
-          body: 'Install package npm publik lalu jalankan server MCP lokal. Setelah terpasang, agent bisa memanggil tools ARCOX tanpa mencari file repo.',
-          code: 'npm install -g arcox-mcp\narcox-mcp',
+          body: 'Install package installer publik. Package ini otomatis menarik arcox-mcp sebagai dependency, jadi user normal tidak perlu install dua paket terpisah.',
+          code: 'npm install -g arcox-agent\narcox-agent setup\nnano ~/.arcox/agent.env\narcox-agent doctor',
         },
         {
           title: 'File env user',
-          body: 'Simpan private key dan RPC di komputer user. Jangan taruh private key di browser, chat, atau repository.',
-          code: 'chmod 600 ~/.arcox/agent.env\nchmod 600 ~/arc-dex-api/.env',
+          body: 'Simpan signer, API key, dan RPC di komputer user. Jangan taruh private key di browser, chat, atau repository.',
+          code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://rpc.testnet.arc.network/',
         },
         {
           title: 'Koneksi ke Hermes',
-          body: 'Tambahkan MCP server ke Hermes. Pastikan args berbentuk array kosong, bukan string.',
-          code: 'hermes mcp add arcox -- arcox-mcp\n\nmcp_servers:\n  arcox:\n    command: arcox-mcp\n    args: []',
+          body: 'Untuk Hermes, `arcox-agent setup` dan `arcox-agent sync` sudah menulis MCP `arcox` otomatis. Pakai `--with-provider` hanya jika Anda ingin installer juga mengubah model provider Hermes.',
+          code: 'arcox-agent setup\narcox-agent sync\n\n# opsional: ikut pasang provider Hermes dari env terlindungi\narcox-agent sync --with-provider',
         },
         {
           title: 'Koneksi ke Codex',
-          body: 'Tambahkan MCP server bernama arcox dengan command arcox-mcp. Setelah itu restart Codex session agar tool muncul.',
-          code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-mcp",\n      "args": []\n    }\n  }\n}',
+          body: 'Codex tidak dikonfigurasi otomatis oleh `setup`, jadi tambahkan MCP server bernama `arcox` yang menjalankan `arcox-agent mcp`, lalu restart session Codex.',
+          code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-agent",\n      "args": ["mcp"]\n    }\n  }\n}',
+        },
+        {
+          title: 'Provider Hermes manual',
+          body: 'Jika user ingin menambah custom provider ARCOX secara manual di Hermes, MCP lokal tetap harus terpasang terpisah. Base URL tidak memasang tool dengan sendirinya.',
+          code: 'Name: ARCOX User\nBase URL: https://arc-dex-bice.vercel.app/v1\nModel: openai/gpt-oss-120b\nAPI key: arx_sk_...',
         },
         {
           title: 'Aturan keamanan transaksi',
@@ -146,12 +151,13 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       { title: 'Info and history', body: 'Info shows address, Wallet ID, all balances, bridge history, and Bridge Retry Center. This is the main page for diagnosing pending transactions.' },
     ],
     agentMcp: {
-      intro: 'ARCOX MCP lets a local agent such as Codex or Hermes understand and run ARCOX DEX features from the terminal while private keys stay on the user computer.',
+      intro: 'ARCOX Agent installs the local MCP runtime so an agent such as Codex or Hermes can understand and run ARCOX DEX features from the terminal while private keys stay on the user computer.',
       sections: [
-        { title: 'One-time install', body: 'Install the public npm package and run the local MCP server. After installation, the agent can call ARCOX tools without searching repository files.', code: 'npm install -g arcox-mcp\narcox-mcp' },
-        { title: 'Separated secrets', body: 'User wallet secrets stay in the local agent env; provider and delegate secrets stay in the backend env. Values are never printed.', code: 'chmod 600 ~/.arcox/agent.env\nchmod 600 ~/arc-dex-api/.env' },
-        { title: 'Connect Hermes', body: 'Add the MCP server to Hermes. Make sure args is an empty array, not a string.', code: 'hermes mcp add arcox -- arcox-mcp\n\nmcp_servers:\n  arcox:\n    command: arcox-mcp\n    args: []' },
-        { title: 'Connect Codex', body: 'Add an MCP server named arcox with command arcox-mcp. Restart the Codex session so the tool appears.', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-mcp",\n      "args": []\n    }\n  }\n}' },
+        { title: 'One-time install', body: 'Install the public installer package. It automatically pulls `arcox-mcp`, so normal users do not need two separate global installs.', code: 'npm install -g arcox-agent\narcox-agent setup\nnano ~/.arcox/agent.env\narcox-agent doctor' },
+        { title: 'Separated secrets', body: 'User signer keys, API keys, and RPC values stay in the local agent env. Values are never printed and should not be copied into frontend or backend repos.', code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://rpc.testnet.arc.network/' },
+        { title: 'Connect Hermes', body: 'For Hermes, `arcox-agent setup` and `arcox-agent sync` already write the local `arcox` MCP entry. Use `--with-provider` only when you want the installer to also update the Hermes model provider.', code: 'arcox-agent setup\narcox-agent sync\n\n# optional: also write the Hermes provider from protected env\narcox-agent sync --with-provider' },
+        { title: 'Connect Codex', body: 'Codex is not auto-configured by `setup`, so add an MCP server named `arcox` that runs `arcox-agent mcp`, then restart the Codex session.', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-agent",\n      "args": ["mcp"]\n    }\n  }\n}' },
+        { title: 'Manual Hermes provider', body: 'If a user wants to add the ARCOX custom provider manually in Hermes, the local MCP still has to be installed separately. The base URL alone does not install tools.', code: 'Name: ARCOX User\nBase URL: https://arc-dex-bice.vercel.app/v1\nModel: openai/gpt-oss-120b\nAPI key: arx_sk_...' },
         { title: 'Transaction safety rule', body: 'Every value-moving action must quote/preview first. The user can simply reply yes, ya, confirm, konfirmasi, lanjut, or ok after reading the preview. The agent must not execute directly with confirmed=true only.', steps: ['Agent calls quote.', 'Agent shows route, fee, balances, source wallet, estimated receive, and risks.', 'User gives a simple confirmation.', 'Agent executes with previewId and confirmationText.'] },
         { title: 'MCP features', body: 'MCP tools cover balances, history, route status, UI map, swap, bridge, send, retry bridge, agent status, and Agentic Economy jobs.', steps: ['arcox_wallet_balances', 'arcox_transaction_history', 'arcox_quote_swap / arcox_execute_swap', 'arcox_quote_bridge / arcox_execute_bridge', 'arcox_quote_send / arcox_execute_send', 'arcox_retry_bridge', 'arcox_agent_job', 'arcox_search_docs / arcox_read_doc'] },
         { title: 'Dynamic-style docs discovery', body: 'Following the Dynamic MCP docs pattern, ARCOX MCP exposes tools for searching and reading product documentation. Agents should use these docs tools before guessing an unfamiliar flow.', steps: ['arcox_search_docs searches ARCOX topics.', 'arcox_read_doc reads structured doc pages.', 'MCP resources still expose UI map and safety rules.'] },
@@ -186,12 +192,13 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       { title: 'Info and history', body: 'Info 显示 address、Wallet ID、全部余额、bridge history 和 Bridge Retry Center。这里是排查 pending bridge 的主要页面。' },
     ],
     agentMcp: {
-      intro: 'ARCOX MCP 让 Codex 或 Hermes 等本地 agent 可以从终端理解并执行 ARCOX DEX 功能，私钥仍保存在用户电脑。',
+      intro: 'ARCOX Agent 会安装本地 MCP runtime，让 Codex 或 Hermes 等本地 agent 可以从终端理解并执行 ARCOX DEX 功能，私钥仍保存在用户电脑。',
       sections: [
-        { title: '一次安装', body: '安装公开 npm package 并运行本地 MCP server。安装后 agent 可以直接调用 ARCOX tools。', code: 'npm install -g arcox-mcp\narcox-mcp' },
-        { title: '密钥隔离', body: '用户钱包密钥保存在本地 agent env；provider 与 delegate 密钥保存在 backend env。密钥值不会输出。', code: 'chmod 600 ~/.arcox/agent.env\nchmod 600 ~/arc-dex-api/.env' },
-        { title: '连接 Hermes', body: '把 MCP server 添加到 Hermes。确认 args 是空数组，不是字符串。', code: 'hermes mcp add arcox -- arcox-mcp\n\nmcp_servers:\n  arcox:\n    command: arcox-mcp\n    args: []' },
-        { title: '连接 Codex', body: '添加名为 arcox 的 MCP server，command 使用 arcox-mcp。重启 Codex session 后 tool 会出现。', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-mcp",\n      "args": []\n    }\n  }\n}' },
+        { title: '一次安装', body: '安装公开 installer package。它会自动拉取 `arcox-mcp`，普通用户不需要分开安装两个全局包。', code: 'npm install -g arcox-agent\narcox-agent setup\nnano ~/.arcox/agent.env\narcox-agent doctor' },
+        { title: '密钥隔离', body: '用户 signer、API key 和 RPC 保存在本地 agent env。密钥值不会输出，也不应复制到前端或后端 repo。', code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://rpc.testnet.arc.network/' },
+        { title: '连接 Hermes', body: '`arcox-agent setup` 和 `arcox-agent sync` 会自动写入本地 `arcox` MCP。只有在希望 installer 同时修改 Hermes model provider 时才使用 `--with-provider`。', code: 'arcox-agent setup\narcox-agent sync\n\n# 可选：同时从受保护 env 写入 Hermes provider\narcox-agent sync --with-provider' },
+        { title: '连接 Codex', body: 'Codex 不会被 `setup` 自动配置，因此请手动添加名为 `arcox` 的 MCP server，运行 `arcox-agent mcp`，然后重启 Codex session。', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-agent",\n      "args": ["mcp"]\n    }\n  }\n}' },
+        { title: 'Hermes 手动 provider', body: '如果用户要在 Hermes 里手动添加 ARCOX custom provider，本地 MCP 仍需单独安装。仅设置 base URL 不会自动安装 tools。', code: 'Name: ARCOX User\nBase URL: https://arc-dex-bice.vercel.app/v1\nModel: openai/gpt-oss-120b\nAPI key: arx_sk_...' },
         { title: '交易安全规则', body: '所有会移动资金的动作必须先 quote/preview。用户阅读 preview 后只需回复 yes、ya、confirm、konfirmasi、lanjut 或 ok。agent 不允许只用 confirmed=true 直接执行。', steps: ['Agent 调用 quote。', 'Agent 显示 route、fee、余额、来源钱包、预计到账和风险。', '用户给出简单确认。', 'Agent 使用 previewId 和 confirmationText 执行。'] },
         { title: 'MCP 功能', body: 'MCP tools 包含 balances、history、route status、UI map、swap、bridge、send、retry bridge、agent status 和 Agentic Economy jobs。', steps: ['arcox_wallet_balances', 'arcox_transaction_history', 'arcox_quote_swap / arcox_execute_swap', 'arcox_quote_bridge / arcox_execute_bridge', 'arcox_quote_send / arcox_execute_send', 'arcox_retry_bridge', 'arcox_agent_job', 'arcox_search_docs / arcox_read_doc'] },
         { title: 'Dynamic-style docs discovery', body: '参考 Dynamic MCP docs 模式，ARCOX MCP 提供搜索和读取产品文档的 tools。Agent 在不熟悉 flow 时应先调用 docs tools，而不是猜测。', steps: ['arcox_search_docs 搜索 ARCOX topic。', 'arcox_read_doc 读取结构化 docs。', 'MCP resources 继续提供 UI map 和 safety rules。'] },
@@ -241,7 +248,7 @@ export function DocsPanel() {
       </div>
 
       <section className='docs-agent-section'>
-        <div className='docs-kicker'>Agent MCP</div>
+        <div className='docs-kicker'>ARCOX Agent / MCP</div>
         <h2>Terminal Agent Setup</h2>
         <p>{content.agentMcp.intro}</p>
         <div className='docs-grid docs-agent-grid'>

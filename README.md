@@ -58,7 +58,32 @@ Install and configure the local-first agent:
 npm install -g arcox-agent
 arcox-agent setup
 nano ~/.arcox/agent.env
+arcox-agent sync
 arcox-agent doctor
+```
+
+`arcox-agent` automatically installs `arcox-mcp`, so end users do not need a
+separate global `arcox-mcp` install for the normal Hermes/Codex flow.
+
+For Hermes, `setup` and `sync` wire the local `arcox` MCP entry automatically.
+If you also want the installer to write the ARCOX model provider into Hermes,
+run:
+
+```bash
+arcox-agent sync --with-provider
+```
+
+For Codex, add a manual MCP entry that runs:
+
+```json
+{
+  "mcpServers": {
+    "arcox": {
+      "command": "arcox-agent",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
 Signer and Hermes credentials belong only in `~/.arcox/agent.env`. They must
