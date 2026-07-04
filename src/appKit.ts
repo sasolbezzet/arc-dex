@@ -12,9 +12,9 @@ import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
 import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet, resolveChainIdentifier } from '@circle-fin/bridge-kit'
 import { ViemAdapter } from '@circle-fin/adapter-viem-v2'
 import { SolanaKitAdapter } from '@circle-fin/adapter-solana-kit'
-import { address as solanaAddress, createSolanaRpc, getBase64EncodedWireTransaction } from '@solana/kit'
+import { address as solanaAddress, compileTransaction, createSolanaRpc, getBase58Decoder, getBase64EncodedWireTransaction } from '@solana/kit'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { PublicKey } from '@solana/web3.js'
+import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from 'viem'
 import { solanaFeePayerSignature, wrapSolflare, wrapPhantom } from './solflareWrapper'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
@@ -49,11 +49,16 @@ function createDiagnosticSolanaRpc() {
           get(requestTarget, requestProperty, requestReceiver) {
             if (requestProperty !== 'send') return Reflect.get(requestTarget, requestProperty, requestReceiver)
             return async () => {
-              const response = await requestTarget.send()
-              lastSolanaSimulationDiagnostic = response?.value?.err
-                ? { err: response.value.err, logs: parseSolanaLogs(response.value.logs) }
-                : null
-              return response
+              try {
+                const response = await requestTarget.send()
+                lastSolanaSimulationDiagnostic = response?.value?.err
+                  ? { err: response.value.err, logs: parseSolanaLogs(response.value.logs) }
+                  : null
+                return response
+              } catch (error) {
+                captureSolanaRpcError(error)
+                throw error
+              }
             }
           },
         })
@@ -263,16 +268,95 @@ export async function buildSolanaAdapter() {
       const signed = await provider.signTransaction(encoded)
       return { [signerAddress]: solanaFeePayerSignature(signed) }
     })),
+    signMessages: async (messages: readonly { content: Uint8Array }[]) => Promise.all(messages.map(async message => {
+      const result = await provider.signMessage(message.content)
+      const signature = result?.signature ?? result
+      if (!(signature instanceof Uint8Array) || signature.length !== 64) {
+        throw new Error('Wallet returned an invalid Solana message signature.')
+      }
+      return { [signerAddress]: signature }
+    })),
     signVersionedTransaction: async (transaction: any) => provider.signTransaction(transaction),
   }
   lastSolanaSimulationDiagnostic = null
-  return new SolanaKitAdapter({
+  const adapter: any = new SolanaKitAdapter({
     getRpc: () => createDiagnosticSolanaRpc() as any,
     getSigner: async () => signer,
   }, {
     addressContext: 'user-controlled',
     supportedChains: [SolanaDevnet],
   } as any)
+  installBrowserWalletTransactionExecutor(adapter, provider)
+  return adapter
+}
+
+function installBrowserWalletTransactionExecutor(adapter: any, provider: any) {
+  const sdkExecuteTransaction = adapter.executeTransaction.bind(adapter)
+  adapter.executeTransaction = async (
+    rpc: any,
+    signer: any,
+    instructions: readonly any[],
+    additionalSigners: readonly any[] = [],
+    computeUnitLimit?: number,
+    addressesByLookupTable?: any,
+  ) => {
+    // Preserve the SDK path for operations that require program-side
+    // co-signers. Gateway deposit and receive do not use this branch.
+    if (additionalSigners.length) {
+      return sdkExecuteTransaction(rpc, signer, instructions, additionalSigners, computeUnitLimit, addressesByLookupTable)
+    }
+
+    try {
+      await adapter.simulateTransaction(rpc, signer, instructions, [], computeUnitLimit, addressesByLookupTable)
+      const message = await adapter.buildTransactionMessage(rpc, signer, instructions, computeUnitLimit, addressesByLookupTable)
+      const unsigned = compileTransaction(message)
+      const signed = await provider.signTransaction(getBase64EncodedWireTransaction(unsigned))
+      const signatureBytes = solanaFeePayerSignature(signed)
+      const wireTransaction = encodeBrowserSignedTransaction(signed)
+      const signature = getBase58Decoder().decode(signatureBytes)
+      await rpc.sendTransaction(wireTransaction, {
+        encoding: 'base64',
+        preflightCommitment: 'confirmed',
+        maxRetries: 3n,
+      }).send()
+      const confirmation = await adapter.waitForTransaction(signature, { timeout: 60_000, confirmations: 1 })
+      if (confirmation?.status === 'reverted') throw new Error(`Transaction failed on-chain: ${signature}`)
+      return signature
+    } catch (error) {
+      captureSolanaRpcError(error)
+      throw error
+    }
+  }
+}
+
+function encodeBrowserSignedTransaction(transaction: any) {
+  let bytes: Uint8Array
+  if (transaction instanceof VersionedTransaction) {
+    bytes = transaction.serialize()
+  } else if (transaction instanceof Transaction) {
+    bytes = transaction.serialize({ requireAllSignatures: true, verifySignatures: true })
+  } else if (transaction instanceof Uint8Array) {
+    bytes = transaction
+  } else if (typeof transaction === 'string') {
+    return transaction
+  } else if (typeof transaction?.serialize === 'function') {
+    bytes = transaction.serialize()
+  } else {
+    throw new Error('Wallet returned an unsupported signed Solana transaction format.')
+  }
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  }
+  return btoa(binary)
+}
+
+function captureSolanaRpcError(error: unknown) {
+  const context = collectSolanaErrorContext(error)
+  lastSolanaSimulationDiagnostic = {
+    err: context.err || (error instanceof Error ? error.message : String(error)),
+    logs: context.logs,
+  }
 }
 
 // ── Wallet connect / disconnect ─────────────────────────────────

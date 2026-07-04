@@ -32,6 +32,20 @@ function transactionInput(input: any) {
   return input
 }
 
+function signedTransactionResult(result: any) {
+  const value = result?.signedTransaction ?? result
+  if (value instanceof VersionedTransaction || value instanceof Transaction) return value
+  if (typeof value === 'string' || value instanceof Uint8Array) {
+    const bytes = typeof value === 'string' ? decodeB64(value) : value
+    try { return VersionedTransaction.deserialize(bytes) } catch {
+      try { return Transaction.from(bytes) } catch {
+        throw new Error('Wallet returned invalid serialized Solana transaction bytes.')
+      }
+    }
+  }
+  return value
+}
+
 function transactionFeePayer(input: any): string | null {
   if (input instanceof VersionedTransaction) return toBase58(input.message.staticAccountKeys?.[0])
   if (input instanceof Transaction) return toBase58(input.feePayer || input.signatures?.[0]?.publicKey)
@@ -91,7 +105,7 @@ export function wrapSolflare(raw: any): any {
       if (!address) throw new Error('Solflare public key tidak tersedia.')
       const payer = transactionFeePayer(transaction)
       if (payer && payer !== address) throw new Error(`Solana fee payer ${payer} does not match connected wallet ${address}.`)
-      return assertFeePayerSigned(await raw.signTransaction(transaction), address)
+      return assertFeePayerSigned(signedTransactionResult(await raw.signTransaction(transaction)), address)
     },
 
     async signAllTransactions(inputs: any[]) {
@@ -99,7 +113,7 @@ export function wrapSolflare(raw: any): any {
       const signed = await raw.signAllTransactions(txs)
       const address = toBase58(raw.publicKey)
       if (!address) throw new Error('Solflare public key tidak tersedia.')
-      return signed.map((result: any) => assertFeePayerSigned(result, address))
+      return signed.map((result: any) => assertFeePayerSigned(signedTransactionResult(result), address))
     },
 
     async signMessage(msg: Uint8Array) {
@@ -143,7 +157,7 @@ export function wrapPhantom(raw: any): any {
       if (!address) throw new Error('Phantom public key tidak tersedia.')
       const payer = transactionFeePayer(transaction)
       if (payer && payer !== address) throw new Error(`Solana fee payer ${payer} does not match connected wallet ${address}.`)
-      return assertFeePayerSigned(await raw.signTransaction(transaction), address)
+      return assertFeePayerSigned(signedTransactionResult(await raw.signTransaction(transaction)), address)
     },
 
     async signAllTransactions(inputs: any[]) {
@@ -151,7 +165,7 @@ export function wrapPhantom(raw: any): any {
       const signed = await raw.signAllTransactions(txs)
       const address = toBase58(raw.publicKey)
       if (!address) throw new Error('Phantom public key tidak tersedia.')
-      return signed.map((result: any) => assertFeePayerSigned(result, address))
+      return signed.map((result: any) => assertFeePayerSigned(signedTransactionResult(result), address))
     },
 
     async signMessage(msg: Uint8Array) {
