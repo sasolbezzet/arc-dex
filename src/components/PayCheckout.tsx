@@ -3,6 +3,7 @@ import { estimateSendTokenFromEoa, sendTokenFromEoa } from '../services/eoaTrans
 import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
 import { getInvoice, markInvoicePaid, quoteEcoRoute } from '../payApi'
 import type { ArcoxInvoice } from '../payApi'
+import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 
 type Props = {
   address: string | null
@@ -39,8 +40,9 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
   useEffect(() => { load() }, [])
 
   const connectWallet = async () => {
-    if (!window.ethereum) throw new Error('MetaMask tidak terdeteksi.')
-    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
+    const provider = await findConnectedWalletProvider()
+    if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
+    const accounts = await normalizeWalletProvider(provider).request({ method: 'eth_requestAccounts' })
     if (!accounts?.[0]) throw new Error('Wallet address tidak ditemukan.')
     await onConnect(accounts[0])
   }
@@ -112,7 +114,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
       const txHash = sent.txHash
       setInvoice(current => current ? { ...current, status: 'pending', txHash, payerAddress: address } : current)
       setPreview(null)
-      const receipt = await waitForReceipt(txHash)
+      const receipt = await waitForReceipt(txHash, address)
       if (receipt?.status === '0x0') {
         setInvoice(current => current ? { ...current, status: 'failed', txHash, payerAddress: address } : current)
       } else if (receipt?.status === '0x1') {
@@ -243,9 +245,11 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
   )
 }
 
-async function waitForReceipt(txHash: string) {
+async function waitForReceipt(txHash: string, address: string) {
   for (let i = 0; i < 20; i++) {
-    const receipt = await window.ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] }).catch(() => null)
+    const provider = await findConnectedWalletProvider(address)
+    if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
+    const receipt = await normalizeWalletProvider(provider).request({ method: 'eth_getTransactionReceipt', params: [txHash] }).catch(() => null)
     if (receipt) return receipt
     await new Promise(resolve => setTimeout(resolve, 1500))
   }

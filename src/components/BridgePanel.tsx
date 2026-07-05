@@ -9,6 +9,8 @@ import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } fro
 import { describeBridgeRoute, type BridgeRegistryToken } from '../domain/bridgeRouteRegistry'
 import { quoteEoaSwap, swapFromEoa } from '../services/swapService'
 import { getTreasuryStatus } from '../payApi'
+import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
+import { rpcUint } from '../utils/rpcQuantity'
 // import { BridgeChain } from '@circle-fin/app-kit' // unused import disabled
 declare global { interface Window { ethereum?: any; solana?: any; solflare?: any; phantom?: { solana?: any } } }
 
@@ -164,6 +166,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const nativeRouteLive = Boolean(nativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc_Testnet')
   const displayToken = isNativeBridgeToken ? nativeBridgeToken!.symbol : token
   const tokenDec = TOKEN_DECIMALS[token]||6
+  const evmRequest = async (request: { method: string; params?: unknown[] | object }) => {
+    const provider = await findConnectedWalletProvider(address)
+    if (!provider) throw new Error('Wallet EVM belum terhubung.')
+    return normalizeWalletProvider(provider).request(request)
+  }
 
   const circleB = parseFloat(balances[token]||'0')
   const eoaB = parseFloat(eoaBalances[token]||'0')
@@ -171,8 +178,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const isToSolana = toChain === 'Solana_Devnet'
   const isFromSolana = fromChain === 'Solana_Devnet'
   const sourceBalance = isNativeBridgeToken ? 0 : source === 'circle' && fromChain === 'Arc_Testnet' ? circleB : isFromSolana ? parseFloat(solanaUsdcBal || '0') : eoaB
-  const customFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
-  const cctpFee = amount ? (parseFloat(amount)*0.0001).toFixed(6) : '-'
+  // The router and Stablecoin Service collect their fee from the submitted
+  // amount. CCTP maxFee is encoded as 10 USDC base units (0.000010 USDC), so
+  // no extra token transfer is added to the source debit.
+  const customFee = amount ? '0.000000' : '-'
+  const cctpFee = amount ? '0.000010' : '-'
   const gatewayForwardingEnabled = false
   const forwardingFee = gatewayForwardingEnabled && (isFromSolana || isToSolana) ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
   const platformFee = amount
@@ -182,7 +192,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const platformFeeLabel = isNativeBridgeToken
     ? nativeBridgeExecutable ? nativeQuote ? `${nativeQuote.platformFee} USDC` : nativeQuoteLoading ? 'Calculating...' : '-' : 'Route unavailable'
     : routerFee === '-' ? 'Router belum tersedia' : `${routerFee} ${token}`
-  const totalDebit = amount ? (parseFloat(amount) + parseFloat(customFee === '-' ? '0' : customFee)).toFixed(tokenDec === 8 ? 8 : 6) : '-'
+  const totalDebit = amount ? parseFloat(amount).toFixed(tokenDec === 8 ? 8 : 6) : '-'
   const est = amount ? (parseFloat(amount)-parseFloat(cctpFee==='-'?'0':cctpFee)-parseFloat(forwardingFee==='-'?'0':forwardingFee)-parseFloat(routerFee==='-'?'0':routerFee)).toFixed(tokenDec === 8 ? 8 : 4) : '-'
 
   // ── Solana wallet connect ──
@@ -320,11 +330,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const toInfo = EVM_CHAINS.find(c=>c.id===destinationChain)
     if (toInfo) {
       try {
-        await window.ethereum!.request({ method:'wallet_switchEthereumChain', params:[{chainId:toInfo.chainId}] })
+        await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:toInfo.chainId}] })
         await new Promise(r=>setTimeout(r,1500))
       } catch(e:any) {
         if ((e.code===4902||e.code===-32603) && toInfo.addParams) {
-          await window.ethereum!.request({ method:'wallet_addEthereumChain', params:[toInfo.addParams] })
+          await evmRequest({ method:'wallet_addEthereumChain', params:[toInfo.addParams] })
           await new Promise(r=>setTimeout(r,3000))
         }
       }
@@ -372,8 +382,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           if (body.error || !body.result) throw new Error(body.error?.message || 'RPC quote failed')
           result = body.result
         } else {
-          if (!window.ethereum) throw new Error('Wallet belum terhubung.')
-          result = await window.ethereum.request({
+          result = await evmRequest({
             method:'eth_call',
             params:[{ from:address, to:routerAddr, data, value:toHex(nativeAmount) }, 'latest'],
           })
@@ -389,7 +398,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   }
 
   const bridgeNativeEvmToArc = async () => {
-    if (!address || !amount || !window.ethereum) return
+    if (!address || !amount) return
     if (!nativeBridgeExecutable) throw new Error(`Native bridge belum tersedia untuk ${fromChain}.`)
     const nativeAmount = parseUnits(amount, 18)
     const localSteps: BridgeStep[] = []
@@ -397,11 +406,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     if (fromInfo) {
       setStep('Switch network...')
       try {
-        await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:fromInfo.chainId}] })
+        await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:fromInfo.chainId}] })
         await new Promise(r=>setTimeout(r,1500))
       } catch(e:any) {
         if ((e.code===4902||e.code===-32603) && fromInfo.addParams) {
-          await window.ethereum.request({ method:'wallet_addEthereumChain', params:[fromInfo.addParams] })
+          await evmRequest({ method:'wallet_addEthereumChain', params:[fromInfo.addParams] })
           await new Promise(r=>setTimeout(r,3000))
         }
       }
@@ -422,11 +431,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     })
     let gasLabel = 'Wallet estimate'
     try {
-      const gasHex = await window.ethereum.request({
+      const gasHex = await evmRequest({
         method: 'eth_estimateGas',
         params: [{ from: address, to: routerAddr, data, value: toHex(nativeAmount) }],
       })
-      gasLabel = `${BigInt(gasHex).toString()} gas`
+      gasLabel = `${rpcUint(gasHex, 'estimated gas').toString()} gas`
       setNativeGasEstimate(gasLabel)
     } catch {
       setNativeGasEstimate(gasLabel)
@@ -465,7 +474,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   // ── EVM Bridge (Arc/EVM ↔ EVM) ──
   const bridgeEvm = async (_solWallet?: {address:string;provider:any}|null) => {
     const sw = _solWallet?.provider ? _solWallet : solanaWallet
-    if (!address || !amount || !window.ethereum) return
+    if (!address || !amount) return
     const amtNum = parseFloat(amount)
     const localSteps: BridgeStep[] = []
     let historyId: string|null = null
@@ -504,11 +513,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     if (fromInfo) {
       setStep('Switch network...')
       try {
-        await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:fromInfo.chainId}] })
+        await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:fromInfo.chainId}] })
         await new Promise(r=>setTimeout(r,2000))
       } catch(e:any) {
         if ((e.code===4902||e.code===-32603) && fromInfo.addParams) {
-          await window.ethereum.request({ method:'wallet_addEthereumChain', params:[fromInfo.addParams] })
+          await evmRequest({ method:'wallet_addEthereumChain', params:[fromInfo.addParams] })
           await new Promise(r=>setTimeout(r,3000))
         }
       }
@@ -722,11 +731,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const toInfo = EVM_CHAINS.find(c=>c.id===toChain)
       if (toInfo) {
         try {
-          await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:toInfo.chainId}] })
+          await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:toInfo.chainId}] })
           await new Promise(r=>setTimeout(r,1500))
         } catch(e:any) {
           if ((e.code===4902||e.code===-32603) && toInfo.addParams) {
-            await window.ethereum.request({ method:'wallet_addEthereumChain', params:[toInfo.addParams] })
+            await evmRequest({ method:'wallet_addEthereumChain', params:[toInfo.addParams] })
             await new Promise(r=>setTimeout(r,3000))
           }
         }
@@ -837,13 +846,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       localSteps[localSteps.length-1].state='success'
 
       const arcInfo = EVM_CHAINS.find(c=>c.id==='Arc_Testnet')
-      if (arcInfo && window.ethereum) {
+      if (arcInfo) {
         try {
-          await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{chainId:arcInfo.chainId}] })
+          await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:arcInfo.chainId}] })
           await new Promise(r=>setTimeout(r,1500))
         } catch(e:any) {
           if ((e.code===4902||e.code===-32603) && arcInfo.addParams) {
-            await window.ethereum.request({ method:'wallet_addEthereumChain', params:[arcInfo.addParams] })
+            await evmRequest({ method:'wallet_addEthereumChain', params:[arcInfo.addParams] })
             await new Promise(r=>setTimeout(r,3000))
           }
         }
@@ -921,28 +930,28 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
   const evmTokenBalance = async (tokenAddr: string, ownerAddr: string): Promise<bigint> => {
     const data = '0x70a08231' + encAddr(ownerAddr)
-    const out = await window.ethereum!.request({ method:'eth_call', params:[{ to: tokenAddr, data }, 'latest'] })
-    return BigInt(out || '0x0')
+    const out = await evmRequest({ method:'eth_call', params:[{ to: tokenAddr, data }, 'latest'] })
+    return rpcUint(out, 'token balance', true)
   }
   const evmNativeBalance = async (ownerAddr: string): Promise<bigint> => {
-    const out = await window.ethereum!.request({ method:'eth_getBalance', params:[ownerAddr, 'latest'] })
-    return BigInt(out || '0x0')
+    const out = await evmRequest({ method:'eth_getBalance', params:[ownerAddr, 'latest'] })
+    return rpcUint(out, 'native balance', true)
   }
   const toHex = (n: bigint) => `0x${n.toString(16)}`
   const getBufferedEvmFees = async (tx: any, multiplier = 3n) => {
     const out: any = {}
     try {
-      const gasHex = await window.ethereum!.request({ method:'eth_estimateGas', params:[tx] })
-      out.gas = toHex((BigInt(gasHex) * 13n) / 10n + 10_000n)
+      const gasHex = await evmRequest({ method:'eth_estimateGas', params:[tx] })
+      out.gas = toHex((rpcUint(gasHex, 'estimated gas') * 13n) / 10n + 10_000n)
     } catch(e) {
       console.warn('eth_estimateGas failed, wallet will estimate:', e instanceof Error ? e.message : String(e))
     }
     try {
-      const block = await window.ethereum!.request({ method:'eth_getBlockByNumber', params:['latest', false] })
-      const baseFee = block?.baseFeePerGas ? BigInt(block.baseFeePerGas) : 0n
+      const block = await evmRequest({ method:'eth_getBlockByNumber', params:['latest', false] })
+      const baseFee = block?.baseFeePerGas ? rpcUint(block.baseFeePerGas, 'base fee', true) : 0n
       if (baseFee > 0n) {
         let tip = 0n
-        try { tip = BigInt(await window.ethereum!.request({ method:'eth_maxPriorityFeePerGas' })) } catch {}
+        try { tip = rpcUint(await evmRequest({ method:'eth_maxPriorityFeePerGas' }), 'priority fee', true) } catch {}
         const minTip = 1_500_000n
         if (tip < minTip) tip = minTip
         out.maxPriorityFeePerGas = toHex(tip)
@@ -953,7 +962,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       console.warn('EIP-1559 fee lookup failed:', e instanceof Error ? e.message : String(e))
     }
     try {
-      const gasPrice = BigInt(await window.ethereum!.request({ method:'eth_gasPrice' }))
+      const gasPrice = rpcUint(await evmRequest({ method:'eth_gasPrice' }), 'gas price')
       out.gasPrice = toHex(gasPrice * multiplier)
     } catch {}
     return out
@@ -961,13 +970,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const sendEvmTxBuffered = async (tx: any): Promise<string> => {
     const firstFees = await getBufferedEvmFees(tx, INITIAL_FEE_MULTIPLIER)
     try {
-      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
+      return await evmRequest({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
     } catch(e:any) {
       const msg = e?.message || ''
       if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw e
       await new Promise(r => setTimeout(r, 1200))
       const retryFees = await getBufferedEvmFees(tx, MAX_FEE_MULTIPLIER)
-      return await window.ethereum!.request({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
+      return await evmRequest({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
     }
   }
 
@@ -1274,7 +1283,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     await new Promise(r=>setTimeout(r,1000))
     for (let i=0;i<40;i++) {
       try {
-        const rec = await window.ethereum!.request({method:'eth_getTransactionReceipt',params:[txHash]})
+        const rec = await evmRequest({method:'eth_getTransactionReceipt',params:[txHash]})
         if (rec?.status==='0x1') return
         if (rec?.status==='0x0') throw new Error('Transaction failed onchain')
       } catch(e:any) { if(e.message?.includes('failed')) throw e }

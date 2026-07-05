@@ -203,14 +203,37 @@ function normalizeRequestParams(method: string, params: unknown[] | object | und
   }
   if (method === 'eth_sendTransaction' || method === 'wallet_sendTransaction') {
     const tx = params[0] as Record<string, unknown> | undefined
-    if (!tx || !('chainId' in tx)) return params
-    const chainId = normalizeChainId(tx.chainId)
-    const next = { ...tx }
-    if (chainId) next.chainId = chainId
-    else delete next.chainId
+    if (!tx) return params
+    const next = normalizeTransactionQuantities(tx)
+    if ('chainId' in next) {
+      const chainId = normalizeChainId(next.chainId)
+      if (chainId) next.chainId = chainId
+      else delete next.chainId
+    }
     return [next, ...params.slice(1)]
   }
   return params
+}
+
+function normalizeTransactionQuantities(tx: Record<string, unknown>) {
+  const next = { ...tx }
+  for (const field of ['gas', 'gasLimit', 'gasPrice', 'maxFeePerGas', 'maxPriorityFeePerGas', 'nonce'] as const) {
+    if (!(field in next)) continue
+    const value = normalizeRpcQuantity(next[field])
+    if (value) next[field] = value
+    else delete next[field]
+  }
+  if ('value' in next) next.value = normalizeRpcQuantity(next.value) || '0x0'
+  return next
+}
+
+function normalizeRpcQuantity(value: unknown): string | null {
+  if (typeof value === 'bigint') return value >= 0n ? `0x${value.toString(16)}` : null
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? `0x${value.toString(16)}` : null
+  const text = String(value ?? '').trim()
+  if (/^0x[0-9a-f]+$/i.test(text)) return `0x${BigInt(text).toString(16)}`
+  if (/^\d+$/.test(text)) return `0x${BigInt(text).toString(16)}`
+  return null
 }
 
 function normalizeChainId(value: unknown): string | null {

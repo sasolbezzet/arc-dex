@@ -4,6 +4,7 @@ import { ARC_TOKENS } from '../domain/tokens'
 import { estimateDelegatedUnifiedBalance, estimateX402UnifiedBalance, markX402UnifiedBalanceSpendSubmitted, spendDelegatedUnifiedBalance } from '../payApi'
 import { estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
 import type { AgentIdentity } from '../services/agentIdentity'
+import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 
 type IntelType =
   | 'address'
@@ -203,15 +204,14 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
 
   async function payInvoiceWithWallet() {
     if (!requirement?.recipient || !requirement?.amount) return
-    if (!window.ethereum) {
-      setError('Wallet browser tidak terdeteksi.')
-      return
-    }
     setPaying(true)
     setError('')
     try {
       await switchToArcTestnet()
-      const [account] = await window.ethereum.request({ method: 'eth_requestAccounts' })
+      const provider = await findConnectedWalletProvider()
+      if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
+      const ethereum = normalizeWalletProvider(provider)
+      const [account] = await ethereum.request({ method: 'eth_requestAccounts' })
       if (!account) throw new Error('Wallet belum terkoneksi.')
       const { encodeFunctionData, erc20Abi, parseUnits, keccak256, toHex } = await import('viem')
       const amount = parseUnits(String(requirement.amount || requirement.uniqueAmount), 6)
@@ -245,7 +245,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
         functionName: 'memo',
         args: [ARC_TOKENS.USDC.address, transferData, memoId, memoData],
       })
-      const txHash = await window.ethereum.request({
+      const txHash = await ethereum.request({
         method: 'eth_sendTransaction',
         params: [{ from: account, to: memoContract, data, value: '0x0' }],
       })

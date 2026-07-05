@@ -5,6 +5,8 @@ import { findChain } from '../chains'
 import { txHistory, type TxRecord } from '../txHistory'
 import { useI18n } from '../i18n'
 import { ChainLogo, TokenLogo } from './CompactPickers'
+import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
+import { rpcUint } from '../utils/rpcQuantity'
 const EXPLORER = 'https://testnet.arcscan.app'
 const SOLANA_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 const INITIAL_FEE_MULTIPLIER = 3n
@@ -34,6 +36,11 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   const canRetry = Boolean((rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana_Devnet' && rec.status !== 'success')
   const short = (value?: string) => value ? `${value.slice(0, 10)}...${value.slice(-6)}` : '-'
   const action = rec.action || 'bridge'
+  const evmRequest = async (request: { method: string; params?: unknown[] | object }) => {
+    const provider = await findConnectedWalletProvider()
+    if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
+    return normalizeWalletProvider(provider).request(request)
+  }
   const copyReceipt = async () => {
     try {
       await navigator.clipboard.writeText(JSON.stringify(rec, null, 2))
@@ -45,7 +52,7 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   }
   const waitEvmTx = async (txHash: string) => {
     for (let i = 0; i < 90; i++) {
-      const r = await (window as any).ethereum.request({ method:'eth_getTransactionReceipt', params:[txHash] })
+      const r = await evmRequest({ method:'eth_getTransactionReceipt', params:[txHash] })
       if (r?.status === '0x1') return r
       if (r?.status === '0x0') throw new Error('Retry mint transaction failed on-chain.')
       await new Promise(resolve => setTimeout(resolve, 2000))
@@ -56,17 +63,17 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   const getBufferedEvmFees = async (tx: any, multiplier = 3n) => {
     const out: any = {}
     try {
-      const gasHex = await (window as any).ethereum.request({ method:'eth_estimateGas', params:[tx] })
-      out.gas = toHex((BigInt(gasHex) * 13n) / 10n + 10_000n)
+      const gasHex = await evmRequest({ method:'eth_estimateGas', params:[tx] })
+      out.gas = toHex((rpcUint(gasHex, 'estimated gas') * 13n) / 10n + 10_000n)
     } catch(e) {
       console.warn('retry eth_estimateGas failed:', e instanceof Error ? e.message : String(e))
     }
     try {
-      const block = await (window as any).ethereum.request({ method:'eth_getBlockByNumber', params:['latest', false] })
-      const baseFee = block?.baseFeePerGas ? BigInt(block.baseFeePerGas) : 0n
+      const block = await evmRequest({ method:'eth_getBlockByNumber', params:['latest', false] })
+      const baseFee = block?.baseFeePerGas ? rpcUint(block.baseFeePerGas, 'base fee', true) : 0n
       if (baseFee > 0n) {
         let tip = 0n
-        try { tip = BigInt(await (window as any).ethereum.request({ method:'eth_maxPriorityFeePerGas' })) } catch {}
+        try { tip = rpcUint(await evmRequest({ method:'eth_maxPriorityFeePerGas' }), 'priority fee', true) } catch {}
         if (tip < 1_500_000n) tip = 1_500_000n
         out.maxPriorityFeePerGas = toHex(tip)
         out.maxFeePerGas = toHex(baseFee * multiplier + tip * 2n)
@@ -76,7 +83,7 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
       console.warn('retry EIP-1559 fee lookup failed:', e instanceof Error ? e.message : String(e))
     }
     try {
-      const gasPrice = BigInt(await (window as any).ethereum.request({ method:'eth_gasPrice' }))
+      const gasPrice = rpcUint(await evmRequest({ method:'eth_gasPrice' }), 'gas price')
       out.gasPrice = toHex(gasPrice * multiplier)
     } catch {}
     return out
@@ -84,23 +91,23 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   const sendEvmTxBuffered = async (tx: any): Promise<string> => {
     const firstFees = await getBufferedEvmFees(tx, INITIAL_FEE_MULTIPLIER)
     try {
-      return await (window as any).ethereum.request({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
+      return await evmRequest({ method:'eth_sendTransaction', params:[{ ...tx, ...firstFees }] })
     } catch(e:any) {
       const msg = e?.message || ''
       if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw e
       await new Promise(resolve => setTimeout(resolve, 1200))
       const retryFees = await getBufferedEvmFees(tx, MAX_FEE_MULTIPLIER)
-      return await (window as any).ethereum.request({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
+      return await evmRequest({ method:'eth_sendTransaction', params:[{ ...tx, ...retryFees }] })
     }
   }
   const switchDestinationChain = async () => {
     const chain = findChain(rec.to)
     if (!chain?.chainId) throw new Error('Destination chain tidak didukung untuk retry wallet: ' + rec.to)
     try {
-      await (window as any).ethereum.request({ method:'wallet_switchEthereumChain', params:[{ chainId: chain.chainId }] })
+      await evmRequest({ method:'wallet_switchEthereumChain', params:[{ chainId: chain.chainId }] })
     } catch(e:any) {
       if ((e.code === 4902 || e.code === -32603) && chain.addParams) {
-        await (window as any).ethereum.request({ method:'wallet_addEthereumChain', params:[chain.addParams] })
+        await evmRequest({ method:'wallet_addEthereumChain', params:[chain.addParams] })
         return
       }
       throw e
@@ -108,10 +115,6 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   }
   const retryMint = async () => {
     if (!rec.burnTx || !canRetry) return
-    if (!(window as any).ethereum) {
-      setRetryError('MetaMask tidak terdeteksi untuk retry mint.')
-      return
-    }
     setRetrying(true)
     setRetryError(null)
     try {
@@ -124,7 +127,7 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
         throw new Error(att.error || 'Attestation belum tersedia. Coba retry lagi nanti.')
       }
       await switchDestinationChain()
-      const accounts = await (window as any).ethereum.request({ method:'eth_requestAccounts' })
+      const accounts = await evmRequest({ method:'eth_requestAccounts' })
       const from = accounts?.[0]
       if (!from) throw new Error('MetaMask account tidak tersedia.')
       const data = encodeFunctionData({

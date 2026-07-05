@@ -647,8 +647,9 @@ async function ensureUnifiedEvmChain(_adapter: any, chain: UnifiedBalanceEvmChai
   const resolved = resolveChainIdentifier(chain)
   if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
   const config = findChain(chain)?.addParams
-  const provider = getWalletProvider()
-  if (!config || !provider) throw new Error(`Connect an EVM wallet before using ${resolved.name}.`)
+  const rawProvider = getWalletProvider()
+  if (!config || !rawProvider) throw new Error(`Connect an EVM wallet before using ${resolved.name}.`)
+  const provider = normalizeWalletProvider(rawProvider)
   try {
     await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: config.chainId }] })
   } catch (error) {
@@ -981,8 +982,9 @@ async function spendUnifiedBalanceWithRetry(kit: AppKit, params: any) {
 
 async function refreshUnifiedEvmRpc(chain: UnifiedBalanceEvmChain) {
   const config = findChain(chain)?.addParams
-  const provider = getWalletProvider()
-  if (!config || !provider) return
+  const rawProvider = getWalletProvider()
+  if (!config || !rawProvider) return
+  const provider = normalizeWalletProvider(rawProvider)
   try { await provider.request({ method: 'wallet_addEthereumChain', params: [config] }) } catch (error) {
     if (/reject|denied|cancel/i.test(error instanceof Error ? error.message : String(error))) throw error
   }
