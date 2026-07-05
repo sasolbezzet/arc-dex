@@ -1,6 +1,8 @@
 import { safePost } from '../api'
-import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
+import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
 import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbiParameters, parseSignature } from 'viem'
+import { findConnectedWalletProvider, normalizeWalletProvider, type Eip1193Provider } from '../walletProvider'
+import { isEmptyContractCode, isEmptyRpcData, requiredPositiveUint, rpcUint } from '../utils/rpcQuantity'
 
 const API = ''
 const ARC_CHAIN_ID = 5042002
@@ -73,12 +75,14 @@ export async function swapFromCircleWallet(args: {
 }
 
 export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: string; tokenOut: string; amountIn: string }) {
-  const ethereum = window.ethereum
-  if (!ethereum) throw new Error('MetaMask tidak terdeteksi.')
+  const connectedProvider = await findConnectedWalletProvider(args.metamaskAddress)
+  if (!connectedProvider) throw new Error('Wallet EOA tidak terdeteksi.')
+  const ethereum = normalizeWalletProvider(connectedProvider)
   const accounts = await ethereum.request({ method: 'eth_requestAccounts' })
   const from = accounts?.[0]
   if (!from) throw new Error('Wallet EOA belum terhubung.')
   if (from.toLowerCase() !== args.metamaskAddress.toLowerCase()) throw new Error('Wallet aktif berbeda dengan wallet login.')
+  await ensureArcChain(ethereum)
   const prepared = await safePost(API, '/api/eoa-swap-prepare', args)
   if (!prepared?.adapterContract || !Array.isArray(prepared?.legs) || prepared.legs.length === 0) {
     throw new Error('Backend tidak mengembalikan route EOA swap yang valid.')
@@ -91,7 +95,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
       spender: prepared.adapterContract,
       token: leg.tokenInAddress,
       tokenSymbol: leg.tokenIn,
-      amount: BigInt(leg.amountBaseUnits),
+      amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
     })
     if (tokenInput.approvalTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: tokenInput.approvalTx })
     if (tokenInput.permitType === 1) steps.push({ name: `Permit ${leg.tokenIn}`, state: 'success' })
@@ -102,12 +106,12 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
       args: [normalizeExecutionParams(leg.executionParams), [{
         permitType: tokenInput.permitType,
         token: leg.tokenInAddress,
-        amount: BigInt(leg.amountBaseUnits),
+        amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
         permitCalldata: tokenInput.permitCalldata,
       }], leg.signature],
     })
-    const swapTx = await sendBufferedTx({ from, to: prepared.adapterContract, data: executeData, value: '0x0' })
-    await waitForReceipt(swapTx)
+    const swapTx = await sendBufferedTx(ethereum, { from, to: prepared.adapterContract, data: executeData, value: '0x0' })
+    await waitForReceipt(ethereum, swapTx)
     steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
   }
   const txHash = steps.filter(step => step.name.includes('→')).at(-1)?.txHash || ''
@@ -155,7 +159,7 @@ async function buildTokenInput(args: {
         functionName: 'nonces',
         args: [args.owner as `0x${string}`],
       })
-      const nonce = BigInt(await args.ethereum.request({ method: 'eth_call', params: [{ to: args.token, data: nonceData }, 'latest'] }))
+      const nonce = rpcUint(await args.ethereum.request({ method: 'eth_call', params: [{ to: args.token, data: nonceData }, 'latest'] }), 'permit nonce')
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
       const typedData = {
         types: {
@@ -197,15 +201,25 @@ async function buildTokenInput(args: {
     functionName: 'allowance',
     args: [args.owner as `0x${string}`, args.spender as `0x${string}`],
   })
-  const allowance = BigInt(await args.ethereum.request({ method: 'eth_call', params: [{ to: args.token, data: allowanceData }, 'latest'] }))
+  const allowanceResult = await args.ethereum.request({ method: 'eth_call', params: [{ to: args.token, data: allowanceData }, 'latest'] })
+  let allowance: bigint
+  if (isEmptyRpcData(allowanceResult)) {
+    const code = await args.ethereum.request({ method: 'eth_getCode', params: [args.token, 'latest'] })
+    if (isEmptyContractCode(code)) throw new Error('Token contract is unavailable on the active Arc network.')
+    // OKX Mobile can return empty data for a zero allowance. With verified
+    // contract bytecode, treating it as zero only causes a safe approval.
+    allowance = 0n
+  } else {
+    allowance = rpcUint(allowanceResult, 'token allowance')
+  }
   if (allowance >= args.amount) return { permitType: 0, permitCalldata: '0x' as const, approvalTx: '' }
   const approveData = encodeFunctionData({
     abi: erc20Abi,
     functionName: 'approve',
     args: [args.spender as `0x${string}`, args.amount],
   })
-  const approvalTx = await sendBufferedTx({ from: args.owner, to: args.token, data: approveData, value: '0x0' })
-  await waitForReceipt(approvalTx)
+  const approvalTx = await sendBufferedTx(args.ethereum, { from: args.owner, to: args.token, data: approveData, value: '0x0' })
+  await waitForReceipt(args.ethereum, approvalTx)
   return { permitType: 0, permitCalldata: '0x' as const, approvalTx }
 }
 
@@ -214,15 +228,15 @@ function normalizeExecutionParams(params: any) {
     instructions: (params?.instructions || []).map((instruction: any) => ({
       target: instruction.target,
       data: instruction.data,
-      value: BigInt(instruction.value),
+      value: rpcUint(instruction.value, 'instruction value', true),
       tokenIn: instruction.tokenIn,
-      amountToApprove: BigInt(instruction.amountToApprove),
+      amountToApprove: rpcUint(instruction.amountToApprove, 'instruction approval amount', true),
       tokenOut: instruction.tokenOut,
-      minTokenOut: BigInt(instruction.minTokenOut),
+      minTokenOut: rpcUint(instruction.minTokenOut, 'minimum token output', true),
     })),
     tokens: (params?.tokens || []).map((token: any) => ({ token: token.token, beneficiary: token.beneficiary })),
-    execId: BigInt(params.execId),
-    deadline: BigInt(params.deadline),
+    execId: rpcUint(params.execId, 'execution ID'),
+    deadline: rpcUint(params.deadline, 'execution deadline'),
     metadata: params.metadata,
   }
 }
@@ -231,31 +245,31 @@ function toHex(value: bigint) {
   return `0x${value.toString(16)}`
 }
 
-async function sendBufferedTx(tx: any): Promise<string> {
-  const first = await bufferedFees(tx, 3n)
+async function sendBufferedTx(ethereum: Eip1193Provider, tx: any): Promise<string> {
+  const first = await bufferedFees(ethereum, tx, 3n)
   try {
-    return await window.ethereum.request({ method: 'eth_sendTransaction', params: [{ ...tx, ...first }] })
+    return await ethereum.request({ method: 'eth_sendTransaction', params: [{ ...tx, ...first }] })
   } catch (error: any) {
     const msg = error?.message || ''
     if (!/max fee per gas less than block base fee|replacement transaction underpriced|fee/i.test(msg)) throw error
     await new Promise(resolve => setTimeout(resolve, 1200))
-    const retry = await bufferedFees(tx, 6n)
-    return await window.ethereum.request({ method: 'eth_sendTransaction', params: [{ ...tx, ...retry }] })
+    const retry = await bufferedFees(ethereum, tx, 6n)
+    return await ethereum.request({ method: 'eth_sendTransaction', params: [{ ...tx, ...retry }] })
   }
 }
 
-async function bufferedFees(tx: any, multiplier: bigint) {
+async function bufferedFees(ethereum: Eip1193Provider, tx: any, multiplier: bigint) {
   const out: any = {}
   try {
-    const gasHex = await window.ethereum.request({ method: 'eth_estimateGas', params: [tx] })
-    out.gas = toHex((BigInt(gasHex) * 13n) / 10n + 10_000n)
+    const gasHex = await ethereum.request({ method: 'eth_estimateGas', params: [tx] })
+    out.gas = toHex((rpcUint(gasHex, 'estimated gas') * 13n) / 10n + 10_000n)
   } catch {}
   try {
-    const block = await window.ethereum.request({ method: 'eth_getBlockByNumber', params: ['latest', false] })
-    const baseFee = block?.baseFeePerGas ? BigInt(block.baseFeePerGas) : 0n
+    const block = await ethereum.request({ method: 'eth_getBlockByNumber', params: ['latest', false] })
+    const baseFee = block?.baseFeePerGas ? rpcUint(block.baseFeePerGas, 'base fee', true) : 0n
     if (baseFee > 0n) {
       let tip = 0n
-      try { tip = BigInt(await window.ethereum.request({ method: 'eth_maxPriorityFeePerGas' })) } catch {}
+      try { tip = rpcUint(await ethereum.request({ method: 'eth_maxPriorityFeePerGas' }), 'priority fee', true) } catch {}
       if (tip < 1_500_000n) tip = 1_500_000n
       out.maxPriorityFeePerGas = toHex(tip)
       out.maxFeePerGas = toHex(baseFee * multiplier + tip * 2n)
@@ -263,18 +277,32 @@ async function bufferedFees(tx: any, multiplier: bigint) {
     }
   } catch {}
   try {
-    const gasPrice = BigInt(await window.ethereum.request({ method: 'eth_gasPrice' }))
+    const gasPrice = rpcUint(await ethereum.request({ method: 'eth_gasPrice' }), 'gas price')
     out.gasPrice = toHex(gasPrice * multiplier)
   } catch {}
   return out
 }
 
-async function waitForReceipt(hash: string) {
+async function waitForReceipt(ethereum: Eip1193Provider, hash: string) {
   for (let i = 0; i < 45; i++) {
-    const receipt = await window.ethereum.request({ method: 'eth_getTransactionReceipt', params: [hash] }).catch(() => null)
+    const receipt = await ethereum.request({ method: 'eth_getTransactionReceipt', params: [hash] }).catch(() => null)
     if (receipt?.status === '0x1') return receipt
     if (receipt?.status === '0x0') throw new Error(`Transaction reverted: ${hash}`)
     await new Promise(resolve => setTimeout(resolve, 1500))
   }
   throw new Error(`Transaction submitted but not confirmed: ${hash}`)
+}
+
+async function ensureArcChain(ethereum: Eip1193Provider) {
+  const current = String(await ethereum.request({ method: 'eth_chainId' })).toLowerCase()
+  if (current !== ARC_TESTNET_CHAIN_ID) {
+    try {
+      await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_TESTNET_CHAIN_ID }] })
+    } catch (error: any) {
+      if (error?.code !== 4902 && error?.code !== -32603) throw error
+      await ethereum.request({ method: 'wallet_addEthereumChain', params: [ARC_TESTNET_ADD_PARAMS] })
+    }
+  }
+  const active = String(await ethereum.request({ method: 'eth_chainId' })).toLowerCase()
+  if (active !== ARC_TESTNET_CHAIN_ID) throw new Error(`Wallet chain ${active} is not Arc Testnet ${ARC_TESTNET_CHAIN_ID}.`)
 }
