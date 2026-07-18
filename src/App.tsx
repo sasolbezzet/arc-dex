@@ -113,8 +113,8 @@ export default function App() {
     setBalanceError(current => ({ ...current, eoa: '' }))
     try {
       const { createPublicClient, http, erc20Abi, formatUnits, defineChain } = await import('viem')
-      const arc = defineChain({ id:5042002, name:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:6}, rpcUrls:{default:{http:['https://rpc.testnet.arc.network/']}} })
-      const client = createPublicClient({ chain:arc, transport:http(undefined, { retryCount: 1, timeout: 10_000 }) })
+      const arc = defineChain({ id:5042002, name:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:6}, rpcUrls:{default:{http:['https://arc-testnet.drpc.org']}} })
+      const client = createPublicClient({ chain:arc, transport:http(undefined, { batch: true, retryCount: 1, timeout: 10_000 }) })
       const USDC = '0x3600000000000000000000000000000000000000' as `0x${string}`
       const EURC = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as `0x${string}`
       const USYC = '0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C' as `0x${string}`
@@ -294,7 +294,7 @@ export default function App() {
       iv = null
     }
     const start = () => {
-      if (!iv && !document.hidden) iv = setInterval(refresh, 15000)
+      if (!iv && !document.hidden) iv = setInterval(refresh, 60_000)
     }
     const onVisibilityChange = () => {
       if (document.hidden) stop()
