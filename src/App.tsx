@@ -71,12 +71,15 @@ export default function App() {
   const [circleWallet, setCircleWallet] = useState<{id:string;address:string}|null>(null)
   const [balances, setBalances] = useState<Record<string,string>>({...EMPTY_BAL})
   const [eoaBalances, setEoaBalances] = useState<Record<string,string>>({...EMPTY_BAL})
+  const [balanceLoading, setBalanceLoading] = useState({ circle: false, eoa: false })
+  const [balanceError, setBalanceError] = useState({ circle: '', eoa: '' })
   const [loadingWallet, setLoadingWallet] = useState(false)
   const [walletSetupError, setWalletSetupError] = useState('')
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const [agentIdentities, setAgentIdentities] = useState<AgentIdentity[]>([])
   const [activeAgentIdentity, setActiveAgentIdentity] = useState<AgentIdentity|null>(null)
   const connectInFlightRef = useRef('')
+  const balanceRequestRef = useRef({ circle: 0, eoa: 0 })
 
   useEffect(() => {
     txHistory.setOwner(address)
@@ -89,30 +92,49 @@ export default function App() {
       : 'normal'
 
   const fetchCircleBal = async (addr:string) => {
+    const request = ++balanceRequestRef.current.circle
+    setBalanceLoading(current => ({ ...current, circle: true }))
+    setBalanceError(current => ({ ...current, circle: '' }))
     try {
-      const r = await fetch(`${API}/api/balance/${addr}`)
-      if (r.ok) setBalances(await r.json())
-    } catch(e) { console.error('fetchCircleBal error:', e) }
+      const r = await fetch(`${API}/api/balance/${addr}`, { cache: 'no-store' })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(data?.error || `Balance request failed (${r.status})`)
+      if (request === balanceRequestRef.current.circle) setBalances(data)
+    } catch(e) {
+      console.error('fetchCircleBal error:', e)
+      if (request === balanceRequestRef.current.circle) setBalanceError(current => ({ ...current, circle: e instanceof Error ? e.message : 'Circle balance unavailable' }))
+    } finally {
+      if (request === balanceRequestRef.current.circle) setBalanceLoading(current => ({ ...current, circle: false }))
+    }
   }
   const fetchEoaBal = async (addr:string) => {
+    const request = ++balanceRequestRef.current.eoa
+    setBalanceLoading(current => ({ ...current, eoa: true }))
+    setBalanceError(current => ({ ...current, eoa: '' }))
     try {
       const { createPublicClient, http, erc20Abi, formatUnits, defineChain } = await import('viem')
       const arc = defineChain({ id:5042002, name:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:6}, rpcUrls:{default:{http:['https://rpc.testnet.arc.network/']}} })
-      const client = createPublicClient({ chain:arc, transport:http() })
+      const client = createPublicClient({ chain:arc, transport:http(undefined, { retryCount: 1, timeout: 10_000 }) })
       const USDC = '0x3600000000000000000000000000000000000000' as `0x${string}`
       const EURC = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as `0x${string}`
       const USYC = '0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C' as `0x${string}`
       const CIRBTC = '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF' as `0x${string}`
-      const cirDecimalsRaw = await client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'decimals' }).catch(()=>6n)
-      const cirDecimals = Number(cirDecimalsRaw) || 6
-      const [u,e,y,c] = await Promise.all([
-        client.readContract({ address:USDC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }).catch(()=>0n),
-        client.readContract({ address:EURC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }).catch(()=>0n),
-        client.readContract({ address:USYC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }).catch(()=>0n),
-        client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }).catch(()=>0n),
+      const [cirDecimalsRaw, u, e, y, c] = await Promise.all([
+        client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'decimals' }),
+        client.readContract({ address:USDC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
+        client.readContract({ address:EURC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
+        client.readContract({ address:USYC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
+        client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
       ])
-      setEoaBalances({ USDC:formatUnits(u as bigint,6), EURC:formatUnits(e as bigint,6), USYC:formatUnits(y as bigint,6), cirBTC:formatUnits(c as bigint,cirDecimals) })
-    } catch(e) { console.error('fetchEoaBal error:',e) }
+      const cirDecimals = Number(cirDecimalsRaw)
+      if (!Number.isInteger(cirDecimals) || cirDecimals < 0 || cirDecimals > 255) throw new Error('Invalid cirBTC decimals response')
+      if (request === balanceRequestRef.current.eoa) setEoaBalances({ USDC:formatUnits(u as bigint,6), EURC:formatUnits(e as bigint,6), USYC:formatUnits(y as bigint,6), cirBTC:formatUnits(c as bigint,cirDecimals) })
+    } catch(e) {
+      console.error('fetchEoaBal error:',e)
+      if (request === balanceRequestRef.current.eoa) setBalanceError(current => ({ ...current, eoa: e instanceof Error ? e.message : 'Wallet balance unavailable' }))
+    } finally {
+      if (request === balanceRequestRef.current.eoa) setBalanceLoading(current => ({ ...current, eoa: false }))
+    }
   }
 
   const refreshAgentIdentities = useCallback(async (refresh = false) => {
@@ -300,7 +322,7 @@ export default function App() {
           : !address
             ? <ConnectRequired walletSetupError={walletSetupError} t={t} />
             : page === 'portfolio'
-              ? <PortfolioPage address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} />
+              ? <PortfolioPage address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} balanceLoading={balanceLoading} balanceError={balanceError} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} />
               : page === 'swap'
                 ? <SwapPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                 : page === 'bridge'
@@ -439,11 +461,13 @@ function ConnectRequired({ walletSetupError, t }: { walletSetupError: string; t:
   )
 }
 
-function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWallet, walletSetupError, retryCircleWallet, refresh }: {
+function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLoading, balanceError, loadingWallet, walletSetupError, retryCircleWallet, refresh }: {
   address: string
   circleWallet: {id:string;address:string}|null
   balances: Record<string,string>
   eoaBalances: Record<string,string>
+  balanceLoading: { circle: boolean; eoa: boolean }
+  balanceError: { circle: string; eoa: string }
   loadingWallet: boolean
   walletSetupError: string
   retryCircleWallet: () => void
@@ -499,6 +523,8 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
           {renderBalance('USYC', eoaBalances.USYC, '#10b981')}
           {renderBalance('cirBTC', eoaBalances.cirBTC, '#f7931a', 8)}
         </div>
+        {balanceLoading.eoa && <p className='pay-muted'>Refreshing wallet balance...</p>}
+        {balanceError.eoa && <div className='inline-error'>{balanceError.eoa}</div>}
       </section>
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
@@ -514,6 +540,8 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, loadingWa
           {renderBalance('USYC', balances.USYC, '#10b981')}
           {renderBalance('cirBTC', balances.cirBTC, '#f7931a', 8)}
         </div>
+        {balanceLoading.circle && <p className='pay-muted'>Refreshing Circle balance...</p>}
+        {balanceError.circle && <div className='inline-error'>{balanceError.circle}</div>}
       </section>
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
