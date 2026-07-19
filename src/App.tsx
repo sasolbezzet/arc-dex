@@ -113,7 +113,8 @@ export default function App() {
     setBalanceError(current => ({ ...current, eoa: '' }))
     try {
       const { createPublicClient, http, erc20Abi, formatUnits, defineChain } = await import('viem')
-      const arc = defineChain({ id:5042002, name:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:6}, rpcUrls:{default:{http:['https://arc-testnet.drpc.org']}} })
+      const arcRpcProxy = new URL('/api/rpc/arc', window.location.origin).href
+      const arc = defineChain({ id:5042002, name:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:6}, rpcUrls:{default:{http:[arcRpcProxy]}} })
       const client = createPublicClient({ chain:arc, transport:http(undefined, { batch: true, retryCount: 1, timeout: 10_000 }) })
       const USDC = '0x3600000000000000000000000000000000000000' as `0x${string}`
       const EURC = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as `0x${string}`

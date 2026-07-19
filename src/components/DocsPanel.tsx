@@ -81,7 +81,7 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
         {
           title: 'File env user',
           body: 'Simpan signer, API key, dan RPC di komputer user. Jangan taruh private key di browser, chat, atau repository.',
-          code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://rpc.testnet.arc.network/',
+          code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://your-private-rpc.example/v1/YOUR_TOKEN',
         },
         {
           title: 'Koneksi ke Hermes',
@@ -154,7 +154,7 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       intro: 'ARCOX Agent installs the local MCP runtime so an agent such as Codex or Hermes can understand and run ARCOX DEX features from the terminal while private keys stay on the user computer.',
       sections: [
         { title: 'One-time install', body: 'Install the public installer package. It automatically pulls `arcox-mcp`, so normal users do not need two separate global installs.', code: 'npm install -g arcox-agent\narcox-agent setup\nnano ~/.arcox/agent.env\narcox-agent doctor' },
-        { title: 'Separated secrets', body: 'User signer keys, API keys, and RPC values stay in the local agent env. Values are never printed and should not be copied into frontend or backend repos.', code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://rpc.testnet.arc.network/' },
+        { title: 'Separated secrets', body: 'User signer keys, API keys, and RPC values stay in the local agent env. Values are never printed and should not be copied into frontend or backend repos.', code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://your-private-rpc.example/v1/YOUR_TOKEN' },
         { title: 'Connect Hermes', body: 'For Hermes, `arcox-agent setup` and `arcox-agent sync` already write the local `arcox` MCP entry. Use `--with-provider` only when you want the installer to also update the Hermes model provider.', code: 'arcox-agent setup\narcox-agent sync\n\n# optional: also write the Hermes provider from protected env\narcox-agent sync --with-provider' },
         { title: 'Connect Codex', body: 'Codex is not auto-configured by `setup`, so add an MCP server named `arcox` that runs `arcox-agent mcp`, then restart the Codex session.', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-agent",\n      "args": ["mcp"]\n    }\n  }\n}' },
         { title: 'Manual Hermes provider', body: 'If a user wants to add the ARCOX custom provider manually in Hermes, the local MCP still has to be installed separately. The base URL alone does not install tools.', code: 'Name: ARCOX User\nBase URL: https://arc-dex-bice.vercel.app/v1\nModel: openai/gpt-oss-120b\nAPI key: arx_sk_...' },
@@ -195,7 +195,7 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
       intro: 'ARCOX Agent 会安装本地 MCP runtime，让 Codex 或 Hermes 等本地 agent 可以从终端理解并执行 ARCOX DEX 功能，私钥仍保存在用户电脑。',
       sections: [
         { title: '一次安装', body: '安装公开 installer package。它会自动拉取 `arcox-mcp`，普通用户不需要分开安装两个全局包。', code: 'npm install -g arcox-agent\narcox-agent setup\nnano ~/.arcox/agent.env\narcox-agent doctor' },
-        { title: '密钥隔离', body: '用户 signer、API key 和 RPC 保存在本地 agent env。密钥值不会输出，也不应复制到前端或后端 repo。', code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://rpc.testnet.arc.network/' },
+        { title: '密钥隔离', body: '用户 signer、API key 和 RPC 保存在本地 agent env。密钥值不会输出，也不应复制到前端或后端 repo。', code: 'chmod 600 ~/.arcox/agent.env\n\nEOA_PRIVATE_KEY=0x...\nARCOX_AI_ROUTER_API_KEY=arx_sk_...\nSOLANA_PRIVATE_KEY=\nARC_RPC=https://your-private-rpc.example/v1/YOUR_TOKEN' },
         { title: '连接 Hermes', body: '`arcox-agent setup` 和 `arcox-agent sync` 会自动写入本地 `arcox` MCP。只有在希望 installer 同时修改 Hermes model provider 时才使用 `--with-provider`。', code: 'arcox-agent setup\narcox-agent sync\n\n# 可选：同时从受保护 env 写入 Hermes provider\narcox-agent sync --with-provider' },
         { title: '连接 Codex', body: 'Codex 不会被 `setup` 自动配置，因此请手动添加名为 `arcox` 的 MCP server，运行 `arcox-agent mcp`，然后重启 Codex session。', code: '{\n  "mcpServers": {\n    "arcox": {\n      "command": "arcox-agent",\n      "args": ["mcp"]\n    }\n  }\n}' },
         { title: 'Hermes 手动 provider', body: '如果用户要在 Hermes 里手动添加 ARCOX custom provider，本地 MCP 仍需单独安装。仅设置 base URL 不会自动安装 tools。', code: 'Name: ARCOX User\nBase URL: https://arc-dex-bice.vercel.app/v1\nModel: openai/gpt-oss-120b\nAPI key: arx_sk_...' },

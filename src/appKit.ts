@@ -113,6 +113,14 @@ export function detectSolanaKind(): 'solflare' | 'phantom' | null {
   return _solanaKind
 }
 
+// Circle AppKit v1.8.1 hard-codes Arc's rate-limited public endpoint.
+const ARC_RPC_PROXY = new URL('/api/rpc/arc', window.location.origin).href
+const ARC_TESTNET_APPKIT = { ...ArcTestnet, rpcEndpoints: [ARC_RPC_PROXY] } as unknown as typeof ArcTestnet
+
+function unifiedBalanceChain(chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
+  return chain === 'Arc_Testnet' ? ARC_TESTNET_APPKIT : chain
+}
+
 // ── AppKit singleton ─────────────────────────────────────────────
 let kitInstance: AppKit | null = null
 function getKit(): AppKit {
@@ -230,12 +238,12 @@ function normalizeViemChain(chain: any) {
 
 function publicRpcUrls(chainId: number): string[] {
   const urls: Record<number, string[]> = {
-    5042002: ['https://rpc.testnet.arc.network/'],
+    5042002: [ARC_RPC_PROXY],
     11155111: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://rpc.sepolia.org'],
     84532: ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com'],
     421614: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],
   }
-  return urls[Number(chainId)] || ['https://rpc.testnet.arc.network/']
+  return urls[Number(chainId)] || [ARC_RPC_PROXY]
 }
 
 // ── Solana adapter ──────────────────────────────────────────────
@@ -697,7 +705,7 @@ export async function depositUnifiedBalanceWithAppKit(args: {
     const adapter = await buildSolanaAdapter()
     try {
       return await withGatewayProxy(() => kit.unifiedBalance.deposit({
-        from: { adapter, chain: args.chain },
+        from: { adapter, chain: unifiedBalanceChain(args.chain) },
         amount: args.amount,
         token: 'USDC',
       } as any))
@@ -708,7 +716,7 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, args.chain)
   return await withGatewayProxy(() => kit.unifiedBalance.deposit({
-    from: { adapter, chain: args.chain },
+    from: { adapter, chain: unifiedBalanceChain(args.chain) },
     amount: args.amount,
     token: 'USDC',
   } as any))
