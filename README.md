@@ -140,6 +140,13 @@ X402_PAYMENT_TTL_SECONDS=300
 
 ARCOX x402 uses internal invoices, exact Arc Testnet USDC amounts, and Arc Transaction Memo reconciliation. Open `/pay/status` to create an invoice, view the exact unique USDC amount, and poll paid status. There is no NowPayments flow and no manual txHash fallback.
 
+x402 reconciliation details:
+
+- Backend memakai `rpc.testnet.arc.network` (RPC publik sinkron). Jangan pakai `arc-node.thecanteenapp.com` karena tertinggal ~1 blok.
+- `eth_getLogs` di-chunk menjadi 8,000 block per request untuk menghormati batas 10,000 RPC.
+- Invoice yang sudah `expired` tetap di-reconcile jika ada bukti on-chain. Pembayaran tidak hilang meski TTL 300 detik berlalu.
+- Frontend `IntelPanel` memakai retry logic dengan `paymentId` untuk mengambil result setelah status `paid`.
+
 ## AI Router
 
 Open `/ai-router` or the “AI Router” menu.
