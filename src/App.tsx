@@ -112,24 +112,18 @@ export default function App() {
     setBalanceLoading(current => ({ ...current, eoa: true }))
     setBalanceError(current => ({ ...current, eoa: '' }))
     try {
-      const { createPublicClient, http, erc20Abi, formatUnits, defineChain } = await import('viem')
-      const arcRpcProxy = new URL('/api/rpc/arc', window.location.origin).href
-      const arc = defineChain({ id:5042002, name:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:6}, rpcUrls:{default:{http:[arcRpcProxy]}} })
-      const client = createPublicClient({ chain:arc, transport:http(undefined, { batch: true, retryCount: 1, timeout: 10_000 }) })
-      const USDC = '0x3600000000000000000000000000000000000000' as `0x${string}`
-      const EURC = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as `0x${string}`
-      const USYC = '0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C' as `0x${string}`
-      const CIRBTC = '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF' as `0x${string}`
-      const [cirDecimalsRaw, u, e, y, c] = await Promise.all([
-        client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'decimals' }),
-        client.readContract({ address:USDC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
-        client.readContract({ address:EURC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
-        client.readContract({ address:USYC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
-        client.readContract({ address:CIRBTC, abi:erc20Abi, functionName:'balanceOf', args:[addr as `0x${string}`] }),
-      ])
-      const cirDecimals = Number(cirDecimalsRaw)
-      if (!Number.isInteger(cirDecimals) || cirDecimals < 0 || cirDecimals > 255) throw new Error('Invalid cirBTC decimals response')
-      if (request === balanceRequestRef.current.eoa) setEoaBalances({ USDC:formatUnits(u as bigint,6), EURC:formatUnits(e as bigint,6), USYC:formatUnits(y as bigint,6), cirBTC:formatUnits(c as bigint,cirDecimals) })
+      // Use backend /api/balance endpoint which has allSettled + retry logic.
+      // This avoids viem's Promise.all sending 5 concurrent eth_call requests
+      // that trip Arc Testnet RPC rate limits (-32011 "request limit reached").
+      const r = await fetch(`${API}/api/balance/${addr}`, { cache: 'no-store' })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(data?.error || `Balance request failed (${r.status})`)
+      const out: Record<string,string> = {}
+      for (const k of ['USDC','EURC','USYC','cirBTC']) {
+        if (typeof data[k] === 'string') out[k] = data[k]
+      }
+      if (Object.keys(out).length === 0) throw new Error(data?.error || 'No balance data received')
+      if (request === balanceRequestRef.current.eoa) setEoaBalances({ ...EMPTY_BAL, ...out })
     } catch(e) {
       console.error('fetchEoaBal error:',e)
       if (request === balanceRequestRef.current.eoa) setBalanceError(current => ({ ...current, eoa: e instanceof Error ? e.message : 'Wallet balance unavailable' }))
