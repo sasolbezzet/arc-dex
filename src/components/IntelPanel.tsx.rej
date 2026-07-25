@@ -1,0 +1,15 @@
+--- IntelPanel.tsx
++++ IntelPanel.tsx
+@@ -194,7 +194,11 @@
+     if (activeCategory === 'flows') query.set('timeLast', '24h')
+     if (activeCategory === 'history') query.set('timeLast', '24h')
+     if (activeCategory === 'volume') query.set('timeLast', '24h')
+-    if (activeCategory === 'portfolio') query.set('time', String(Date.now()))
++    if (activeCategory === 'portfolio') {
++      // Use a consistent time per session or round to nearest hour to avoid 
++      // resource mismatch when checking x402 invoice after payment
++      query.set('time', String(Math.floor(Date.now() / 3600000) * 3600000))
++    }
+     if (query.toString()) requestPath += `?${query.toString()}`
+ 
+     try {

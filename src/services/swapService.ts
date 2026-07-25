@@ -84,6 +84,45 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   if (from.toLowerCase() !== args.metamaskAddress.toLowerCase()) throw new Error('Wallet aktif berbeda dengan wallet login.')
   await ensureArcChain(ethereum)
   const prepared = await safePost(API, '/api/eoa-swap-prepare', args)
+  if (prepared?.source === 'arcox-amm-router' && prepared?.ammRouter) {
+    const tokenMap: Record<string, { address: `0x${string}`; decimals: number }> = {
+      USDC: { address: '0x3600000000000000000000000000000000000000', decimals: 6 },
+      EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
+      cirBTC: { address: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', decimals: 8 },
+    }
+    const token = tokenMap[args.tokenIn]
+    const outToken = tokenMap[args.tokenOut]
+    if (!token || !outToken) throw new Error('Token cirBTC swap tidak dikenal.')
+    const amountUnits = BigInt(Math.round(Number(args.amountIn) * 10 ** token.decimals))
+    const approveData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [prepared.ammRouter, amountUnits],
+    })
+    const approveTx = await sendBufferedTx(ethereum, { from, to: token.address, data: approveData, value: '0x0' })
+    await waitForReceipt(ethereum, approveTx)
+    const swapData = encodeFunctionData({
+      abi: [{ type: 'function', name: 'swapWithFee', stateMutability: 'nonpayable', inputs: [
+        { name: 'tokenIn', type: 'address' }, { name: 'tokenOut', type: 'address' },
+        { name: 'amountIn', type: 'uint256' }, { name: 'minAmountOut', type: 'uint256' },
+      ], outputs: [{ name: 'amountOut', type: 'uint256' }] }],
+      functionName: 'swapWithFee',
+      args: [token.address, outToken.address, amountUnits, 0n],
+    })
+    const swapTx = await sendBufferedTx(ethereum, { from, to: prepared.ammRouter, data: swapData, value: '0x0' })
+    await waitForReceipt(ethereum, swapTx)
+    return {
+      success: true,
+      source: 'browser-arcox-amm-router',
+      route: prepared.route || `${args.tokenIn} → ${args.tokenOut}`,
+      tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn,
+      grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
+      txHash: swapTx, transactionHash: swapTx,
+      explorerUrl: `${ARC_TESTNET_EXPLORER_TX}${swapTx}`,
+      approveTx, platformFee: prepared.platformFee,
+      raw: { ...prepared, approveTx, swapTx },
+    }
+  }
   if (!prepared?.adapterContract || !Array.isArray(prepared?.legs) || prepared.legs.length === 0) {
     throw new Error('Backend tidak mengembalikan route EOA swap yang valid.')
   }
