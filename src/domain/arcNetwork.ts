@@ -2,11 +2,15 @@ import { getWalletProvider } from '../walletProvider'
 
 export const ARC_TESTNET_CHAIN_ID = '0x4cef52'
 
+// Public Arc RPC is deliberately used for browser wallets. DRPC requires a
+// private Bearer key, which must never be exposed in frontend RPC URLs.
+export const ARC_TESTNET_PUBLIC_RPC = 'https://rpc.testnet.arc.network'
+
 export const ARC_TESTNET_ADD_PARAMS = {
   chainId: ARC_TESTNET_CHAIN_ID,
   chainName: 'Arc Testnet',
   nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: ['https://arc-testnet.drpc.org'],
+  rpcUrls: [ARC_TESTNET_PUBLIC_RPC],
   blockExplorerUrls: ['https://testnet.arcscan.app'],
 }
 
