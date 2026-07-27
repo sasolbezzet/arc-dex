@@ -22,7 +22,8 @@ We also filed a MetaMask false-positive report at https://github.com/MetaMask/et
 | `hardcoded-balance` | Rendered $12,450 USDC + 0.45 cirBTC in DOM on page load | Empty initial state, $0 / null until user connects |
 | `silent-reconnect` | eth_accounts called on mount | Removed; user presses Connect |
 | `unknown-dapp` | No robots.txt / sitemap.xml | Both files now present |
-| `personal_sign non-SIWE` | Generic 5-line login message | crypto.getRandomValues nonce; backend enforcement pending |
+| `personal_sign non-SIWE` | Generic 5-line login message | crypto.getRandomValues nonce + expiresAt in JSON body; full EIP-4361 SIWE requires backend update |
+| `strict-coop-breaks-wallet-popup` | COOP: same-origin | COOP: same-origin-allow-popups (wallet popups can communicate) |
 
 ### Site does NOT do (any time)
 
@@ -39,7 +40,7 @@ We also filed a MetaMask false-positive report at https://github.com/MetaMask/et
 $ curl -sI https://arc-dex-bice.vercel.app/ | grep -iE "strict-transport|content-security|cross-origin|x-frame"
 strict-transport-security: max-age=63072000; includeSubDomains; preload
 content-security-policy: default-src 'self'; ... connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com ... wss://api.devnet.solana.com/
-cross-origin-opener-policy: same-origin
+cross-origin-opener-policy: same-origin-allow-popups
 x-frame-options: DENY
 ```
 

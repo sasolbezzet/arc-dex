@@ -77,7 +77,7 @@ sense of "wealth" and pre-asserts wallet ownership. Tag: `hardcoded-balance`.
 |----|-------|----------|------|--------|
 | **P-001** | Hardcoded fake wallet + fake balances in initial state | 🔴 Critical | `src/App.tsx` | **Fixed** |
 | **P-002** | Silent re-auth via `eth_accounts` on mount | 🟠 High | `src/components/WalletButton.tsx` | **Fixed** |
-| **P-003** | Auth message lacks EIP-4361 fields | 🟠 High | `src/auth.ts` | **Fixed** (nonce + chainId + URL + expiry added) |
+| **P-003** | Auth message lacks EIP-4361 fields | 🟠 High | `src/auth.ts` | **Partially fixed** (nonce/expiry in body; SIWE format requires backend update) |
 | **P-004** | `readTokenExp` reads header index 0 | 🔴 Critical (already in `CRITICAL.md` C-001) | `src/auth.ts` | **Fixed** (index 1, multiply by 1000) |
 | P-005 | No CSP header | 🟡 Medium | `vercel.json` | **Fixed** |
 | P-006 | No HSTS header | 🟡 Medium | `vercel.json` | **Fixed** (added) |
@@ -126,7 +126,7 @@ sense of "wealth" and pre-asserts wallet ownership. Tag: `hardcoded-balance`.
      }).catch(() => {})
 ```
 
-### 4.3 `src/auth.ts` — SIWE-style message + correct JWT payload read
+### 4.3 `src/auth.ts` — auth-message hardening + correct JWT payload read
 
 ```diff
 -function buildAuthMessage(address: string, issuedAt: string) {
@@ -138,21 +138,6 @@ sense of "wealth" and pre-asserts wallet ownership. Tag: `hardcoded-balance`.
 -    'Network: Arc Testnet',
 -  ].join('\n')
 -}
-+function buildAuthMessage(address: string, issuedAt: string, nonce: string, expiresAt: string) {
-+  return [
-+    `${window.location.host} wants you to sign in with your Ethereum account:`,
-+    address,
-+    '',
-+    'Sign in to ARCOX DEX to authenticate API requests for swaps, bridges, and Circle Wallet operations.',
-+    '',
-+    `URI: ${window.location.origin}`,
-+    'Version: 1',
-+    `Chain ID: ${ARC_TESTNET_CHAIN_ID}`,
-+    `Nonce: ${nonce}`,
-+    `Issued At: ${issuedAt}`,
-+    `Expires At: ${expiresAt}`,
-+  ].join('\n')
-+}
 
 -function readTokenExp(token: string): number | null {
 -  const payload = token.split('.')[0]
@@ -166,16 +151,26 @@ sense of "wealth" and pre-asserts wallet ownership. Tag: `hardcoded-balance`.
 +}
 ```
 
-Includes: random nonce via `crypto.randomUUID()`, 5-minute expiry, chainId binding
-to `ARC_TESTNET_CHAIN_ID`, full URL binding, and SIWE format so MetaMask's
-"Sign-In with Ethereum" UI fires rather than the generic `personal_sign` panel.
+The current message deliberately keeps the existing 5-line format because the
+backend `/api/auth/session` reconstructs the same body to verify the
+`personal_sign` signature. Changing the client message shape without a
+corresponding backend update would reject every login.
+
+What the client **does** add to reduce `personal_sign` abuse signals:
+- A cryptographically-random `nonce` (16 bytes → 32 hex chars via
+  `crypto.getRandomValues`).
+- A short `expiresAt` claim (5 minutes) in the JSON body sent to the server.
+- `MAX_TOKEN_AGE_MS` defense-in-depth on the stored session.
+
+To fully convert to EIP-4361 (Sign-In with Ethereum) the backend must also be
+updated to verify the SIWE message string. See **Open follow-ups** below.
 
 ### 4.4 `vercel.json` — full security header set
 
 ```diff
 +        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" },
-+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
-+        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https: wss:; upgrade-insecure-requests; block-all-mixed-content" }
++        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" },
++        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com https://ethereum-sepolia-rpc.publicnode.com https://sepolia.base.org https://base-sepolia-rpc.publicnode.com https://sepolia-rollup.arbitrum.io https://arbitrum-sepolia-rpc.publicnode.com https://rpc.sepolia.org wss://api.devnet.solana.com/; worker-src 'self' blob:; upgrade-insecure-requests; block-all-mixed-content; report-uri https://arc-dex-bice.vercel.app/api/csp-report" }
 ```
 
 ### 4.5 `public/robots.txt` and `public/sitemap.xml` — explicit SEO surface
@@ -238,9 +233,10 @@ after the UI fixes above.
 > 2. Our `WalletButton` was calling `eth_accounts` on mount and re-issuing
 >    the connection surface if a stale token was in localStorage. We
 >    removed the silent reconnect.
-> 3. Our `personal_sign` auth message was generic. We rebuilt it to the
->    EIP-4361 (Sign-In with Ethereum) format with a random nonce, expiry,
->    domain binding, and chainId binding.
+> 3. Our `personal_sign` auth message was generic. We added a random
+>    nonce and short expiry to the JSON body and session storage, and
+>    prepared the code for EIP-4361 (Sign-In with Ethereum) migration
+>    once the backend validator is updated.
 > 4. We fixed a JWT parsing bug where the client-side `exp` check read the
 >    header instead of the payload (tokens were effectively non-expiring).
 > 5. We added `Content-Security-Policy`, `Strict-Transport-Security`,
