@@ -1,6 +1,6 @@
 import { safePost, HttpError } from './api'
 import { getAddress } from 'viem'
-import { findConnectedWalletProvider } from './walletProvider'
+import { findConnectedWalletProvider, type Eip1193Provider } from './walletProvider'
 
 const STORAGE_KEY = 'arc-dex-auth'
 const BACKEND_PREFERENCE_KEY = 'arc-dex-auth-backend-pref'
@@ -11,6 +11,7 @@ const MAX_TOKEN_AGE_MS = 12 * 60 * 60 * 1000 // 12 hours
 const NONCE_BYTES = 16
 // Arc Testnet chainId (decimal). Hex value is 0x4cef52.
 const ARC_TESTNET_CHAIN_ID = 5042002
+const ARC_TESTNET_CHAIN_ID_HEX = '0x4cef52'
 // SIWE is disabled by default for safety. Set VITE_SIWE_ENABLED=true in your
 // Vercel/project environment once the backend has been migrated to verify SIWE
 // messages. Until then the legacy 5-line message keeps the site working.
@@ -80,7 +81,7 @@ function buildLegacyAuthMessage(address: string, issuedAt: string) {
   ].join('\n')
 }
 
-async function getActiveChainId(provider: { request: (args: { method: string }) => Promise<unknown> }): Promise<number> {
+async function getActiveChainId(provider: Eip1193Provider): Promise<number> {
   try {
     const chainIdHex = await provider.request({ method: 'eth_chainId' })
     const chainId = Number(chainIdHex)
@@ -90,12 +91,84 @@ async function getActiveChainId(provider: { request: (args: { method: string }) 
   }
 }
 
+async function isArcTestnetActive(provider: Eip1193Provider) {
+  try {
+    const chainId = await provider.request({ method: 'eth_chainId' })
+    return chainId === ARC_TESTNET_CHAIN_ID_HEX || Number(chainId) === ARC_TESTNET_CHAIN_ID
+  } catch {
+    return false
+  }
+}
+
+async function switchToArcTestnet(provider: Eip1193Provider) {
+  try {
+    await provider.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: ARC_TESTNET_CHAIN_ID_HEX }],
+    })
+    return true
+  } catch (switchError: any) {
+    if (switchError?.code === 4902) {
+      try {
+        await provider.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: ARC_TESTNET_CHAIN_ID_HEX,
+            chainName: 'Arc Testnet',
+            nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
+            rpcUrls: ['https://arc-testnet.drpc.org', 'https://rpc.testnet.arc.network'],
+            blockExplorerUrls: ['https://testnet.arcscan.app'],
+          }],
+        })
+        // Adding the chain does not automatically switch to it. Retry the switch.
+        await provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: ARC_TESTNET_CHAIN_ID_HEX }],
+        })
+        return true
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+}
+
+async function tryAuthenticateSiwe(provider: Eip1193Provider, address: string): Promise<{ token: string; address?: string } | null> {
+  try {
+    const result = await authenticate(provider, address, 'siwe')
+    setBackendPreference(true)
+    return result
+  } catch (error) {
+    if (isSiweUnsupportedError(error)) {
+      setBackendPreference(false)
+      return null
+    }
+    throw error
+  }
+}
+
+async function ensureArcTestnetAndAuthenticate(provider: Eip1193Provider, address: string): Promise<{ token: string; address?: string }> {
+  const onArcTestnet = await isArcTestnetActive(provider)
+  if (onArcTestnet) {
+    const result = await tryAuthenticateSiwe(provider, address)
+    if (result) return result
+  } else {
+    const switched = await switchToArcTestnet(provider)
+    if (switched && await isArcTestnetActive(provider)) {
+      const result = await tryAuthenticateSiwe(provider, address)
+      if (result) return result
+    }
+  }
+  return authenticate(provider, address, 'legacy')
+}
+
 export async function buildSiweMessage(
   address: string,
   nonce: string,
   issuedAt: string,
   expiresAt: string,
-  provider: { request: (args: { method: string }) => Promise<unknown> },
+  provider: Eip1193Provider,
 ): Promise<string> {
   const host = SIWE_DOMAIN || (typeof window !== 'undefined' ? window.location.host : 'arc-dex-bice.vercel.app')
   const origin = SIWE_ORIGIN || (typeof window !== 'undefined' ? window.location.origin : `https://${host}`)
@@ -175,7 +248,7 @@ export function isSiweUnsupportedError(error: unknown): boolean {
 }
 
 async function authenticate(
-  provider: { request: (args: { method: string; params?: unknown[] }) => Promise<string> },
+  provider: Eip1193Provider,
   address: string,
   mode: AuthMode,
 ): Promise<{ token: string; address?: string }> {
@@ -214,17 +287,7 @@ export async function ensureAuthSession(address: string, forceNew = false) {
   let result: { token: string; address?: string }
 
   if (SIWE_ENABLED && backendPrefersSiwe) {
-    try {
-      result = await authenticate(provider, checksumAddress, 'siwe')
-      setBackendPreference(true)
-    } catch (error) {
-      if (isSiweUnsupportedError(error)) {
-        setBackendPreference(false)
-        result = await authenticate(provider, checksumAddress, 'legacy')
-      } else {
-        throw error
-      }
-    }
+    result = await ensureArcTestnetAndAuthenticate(provider, checksumAddress)
   } else {
     result = await authenticate(provider, checksumAddress, 'legacy')
   }
