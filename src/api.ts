@@ -1,3 +1,14 @@
+export class HttpError extends Error {
+  status: number
+  body: any
+  constructor(message: string, status: number, body: any) {
+    super(message)
+    this.name = 'HttpError'
+    this.status = status
+    this.body = body
+  }
+}
+
 export async function safePost(baseUrl: string, path: string, body: object): Promise<any> {
   const token = localStorage.getItem('arc-dex-auth')
   let authToken = ''
@@ -13,15 +24,19 @@ export async function safePost(baseUrl: string, path: string, body: object): Pro
   const text = await resp.text()
   if (!resp.ok) {
     const preview = sanitizePreview(text, resp.status)
+    let parsedBody: any = null
     if (!preview.startsWith('HTML ')) {
       try {
-        const data = JSON.parse(text)
-        if (data?.error) throw new Error(data.error)
+        parsedBody = JSON.parse(text)
+        if (parsedBody?.error) {
+          throw new HttpError(parsedBody.error, resp.status, parsedBody)
+        }
       } catch (e) {
+        if (e instanceof HttpError) throw e
         if (e instanceof Error && e.message !== 'Unexpected end of JSON input') throw e
       }
     }
-    throw new Error(`Server ${resp.status} on ${path}: ${preview}`)
+    throw new HttpError(`Server ${resp.status} on ${path}: ${preview}`, resp.status, parsedBody)
   }
   try {
     return JSON.parse(text)

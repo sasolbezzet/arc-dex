@@ -93,6 +93,16 @@ Full guide: https://github.com/sasolbezzet/arcox-agent#readme
 
 ## Vercel Frontend
 
+### SIWE Authentication
+
+The frontend supports EIP-4361 Sign-In with Ethereum (SIWE) for better
+MetaMask/Blockaid reputation. SIWE is disabled by default
+(`VITE_SIWE_ENABLED=false`) to keep the site working with the existing legacy
+backend. Once the backend `/api/auth/session` endpoint is migrated, set
+`VITE_SIWE_ENABLED=true` in the Vercel dashboard and redeploy. See
+[`docs/backend-siwe-verifier.md`](docs/backend-siwe-verifier.md) for the
+backend migration spec.
+
 The frontend can run on Vercel. `vercel.json` builds with `VITE_BASE_PATH=/` and rewrites `/api/*` to the current backend:
 
 ```txt

@@ -77,7 +77,7 @@ sense of "wealth" and pre-asserts wallet ownership. Tag: `hardcoded-balance`.
 |----|-------|----------|------|--------|
 | **P-001** | Hardcoded fake wallet + fake balances in initial state | 🔴 Critical | `src/App.tsx` | **Fixed** |
 | **P-002** | Silent re-auth via `eth_accounts` on mount | 🟠 High | `src/components/WalletButton.tsx` | **Fixed** |
-| **P-003** | Auth message lacks EIP-4361 fields | 🟠 High | `src/auth.ts` | **Partially fixed** (nonce/expiry in body; SIWE format requires backend update) |
+| **P-003** | Auth message lacks EIP-4361 fields | 🟠 High | `src/auth.ts` | **Fixed** (frontend builds EIP-4361 SIWE messages via `siwe`; falls back to legacy 5-line message when the backend signals it does not yet support SIWE) |
 | **P-004** | `readTokenExp` reads header index 0 | 🔴 Critical (already in `CRITICAL.md` C-001) | `src/auth.ts` | **Fixed** (index 1, multiply by 1000) |
 | P-005 | No CSP header | 🟡 Medium | `vercel.json` | **Fixed** |
 | P-006 | No HSTS header | 🟡 Medium | `vercel.json` | **Fixed** (added) |
@@ -151,19 +151,25 @@ sense of "wealth" and pre-asserts wallet ownership. Tag: `hardcoded-balance`.
 +}
 ```
 
-The current message deliberately keeps the existing 5-line format because the
-backend `/api/auth/session` reconstructs the same body to verify the
-`personal_sign` signature. Changing the client message shape without a
-corresponding backend update would reject every login.
+The client now uses the standard EIP-4361 Sign-In with Ethereum (SIWE) format
+via the `siwe` library. The `personal_sign` payload presented to the wallet
+includes the current domain, URI, chain ID, nonce and expiration, all of which
+reduce generic-signin abuse signals and make the request recognizable to
+MetaMask/Blockaid heuristics.
 
-What the client **does** add to reduce `personal_sign` abuse signals:
+What the client also keeps for transitional compatibility:
 - A cryptographically-random `nonce` (16 bytes → 32 hex chars via
   `crypto.getRandomValues`).
 - A short `expiresAt` claim (5 minutes) in the JSON body sent to the server.
 - `MAX_TOKEN_AGE_MS` defense-in-depth on the stored session.
+- A fallback to the legacy 5-line message when the backend explicitly signals it
+  does not support SIWE (HTTP 501, `SIWE_NOT_SUPPORTED`, etc.). Set
+  `VITE_SIWE_ENABLED=false` to force legacy mode while the backend is still
+  being migrated.
 
-To fully convert to EIP-4361 (Sign-In with Ethereum) the backend must also be
-updated to verify the SIWE message string. See **Open follow-ups** below.
+The backend `/api/auth/session` should still be updated to verify the SIWE
+message string for deployments where legacy support is no longer required. See
+**Open follow-ups** below.
 
 ### 4.4 `vercel.json` — full security header set
 
@@ -233,10 +239,12 @@ after the UI fixes above.
 > 2. Our `WalletButton` was calling `eth_accounts` on mount and re-issuing
 >    the connection surface if a stale token was in localStorage. We
 >    removed the silent reconnect.
-> 3. Our `personal_sign` auth message was generic. We added a random
->    nonce and short expiry to the JSON body and session storage, and
->    prepared the code for EIP-4361 (Sign-In with Ethereum) migration
->    once the backend validator is updated.
+> 3. Our `personal_sign` auth message now follows the EIP-4361
+>    Sign-In with Ethereum standard via the `siwe` library. It binds to
+>    the current domain, URI, chain ID, nonce and expiration. The
+>    frontend automatically falls back to the legacy 5-line message if
+>    the backend does not yet support SIWE. Set `VITE_SIWE_ENABLED=false`
+>    to force legacy mode while the backend validator is being updated.
 > 4. We fixed a JWT parsing bug where the client-side `exp` check read the
 >    header instead of the payload (tokens were effectively non-expiring).
 > 5. We added `Content-Security-Policy`, `Strict-Transport-Security`,
