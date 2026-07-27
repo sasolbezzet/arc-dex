@@ -1,6 +1,5 @@
 import { safePost, HttpError } from './api'
 import { getAddress } from 'viem'
-import { SiweMessage } from 'siwe'
 import { findConnectedWalletProvider } from './walletProvider'
 
 const STORAGE_KEY = 'arc-dex-auth'
@@ -11,7 +10,7 @@ const MAX_TOKEN_AGE_MS = 12 * 60 * 60 * 1000 // 12 hours
 // ≥16 random bytes (128 bits) → cryptographically strong nonce.
 const NONCE_BYTES = 16
 // Arc Testnet chainId (decimal). Hex value is 0x4cef52.
-const ARC_TESTNET_CHAIN_ID = 5156522
+const ARC_TESTNET_CHAIN_ID = 5042002
 // SIWE is disabled by default for safety. Set VITE_SIWE_ENABLED=true in your
 // Vercel/project environment once the backend has been migrated to verify SIWE
 // messages. Until then the legacy 5-line message keeps the site working.
@@ -21,12 +20,6 @@ const SIWE_ENABLED = import.meta.env?.VITE_SIWE_ENABLED === 'true'
 // specific domain.
 const SIWE_DOMAIN = import.meta.env?.VITE_SIWE_DOMAIN || undefined
 
-if (!SIWE_ENABLED && typeof window !== 'undefined') {
-  console.info(
-    '[ARCOX DEX] SIWE is disabled; using legacy auth. ' +
-    'Set VITE_SIWE_ENABLED=true (and migrate the backend) to enable EIP-4361.'
-  )
-}
 const SIWE_ORIGIN = SIWE_DOMAIN ? `https://${SIWE_DOMAIN}` : undefined
 
 type AuthMode = 'siwe' | 'legacy'
@@ -97,7 +90,7 @@ async function getActiveChainId(provider: { request: (args: { method: string }) 
   }
 }
 
-async function buildSiweMessage(
+export async function buildSiweMessage(
   address: string,
   nonce: string,
   issuedAt: string,
@@ -107,6 +100,10 @@ async function buildSiweMessage(
   const host = SIWE_DOMAIN || (typeof window !== 'undefined' ? window.location.host : 'arc-dex-bice.vercel.app')
   const origin = SIWE_ORIGIN || (typeof window !== 'undefined' ? window.location.origin : `https://${host}`)
   const chainId = await getActiveChainId(provider)
+  // Dynamic import keeps the siwe/ethers chunk out of the main bundle when
+  // SIWE is disabled (the default). It is only loaded when a user enables
+  // VITE_SIWE_ENABLED=true and attempts to log in.
+  const { SiweMessage } = await import('siwe')
   const message = new SiweMessage({
     domain: host,
     address,

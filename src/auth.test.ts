@@ -6,13 +6,12 @@ import {
   ensureAuthSession,
   clearAuthSession,
   getAuthToken,
+  buildSiweMessage,
 } from './auth'
 import { HttpError } from './api'
 
 // Mock the wallet provider so tests do not require a real browser wallet.
-const mockProvider = {
-  request: vi.fn(),
-}
+let mockProvider: { request: ReturnType<typeof vi.fn> }
 
 vi.mock('./walletProvider', () => ({
   findConnectedWalletProvider: vi.fn(() => Promise.resolve(mockProvider)),
@@ -34,6 +33,7 @@ function base64UrlEncode(str: string): string {
 
 describe('auth utilities', () => {
   beforeEach(() => {
+    mockProvider = { request: vi.fn() }
     localStorage.clear()
     vi.clearAllMocks()
   })
@@ -133,6 +133,27 @@ describe('auth utilities', () => {
       const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
       localStorage.setItem('arc-dex-auth', JSON.stringify({ address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e', token, issuedAt: Date.now() }))
       expect(getAuthToken()).toBe(token)
+    })
+  })
+
+  describe('buildSiweMessage', () => {
+    it('produces a valid EIP-4361 message bound to the current domain', async () => {
+      const provider = { request: vi.fn().mockResolvedValue('0x4cef52') }
+      const msg = await buildSiweMessage(
+        '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        'aabbccdd',
+        new Date().toISOString(),
+        new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        provider,
+      )
+      expect(msg).toContain('wants you to sign in with your Ethereum account')
+      expect(msg).toContain('0x742d35Cc6634C0532925a3b844Bc454e4438f44e')
+      expect(msg).toContain('Only sign this message on the official ARCOX DEX website.')
+      expect(msg).toMatch(/URI: https?:\/\/localhost/)
+      expect(msg).toMatch(/wants you to sign in with your Ethereum account:/)
+      expect(msg).toContain('Chain ID: 5042002')
+      expect(msg).toContain('Nonce: aabbccdd')
+      expect(provider.request).toHaveBeenCalledWith({ method: 'eth_chainId' })
     })
   })
 })
