@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
-import { getAuthToken } from '../auth'
 import { findConnectedWalletProvider, getWalletProvider, setWalletProvider } from '../walletProvider'
 declare global { interface Window { ethereum?: any } }
 interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void }
@@ -21,9 +20,13 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
     findConnectedWalletProvider().then(async active => {
       if (disposed || !active) return
       provider = active
-      const accounts = await active.request({ method: 'eth_accounts' })
-      if (accounts?.[0] && getAuthToken()) onConnectRef.current(accounts[0])
+      // SECURITY: do not call eth_accounts on mount, do not auto-call
+      // onConnectRef.current() on mount. This is a phishing-detection
+      // anti-pattern (silently re-asserting wallet connection without a user
+      // click). The user must press the Connect button to start the
+      // eth_requestAccounts → personal_sign flow.
       active.on?.('accountsChanged', handler)
+      active.on?.('chainChanged', () => { /* surface in UI */ })
     }).catch(() => {})
     return () => {
       disposed = true

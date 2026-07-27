@@ -50,7 +50,7 @@ function ArcoxLogo() {
 }
 
 function currentPageFromLocation(): PageId {
-  const path = window.location.pathname.replace(/\/$/, '') || '/'
+  const path = window.location.pathname.replace(/^\/arc-dex/, '').replace(/\/$/, '') || '/'
   if (new URLSearchParams(window.location.search).get('page') === 'docs') return 'docs'
   return NAV.find(item => item.path === path)?.id || 'intro'
 }
@@ -67,6 +67,10 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [languageOpen, setLanguageOpen] = useState(false)
   const languageTriggerRef = useRef<HTMLButtonElement>(null)
+  // SECURITY: balances and wallet state must start EMPTY. Pre-rendering
+  // demo balances or a fake "connected wallet" here causes phishing-detection
+  // engines (MetaMask / Blockaid / Blowfish / Wallet Guard) to flag the site
+  // as a wallet-drainer / airdrop-bait pattern. See audit/PHISHING-FIX.md.
   const [address, setAddress] = useState<string|null>(null)
   const [circleWallet, setCircleWallet] = useState<{id:string;address:string}|null>(null)
   const [balances, setBalances] = useState<Record<string,string>>({...EMPTY_BAL})
@@ -171,7 +175,8 @@ export default function App() {
   const navigate = (next: PageId) => {
     const nav = NAV.find(item => item.id === next)
     if (!nav) return
-    window.history.pushState(null, '', nav.path)
+    const fullPath = nav.path === '/' ? '/arc-dex/' : `/arc-dex${nav.path}`
+    window.history.pushState(null, '', fullPath)
     setPage(next)
     setDrawerOpen(false)
   }
