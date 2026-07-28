@@ -17,7 +17,7 @@ import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from 'viem'
 import { solanaFeePayerSignature, wrapSolflare, wrapPhantom } from './solflareWrapper'
-import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet } from './domain/arcNetwork'
+import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_RPC_URLS, switchToArcTestnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
 import { findConnectedWalletProvider, getWalletProvider, normalizeWalletProvider } from './walletProvider'
@@ -238,7 +238,7 @@ function normalizeViemChain(chain: any) {
 
 function publicRpcUrls(chainId: number): string[] {
   const urls: Record<number, string[]> = {
-    5042002: [ARC_RPC_PROXY],
+    5042002: ARC_TESTNET_RPC_URLS,
     11155111: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://rpc.sepolia.org'],
     84532: ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com'],
     421614: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],

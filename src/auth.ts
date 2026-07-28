@@ -116,7 +116,7 @@ async function switchToArcTestnet(provider: Eip1193Provider) {
             chainId: ARC_TESTNET_CHAIN_ID_HEX,
             chainName: 'Arc Testnet',
             nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-            rpcUrls: ['https://arc-testnet.drpc.org', 'https://rpc.testnet.arc.network'],
+            rpcUrls: ['https://rpc.testnet.arc.network', 'https://arc-testnet.drpc.org'],
             blockExplorerUrls: ['https://testnet.arcscan.app'],
           }],
         })

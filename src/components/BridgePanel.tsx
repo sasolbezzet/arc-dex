@@ -7,6 +7,7 @@ import { useI18n } from '../i18n'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
 import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } from 'viem'
 import { describeBridgeRoute, type BridgeRegistryToken } from '../domain/bridgeRouteRegistry'
+import { ARC_TESTNET_RPC_URLS } from '../domain/arcNetwork'
 import { quoteEoaSwap, swapFromEoa } from '../services/swapService'
 import { getTreasuryStatus } from '../payApi'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
@@ -17,7 +18,7 @@ declare global { interface Window { ethereum?: any; solana?: any; solflare?: any
 const API = ''
 
 const EVM_CHAINS = [
-  { id: 'Arc_Testnet', label: 'Arc Testnet', chainId: '0x4cef52', addParams: { chainId:'0x4cef52', chainName:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:['https://arc-testnet.drpc.org'], blockExplorerUrls:['https://testnet.arcscan.app'] } },
+  { id: 'Arc_Testnet', label: 'Arc Testnet', chainId: '0x4cef52', addParams: { chainId:'0x4cef52', chainName:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:ARC_TESTNET_RPC_URLS, blockExplorerUrls:['https://testnet.arcscan.app'] } },
   { id: 'Ethereum_Sepolia', label: 'Ethereum Sepolia', chainId: '0xaa36a7', addParams: null },
   { id: 'Base_Sepolia', label: 'Base Sepolia', chainId: '0x14a34', addParams: null },
   { id: 'Arbitrum_Sepolia', label: 'Arbitrum Sepolia', chainId: '0x66eee', addParams: null },

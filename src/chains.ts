@@ -44,7 +44,7 @@ export const CHAINS: ChainCfg[] = [
       chainId: '0x4cef52',
       chainName: 'Arc Testnet',
       nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-      rpcUrls: ['https://arc-testnet.drpc.org'],
+      rpcUrls: ['https://rpc.testnet.arc.network', 'https://arc-testnet.drpc.org'],
       blockExplorerUrls: ['https://testnet.arcscan.app'],
     },
   },
