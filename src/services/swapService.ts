@@ -84,43 +84,82 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   if (from.toLowerCase() !== args.metamaskAddress.toLowerCase()) throw new Error('Wallet aktif berbeda dengan wallet login.')
   await ensureArcChain(ethereum)
   const prepared = await safePost(API, '/api/eoa-swap-prepare', args)
-  if (prepared?.source === 'arcox-amm-router' && prepared?.ammRouter) {
+  if ((prepared?.source === 'arcox-amm-router' || prepared?.source === 'arcox-amm-router-2leg') && prepared?.ammRouter) {
     const tokenMap: Record<string, { address: `0x${string}`; decimals: number }> = {
       USDC: { address: '0x3600000000000000000000000000000000000000', decimals: 6 },
       EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
       cirBTC: { address: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', decimals: 8 },
     }
-    const token = tokenMap[args.tokenIn]
-    const outToken = tokenMap[args.tokenOut]
-    if (!token || !outToken) throw new Error('Token cirBTC swap tidak dikenal.')
-    const amountUnits = BigInt(Math.round(Number(args.amountIn) * 10 ** token.decimals))
-    const approveData = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [prepared.ammRouter, amountUnits],
-    })
-    const approveTx = await sendBufferedTx(ethereum, { from, to: token.address, data: approveData, value: '0x0' })
-    await waitForReceipt(ethereum, approveTx)
-    const swapData = encodeFunctionData({
-      abi: [{ type: 'function', name: 'swapWithFee', stateMutability: 'nonpayable', inputs: [
-        { name: 'tokenIn', type: 'address' }, { name: 'tokenOut', type: 'address' },
-        { name: 'amountIn', type: 'uint256' }, { name: 'minAmountOut', type: 'uint256' },
-      ], outputs: [{ name: 'amountOut', type: 'uint256' }] }],
-      functionName: 'swapWithFee',
-      args: [token.address, outToken.address, amountUnits, 0n],
-    })
-    const swapTx = await sendBufferedTx(ethereum, { from, to: prepared.ammRouter, data: swapData, value: '0x0' })
-    await waitForReceipt(ethereum, swapTx)
+    // Single-leg AMM swap (USDCcirBTC)
+    if (prepared?.source === 'arcox-amm-router') {
+      const token = tokenMap[args.tokenIn]
+      const outToken = tokenMap[args.tokenOut]
+      if (!token || !outToken) throw new Error('Token cirBTC swap tidak dikenal.')
+      const amountUnits = BigInt(Math.round(Number(args.amountIn) * 10 ** token.decimals))
+      const approveTx = await approveToken(ethereum, from, token.address, prepared.ammRouter, amountUnits)
+      const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, token.address, outToken.address, amountUnits)
+      return {
+        success: true,
+        source: 'browser-arcox-amm-router',
+        route: prepared.route || `${args.tokenIn} → ${args.tokenOut}`,
+        tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn,
+        grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
+        txHash: swapTx, transactionHash: swapTx,
+        explorerUrl: `${ARC_TESTNET_EXPLORER_TX}${swapTx}`,
+        approveTx, platformFee: prepared.platformFee,
+        raw: { ...prepared, approveTx, swapTx },
+      }
+    }
+    // Two-leg AMM route (EURC↔cirBTC via USDC)
+    const steps: any[] = []
+    for (const leg of prepared.legs || []) {
+      if (leg.executionParams && leg.signature && prepared.adapterContract) {
+        // Stablecoin service leg: approve + execute adapter
+        const tokenInput = await buildTokenInput({
+          ethereum,
+          owner: from,
+          spender: prepared.adapterContract,
+          token: leg.tokenInAddress,
+          tokenSymbol: leg.tokenIn,
+          amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
+        })
+        if (tokenInput.approvalTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: tokenInput.approvalTx })
+        if (tokenInput.permitType === 1) steps.push({ name: `Permit ${leg.tokenIn}`, state: 'success' })
+        const executeData = encodeFunctionData({
+          abi: ADAPTER_EXECUTE_ABI,
+          functionName: 'execute',
+          args: [normalizeExecutionParams(leg.executionParams), [{
+            permitType: tokenInput.permitType,
+            token: leg.tokenInAddress,
+            amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
+            permitCalldata: tokenInput.permitCalldata,
+          }], leg.signature],
+        })
+        const swapTx = await sendBufferedTx(ethereum, { from, to: prepared.adapterContract, data: executeData, value: '0x0' })
+        await waitForReceipt(ethereum, swapTx)
+        steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
+      } else if (leg.provider === 'arcox-amm') {
+        // AMM leg: approve + swapWithFee
+        const tokenInInfo = tokenMap[leg.tokenIn]
+        const tokenOutInfo = tokenMap[leg.tokenOut]
+        if (!tokenInInfo || !tokenOutInfo) throw new Error(`Token ${leg.tokenIn}/${leg.tokenOut} tidak dikenal.`)
+        const amountUnits = BigInt(Math.round(Number(leg.amountIn) * 10 ** tokenInInfo.decimals))
+        await approveToken(ethereum, from, tokenInInfo.address, prepared.ammRouter, amountUnits)
+        const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, tokenInInfo.address, tokenOutInfo.address, amountUnits)
+        steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.estimatedAmount })
+      }
+    }
+    const lastTx = steps.filter(step => step.name.includes('→')).at(-1)?.txHash || ''
     return {
       success: true,
-      source: 'browser-arcox-amm-router',
+      source: 'browser-arcox-amm-router-2leg',
       route: prepared.route || `${args.tokenIn} → ${args.tokenOut}`,
       tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn,
       grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
-      txHash: swapTx, transactionHash: swapTx,
-      explorerUrl: `${ARC_TESTNET_EXPLORER_TX}${swapTx}`,
-      approveTx, platformFee: prepared.platformFee,
-      raw: { ...prepared, approveTx, swapTx },
+      txHash: lastTx, transactionHash: lastTx,
+      explorerUrl: lastTx ? `${ARC_TESTNET_EXPLORER_TX}${lastTx}` : '',
+      platformFee: prepared.platformFee,
+      raw: { ...prepared, steps },
     }
   }
   if (!prepared?.adapterContract || !Array.isArray(prepared?.legs) || prepared.legs.length === 0) {
@@ -260,6 +299,46 @@ async function buildTokenInput(args: {
   const approvalTx = await sendBufferedTx(args.ethereum, { from: args.owner, to: args.token, data: approveData, value: '0x0' })
   await waitForReceipt(args.ethereum, approvalTx)
   return { permitType: 0, permitCalldata: '0x' as const, approvalTx }
+}
+
+async function approveToken(ethereum: Eip1193Provider, from: string, token: `0x${string}`, spender: string, amount: bigint): Promise<string> {
+  const allowanceData = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [from as `0x${string}`, spender as `0x${string}`],
+  })
+  const allowanceResult = await ethereum.request({ method: 'eth_call', params: [{ to: token, data: allowanceData }, 'latest'] })
+  let allowance: bigint
+  if (isEmptyRpcData(allowanceResult)) {
+    const code = await ethereum.request({ method: 'eth_getCode', params: [token, 'latest'] })
+    if (isEmptyContractCode(code)) throw new Error('Token contract is unavailable on the active Arc network.')
+    allowance = 0n
+  } else {
+    allowance = rpcUint(allowanceResult, 'token allowance')
+  }
+  if (allowance >= amount) return ''
+  const approveData = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [spender as `0x${string}`, amount],
+  })
+  const tx = await sendBufferedTx(ethereum, { from, to: token, data: approveData, value: '0x0' })
+  await waitForReceipt(ethereum, tx)
+  return tx
+}
+
+async function swapAmmLeg(ethereum: Eip1193Provider, from: string, router: string, tokenIn: `0x${string}`, tokenOut: `0x${string}`, amountIn: bigint): Promise<string> {
+  const swapData = encodeFunctionData({
+    abi: [{ type: 'function', name: 'swapWithFee', stateMutability: 'nonpayable', inputs: [
+      { name: 'tokenIn', type: 'address' }, { name: 'tokenOut', type: 'address' },
+      { name: 'amountIn', type: 'uint256' }, { name: 'minAmountOut', type: 'uint256' },
+    ], outputs: [{ name: 'amountOut', type: 'uint256' }] }],
+    functionName: 'swapWithFee',
+    args: [tokenIn, tokenOut, amountIn, 0n],
+  })
+  const tx = await sendBufferedTx(ethereum, { from, to: router, data: swapData, value: '0x0' })
+  await waitForReceipt(ethereum, tx)
+  return tx
 }
 
 function normalizeExecutionParams(params: any) {
