@@ -96,8 +96,11 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
       const outToken = tokenMap[args.tokenOut]
       if (!token || !outToken) throw new Error('Token cirBTC swap tidak dikenal.')
       const amountUnits = BigInt(Math.round(Number(args.amountIn) * 10 ** token.decimals))
+      const actualBalance = await readTokenBalance(ethereum, from, token.address)
+      if (actualBalance < amountUnits) throw new Error(`Saldo ${args.tokenIn} tidak mencukupi untuk swap.`)
+      const minAmountOut = computeMinAmountOut(prepared.amountOut, outToken.decimals)
       const approveTx = await approveToken(ethereum, from, token.address, prepared.ammRouter, amountUnits)
-      const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, token.address, outToken.address, amountUnits)
+      const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, token.address, outToken.address, amountUnits, minAmountOut)
       return {
         success: true,
         source: 'browser-arcox-amm-router',
@@ -143,9 +146,17 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
         const tokenInInfo = tokenMap[leg.tokenIn]
         const tokenOutInfo = tokenMap[leg.tokenOut]
         if (!tokenInInfo || !tokenOutInfo) throw new Error(`Token ${leg.tokenIn}/${leg.tokenOut} tidak dikenal.`)
-        const amountUnits = BigInt(Math.round(Number(leg.amountIn) * 10 ** tokenInInfo.decimals))
-        await approveToken(ethereum, from, tokenInInfo.address, prepared.ammRouter, amountUnits)
-        const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, tokenInInfo.address, tokenOutInfo.address, amountUnits)
+        const quotedAmountUnits = BigInt(Math.round(Number(leg.amountIn) * 10 ** tokenInInfo.decimals))
+        // Use the actual token balance in case the previous leg produced slightly less (fees, rounding).
+        const actualBalance = await readTokenBalance(ethereum, from, tokenInInfo.address)
+        const amountUnits = actualBalance < quotedAmountUnits ? actualBalance : quotedAmountUnits
+        if (amountUnits <= 0n) throw new Error(`Saldo ${leg.tokenIn} tidak mencukupi untuk melanjutkan swap.`)
+        // Scale minAmountOut proportionally when we use less than the quoted input.
+        const quotedOutUnits = BigInt(Math.round(Number(leg.estimatedAmount) * 10 ** tokenOutInfo.decimals))
+        const scaledMinAmountOut = (quotedOutUnits * 99n * amountUnits) / (100n * quotedAmountUnits)
+        const approveTx = await approveToken(ethereum, from, tokenInInfo.address, prepared.ammRouter, amountUnits)
+        if (approveTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: approveTx })
+        const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, tokenInInfo.address, tokenOutInfo.address, amountUnits, scaledMinAmountOut)
         steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.estimatedAmount })
       }
     }
@@ -301,21 +312,23 @@ async function buildTokenInput(args: {
   return { permitType: 0, permitCalldata: '0x' as const, approvalTx }
 }
 
-async function approveToken(ethereum: Eip1193Provider, from: string, token: `0x${string}`, spender: string, amount: bigint): Promise<string> {
+async function readAllowance(ethereum: Eip1193Provider, from: string, token: `0x${string}`, spender: string): Promise<bigint> {
   const allowanceData = encodeFunctionData({
     abi: erc20Abi,
     functionName: 'allowance',
     args: [from as `0x${string}`, spender as `0x${string}`],
   })
   const allowanceResult = await ethereum.request({ method: 'eth_call', params: [{ to: token, data: allowanceData }, 'latest'] })
-  let allowance: bigint
   if (isEmptyRpcData(allowanceResult)) {
     const code = await ethereum.request({ method: 'eth_getCode', params: [token, 'latest'] })
     if (isEmptyContractCode(code)) throw new Error('Token contract is unavailable on the active Arc network.')
-    allowance = 0n
-  } else {
-    allowance = rpcUint(allowanceResult, 'token allowance')
+    return 0n
   }
+  return rpcUint(allowanceResult, 'token allowance')
+}
+
+async function approveToken(ethereum: Eip1193Provider, from: string, token: `0x${string}`, spender: string, amount: bigint): Promise<string> {
+  let allowance = await readAllowance(ethereum, from, token, spender)
   if (allowance >= amount) return ''
   const approveData = encodeFunctionData({
     abi: erc20Abi,
@@ -324,21 +337,51 @@ async function approveToken(ethereum: Eip1193Provider, from: string, token: `0x$
   })
   const tx = await sendBufferedTx(ethereum, { from, to: token, data: approveData, value: '0x0' })
   await waitForReceipt(ethereum, tx)
+  // Some wallets/RPCs may return an old allowance immediately after the approval.
+  // Re-read and retry once to avoid a subsequent "transfer amount exceeds allowance" revert.
+  allowance = await readAllowance(ethereum, from, token, spender)
+  if (allowance < amount) {
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    allowance = await readAllowance(ethereum, from, token, spender)
+  }
+  if (allowance < amount) {
+    throw new Error(`Approval tidak berhasil: allowance ${allowance.toString()} masih kurang dari ${amount.toString()}.`)
+  }
   return tx
 }
 
-async function swapAmmLeg(ethereum: Eip1193Provider, from: string, router: string, tokenIn: `0x${string}`, tokenOut: `0x${string}`, amountIn: bigint): Promise<string> {
+async function swapAmmLeg(ethereum: Eip1193Provider, from: string, router: string, tokenIn: `0x${string}`, tokenOut: `0x${string}`, amountIn: bigint, minAmountOut: bigint): Promise<string> {
   const swapData = encodeFunctionData({
     abi: [{ type: 'function', name: 'swapWithFee', stateMutability: 'nonpayable', inputs: [
       { name: 'tokenIn', type: 'address' }, { name: 'tokenOut', type: 'address' },
       { name: 'amountIn', type: 'uint256' }, { name: 'minAmountOut', type: 'uint256' },
     ], outputs: [{ name: 'amountOut', type: 'uint256' }] }],
     functionName: 'swapWithFee',
-    args: [tokenIn, tokenOut, amountIn, 0n],
+    args: [tokenIn, tokenOut, amountIn, minAmountOut],
   })
   const tx = await sendBufferedTx(ethereum, { from, to: router, data: swapData, value: '0x0' })
   await waitForReceipt(ethereum, tx)
   return tx
+}
+
+function computeMinAmountOut(amountOutDecimal: string | undefined | number, decimals: number): bigint {
+  if (!amountOutDecimal) return 0n
+  const amountOut = typeof amountOutDecimal === 'number' ? amountOutDecimal : Number(amountOutDecimal)
+  if (!Number.isFinite(amountOut) || amountOut <= 0) return 0n
+  const units = BigInt(Math.round(amountOut * 10 ** decimals))
+  // 1% slippage tolerance
+  return (units * 99n) / 100n
+}
+
+async function readTokenBalance(ethereum: Eip1193Provider, owner: string, token: `0x${string}`): Promise<bigint> {
+  const balanceData = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [owner as `0x${string}`],
+  })
+  const result = await ethereum.request({ method: 'eth_call', params: [{ to: token, data: balanceData }, 'latest'] })
+  if (isEmptyRpcData(result)) return 0n
+  return rpcUint(result, 'token balance')
 }
 
 function normalizeExecutionParams(params: any) {
