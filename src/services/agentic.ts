@@ -6,6 +6,7 @@ import {
   defineChain,
   encodeFunctionData,
   erc20Abi,
+  fallback,
   formatUnits,
   getAddress,
   http,
@@ -16,7 +17,7 @@ import {
   type Hex,
   type Log,
 } from 'viem'
-import { ARC_TESTNET_EXPLORER_TX, switchToArcTestnet } from '../domain/arcNetwork'
+import { ARC_TESTNET_EXPLORER_TX, ARC_TESTNET_RPC_URLS, switchToArcTestnet } from '../domain/arcNetwork'
 
 type EthereumProvider = Parameters<typeof custom>[0]
 type ContractJob = readonly [bigint, string, string, string, string, bigint, bigint, number, string] & Partial<{
@@ -42,11 +43,14 @@ const arcTestnet = defineChain({
   id: 5042002,
   name: 'Arc Testnet',
   nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: { default: { http: [new URL('/api/rpc/arc', window.location.origin).href] } },
+  rpcUrls: { default: { http: ARC_TESTNET_RPC_URLS } },
   blockExplorers: { default: { name: 'ArcScan', url: 'https://testnet.arcscan.app' } },
 })
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http() })
+const publicClient = createPublicClient({
+  chain: arcTestnet,
+  transport: fallback(ARC_TESTNET_RPC_URLS.map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
+})
 
 const agenticCommerceAbi = [
   {
