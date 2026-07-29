@@ -720,11 +720,45 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   // Arc Testnet USDC does not support EIP-3009 (receiveWithAuthorization) or EIP-2612 (permit).
   // Use 'approve' strategy (approve + deposit) instead of default 'authorize'.
   const isArc = args.chain === 'Arc_Testnet'
+
+  if (isArc) {
+    // Arc Testnet: bypass Circle SDK deposit() which fails after approve due to RPC rate limit.
+    // Instead: approve USDC → call deposit() directly on Gateway Wallet via MetaMask.
+    try {
+      return await withGatewayProxy(() => kit.unifiedBalance.deposit({
+        from: { adapter, chain: unifiedBalanceChain(args.chain) },
+        amount: args.amount,
+        token: 'USDC',
+        allowanceStrategy: 'approve',
+      } as any))
+    } catch (sdkError) {
+      console.warn('[arc-deposit] SDK deposit failed, attempting manual deposit fallback...', sdkError instanceof Error ? sdkError.message : String(sdkError))
+      // Fallback: send deposit() directly via window.ethereum
+      const GATEWAY_WALLET = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9'
+      const USDC = '0x3600000000000000000000000000000000000000'
+      const amountWei = BigInt(Math.round(parseFloat(args.amount) * 1_000_000))
+      // deposit(address,uint256) = 0x47e7ef24
+      const depositData = '0x47e7ef24' +
+        USDC.slice(2).padStart(64, '0') +
+        amountWei.toString(16).padStart(64, '0')
+      const provider = (window as any).ethereum
+      if (!provider) throw new Error('Wallet tidak terdeteksi untuk deposit fallback')
+      const accounts = await provider.request({ method: 'eth_accounts' })
+      const from = accounts?.[0]
+      if (!from) throw new Error('Wallet belum connected')
+      const txHash = await provider.request({
+        method: 'eth_sendTransaction',
+        params: [{ from, to: GATEWAY_WALLET, data: depositData }],
+      })
+      console.log('[arc-deposit] Manual deposit tx sent:', txHash)
+      return { txHash, chain: 'Arc_Testnet' } as any
+    }
+  }
+
   return await withGatewayProxy(() => kit.unifiedBalance.deposit({
     from: { adapter, chain: unifiedBalanceChain(args.chain) },
     amount: args.amount,
     token: 'USDC',
-    ...(isArc ? { allowanceStrategy: 'approve' } : {}),
   } as any))
 }
 
