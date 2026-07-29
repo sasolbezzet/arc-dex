@@ -1,6 +1,6 @@
 # ARCOX DEX — MetaMask Phishing Flag: Root Cause & Mitigations
 
-**Domain:** https://arc-dex-bice.vercel.app/
+**Domain:** https://arcoxdex.vercel.app/
 **Reporter:** Codebuff security audit
 **Date:** July 27, 2026
 
@@ -176,7 +176,7 @@ message string for deployments where legacy support is no longer required. See
 ```diff
 +        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" },
 +        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" },
-+        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com https://ethereum-sepolia-rpc.publicnode.com https://sepolia.base.org https://base-sepolia-rpc.publicnode.com https://sepolia-rollup.arbitrum.io https://arbitrum-sepolia-rpc.publicnode.com https://rpc.sepolia.org wss://api.devnet.solana.com/; worker-src 'self' blob:; upgrade-insecure-requests; block-all-mixed-content; report-uri https://arc-dex-bice.vercel.app/api/csp-report" }
++        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com https://ethereum-sepolia-rpc.publicnode.com https://sepolia.base.org https://base-sepolia-rpc.publicnode.com https://sepolia-rollup.arbitrum.io https://arbitrum-sepolia-rpc.publicnode.com https://rpc.sepolia.org wss://api.devnet.solana.com/; worker-src 'self' blob:; upgrade-insecure-requests; block-all-mixed-content; report-uri https://arcoxdex.vercel.app/api/csp-report" }
 ```
 
 ### 4.5 `public/robots.txt` and `public/sitemap.xml` — explicit SEO surface
@@ -220,7 +220,7 @@ after the UI fixes above.
 
 ### 6.2 Template paste-in
 
-> **Subject:** False-positive — https://arc-dex-bice.vercel.app/ flagged as malicious
+> **Subject:** False-positive — https://arcoxdex.vercel.app/ flagged as malicious
 >
 > We are the maintainers of ARCOX DEX, an Arc Testnet swap/bridge UI. After
 > receiving a MetaMask warning, we investigated with a full security audit of
@@ -272,7 +272,7 @@ after the UI fixes above.
 > Project links:
 > - Repo: https://github.com/<org>/arc-dex (or git remote of your choice)
 > - Audit: https://github.com/<org>/arc-dex/blob/main/audit/PHISHING-FIX.md
-> - Deployment: https://arc-dex-bice.vercel.app/
+> - Deployment: https://arcoxdex.vercel.app/
 > - Contact: security@arcox-dex.example
 
 ---
@@ -300,11 +300,11 @@ worth scheduling:
 ! rg -n "useState<string\\[\\]?>\\(''0x7" src/
 
 # 2. CSP / HSTS are live
-curl -sI https://arc-dex-bice.vercel.app/ | grep -iE 'strict-transport-security|content-security-policy|cross-origin-opener-policy'
+curl -sI https://arcoxdex.vercel.app/ | grep -iE 'strict-transport-security|content-security-policy|cross-origin-opener-policy'
 
 # 3. robots.txt and sitemap are reachable
-curl -s  https://arc-dex-bice.vercel.app/robots.txt
-curl -s  https://arc-dex-bice.vercel.app/sitemap.xml | head
+curl -s  https://arcoxdex.vercel.app/robots.txt
+curl -s  https://arcoxdex.vercel.app/sitemap.xml | head
 
 # 4. Local typecheck passes
 npx tsc --noEmit -p tsconfig.app.json

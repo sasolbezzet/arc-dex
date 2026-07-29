@@ -23,7 +23,7 @@ Content-Type: application/json
   "signature": "0x...",
   "mode": "siwe" | "legacy",
   // present only when mode === "siwe"
-  "message": "arc-dex-bice.vercel.app wants you to sign in with your Ethereum account:\n0x...\n..."
+  "message": "arcoxdex.vercel.app wants you to sign in with your Ethereum account:\n0x...\n..."
 }
 ```
 
@@ -105,11 +105,11 @@ Set via environment variables:
 
 ```bash
 # Comma-separated list of allowed SIWE domains (host only, no protocol)
-SIWE_ALLOWED_DOMAINS=localhost,localhost:5173,localhost:4173,arc-dex-bice.vercel.app,43.163.98.128.nip.io
+SIWE_ALLOWED_DOMAINS=localhost,localhost:5173,localhost:4173,arcoxdex.vercel.app,43.163.98.128.nip.io
 
 # Origins are reused from the existing CORS allowlist.
 # Paths are stripped automatically, so the following are equivalent:
-ALLOWED_ORIGINS=https://arc-dex-bice.vercel.app,https://43.163.98.128.nip.io,http://localhost:5173
+ALLOWED_ORIGINS=https://arcoxdex.vercel.app,https://43.163.98.128.nip.io,http://localhost:5173
 ```
 
 ### 3.3 In-memory nonce store

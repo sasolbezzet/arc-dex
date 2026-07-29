@@ -4,4 +4,4 @@ Disallow: /api/
 Disallow: /v1/
 Disallow: /pay/status
 Disallow: /pay/sandbox
-Sitemap: https://arc-dex-bice.vercel.app/sitemap.xml
+Sitemap: https://arcoxdex.vercel.app/sitemap.xml

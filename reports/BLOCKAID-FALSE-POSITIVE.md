@@ -12,7 +12,7 @@
 
 Hi Blockaid team,
 
-We are maintainers of **ARCOX DEX**, an Arc Testnet swap / bridge / send UI hosted at `https://arc-dex-bice.vercel.app/`. After receiving a MetaMask "could be malicious" warning, we audited the site and identified and fixed the root cause. The fixes are committed in `7f76a04e` (live).
+We are maintainers of **ARCOX DEX**, an Arc Testnet swap / bridge / send UI hosted at `https://arcoxdex.vercel.app/`. After receiving a MetaMask "could be malicious" warning, we audited the site and identified and fixed the root cause. The fixes are committed in `7f76a04e` (live).
 
 We also filed a MetaMask false-positive report at https://github.com/MetaMask/eth-phishing-detect/issues/272133.
 
@@ -48,7 +48,7 @@ This is the same read-only connection check used by major dApps to preserve UX a
 ### Live verification header proof
 
 ```
-$ curl -sI https://arc-dex-bice.vercel.app/ | grep -iE "strict-transport|content-security|cross-origin|x-frame"
+$ curl -sI https://arcoxdex.vercel.app/ | grep -iE "strict-transport|content-security|cross-origin|x-frame"
 strict-transport-security: max-age=63072000; includeSubDomains; preload
 content-security-policy: default-src 'self'; ... connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com ... wss://api.devnet.solana.com/
 cross-origin-opener-policy: same-origin-allow-popups
@@ -59,12 +59,12 @@ x-frame-options: DENY
 
 - Public repo: https://github.com/sasolbezzet/arc-dex
 - Public audit: https://github.com/sasolbezzet/arc-dex/blob/main/audit/PHISHING-FIX.md
-- Live deployment: https://arc-dex-bice.vercel.app/
+- Live deployment: https://arcoxdex.vercel.app/
 - Commit with fixes: https://github.com/sasolbezzet/arc-dex/commit/7f76a04e
 
 ### Request
 
-Please re-evaluate and clear the heuristic classification for arc-dex-bice.vercel.app. Happy to provide additional technical evidence (browser console recordings, signed nonce examples, server-side request logs) if helpful for your decision.
+Please re-evaluate and clear the heuristic classification for arcoxdex.vercel.app. Happy to provide additional technical evidence (browser console recordings, signed nonce examples, server-side request logs) if helpful for your decision.
 
 Thank you,
 — Sasol Bezset (samsula439), sasolbezzet/arc-dex

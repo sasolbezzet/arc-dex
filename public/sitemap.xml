@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://arc-dex-bice.vercel.app/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/portfolio</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/swap</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/bridge</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/send</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/receive</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/unified-balance</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/ai-router</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/agent-jobs</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/intel</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/info</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>
-  <url><loc>https://arc-dex-bice.vercel.app/docs</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/portfolio</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/swap</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/bridge</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/send</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/receive</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/unified-balance</loc><changefreq>daily</changefreq><priority>0.7</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/ai-router</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/agent-jobs</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/intel</loc><changefreq>daily</changefreq><priority>0.6</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/info</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://arcoxdex.vercel.app/docs</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>
 </urlset>

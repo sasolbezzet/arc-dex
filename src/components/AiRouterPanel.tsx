@@ -439,7 +439,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
         <div className='glass sandbox-card'>
           <h3>Client Config</h3>
           <div className='config-snippet'>
-            <code>base_url = https://arc-dex-bice.vercel.app/v1</code>
+            <code>base_url = https://arcoxdex.vercel.app/v1</code>
             <code>api_key = arx_sk_...</code>
             <code>model = arcox/auto</code>
           </div>

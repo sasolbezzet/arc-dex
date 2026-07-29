@@ -100,7 +100,7 @@ export default async function handler(req, res) {
 
 **Exploit vector.**
 
-1. Attacker runs `curl -X POST https://arc-dex-bice.vercel.app/api/payments/nowpayments/create -d '{"amount":1000,"order_id":"ARCOX-attacker"}'`.
+1. Attacker runs `curl -X POST https://arcoxdex.vercel.app/api/payments/nowpayments/create -d '{"amount":1000,"order_id":"ARCOX-attacker"}'`.
 2. In production mode (`NOWPAYMENTS_MODE=production`, `NOWPAYMENTS_API_KEY=set`), the function calls the real NOWPayments `/payment` endpoint and **creates a real invoice for $1000 of USDC**. The merchant (ARCOX) gets billed, and the attacker now has a real `pay_address` to launder or resell.
 3. The same attack works on `recent.js` (list all payment IDs and metadata) and `status.js` (poll any `paymentId` to discover recipient addresses, `base_treasury_address`, internal routing, etc.).
 4. The new `arcox_pay_*` MCP tools inherit this: an agent calling `arcox_pay_create_nowpayments_sandbox_payment` will hit the same endpoint.

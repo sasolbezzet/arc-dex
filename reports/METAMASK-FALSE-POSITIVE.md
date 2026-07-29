@@ -2,16 +2,16 @@
 
 **Submitted via:** `gh issue create --repo MetaMask/eth-phishing-detect` on 27 July 2026
 **Issue URL:** https://github.com/MetaMask/eth-phishing-detect/issues/272133
-**Title:** `[False positive] arc-dex-bice.vercel.app flagged as could-be-malicious`
+**Title:** `[False positive] arcoxdex.vercel.app flagged as could-be-malicious`
 **Repository:** `sasolbezzet/arc-dex`
 **Fix commit:** `7f76a04e`
 **Audit document:** [`audit/PHISHING-FIX.md`](../audit/PHISHING-FIX.md)
 
 ---
 
-## Subject: False-positive report — `arc-dex-bice.vercel.app` flagged as "could be malicious"
+## Subject: False-positive report — `arcoxdex.vercel.app` flagged as "could be malicious"
 
-We are the maintainers of **ARCOX DEX**, an Arc Testnet swap / bridge / send UI hosted at `https://arc-dex-bice.vercel.app/`. After receiving a MetaMask warning, we conducted a full security audit (live crawl, all network requests, all wallet interactions, multiple threat-intel list cross-checks).
+We are the maintainers of **ARCOX DEX**, an Arc Testnet swap / bridge / send UI hosted at `https://arcoxdex.vercel.app/`. After receiving a MetaMask warning, we conducted a full security audit (live crawl, all network requests, all wallet interactions, multiple threat-intel list cross-checks).
 
 ### Findings
 
@@ -57,7 +57,7 @@ We also had `WalletButton` calling `eth_accounts` on mount and silently re-firin
 ### Live verification
 
 ```
-$ curl -sI https://arc-dex-bice.vercel.app/ | grep -iE "strict-transport|content-security|cross-origin|x-frame"
+$ curl -sI https://arcoxdex.vercel.app/ | grep -iE "strict-transport|content-security|cross-origin|x-frame"
 strict-transport-security: max-age=63072000; includeSubDomains; preload
 content-security-policy: default-src 'self'; ... connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com ... wss://api.devnet.solana.com/
 cross-origin-opener-policy: same-origin
@@ -69,7 +69,7 @@ x-frame-options: DENY
 - Repo: https://github.com/sasolbezzet/arc-dex
 - Commit: https://github.com/sasolbezzet/arc-dex/commit/7f76a04e
 - Audit: https://github.com/sasolbezzet/arc-dex/blob/main/audit/PHISHING-FIX.md
-- Live: https://arc-dex-bice.vercel.app/
+- Live: https://arcoxdex.vercel.app/
 
 ### Request
 

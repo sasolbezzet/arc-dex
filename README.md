@@ -2,7 +2,7 @@
 
 Retail testnet DEX for Arc Network using Circle App Kit, CCTP v2, MetaMask, and Solana Devnet wallets.
 
-Live app: https://arc-dex-bice.vercel.app/
+Live app: https://arcoxdex.vercel.app/
 
 ## Local Development
 
@@ -121,13 +121,13 @@ If the backend moves, update `vercel.json` rewrite destination.
 ARCOX Pay webhook endpoints are Vercel serverless functions and should remain on the production frontend domain:
 
 ```txt
-https://arc-dex-bice.vercel.app/api/circle/webhook
+https://arcoxdex.vercel.app/api/circle/webhook
 ```
 
 Webhook env:
 
 ```bash
-ARCOX_PAY_BASE_URL=https://arc-dex-bice.vercel.app
+ARCOX_PAY_BASE_URL=https://arcoxdex.vercel.app
 ARCOX_DEFAULT_PAY_CURRENCY=usdcbase
 ARCOX_DEFAULT_PRICE_CURRENCY=usd
 ARCOX_ARC_TREASURY_ADDRESS=
@@ -178,7 +178,7 @@ Agent Identity is auto-detected from Arc Testnet ERC-8004. AI Router remains ava
 OpenAI-compatible client config:
 
 ```text
-base_url = https://arc-dex-bice.vercel.app/v1
+base_url = https://arcoxdex.vercel.app/v1
 api_key = arx_sk_...
 model = arcox/auto
 ```
