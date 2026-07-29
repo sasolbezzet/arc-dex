@@ -240,7 +240,7 @@ function normalizeViemChain(chain: any) {
 
 function publicRpcUrls(chainId: number): string[] {
   const urls: Record<number, string[]> = {
-    5042002: ARC_TESTNET_RPC_URLS,
+    5042002: [ARC_RPC_PROXY, ...ARC_TESTNET_RPC_URLS],
     11155111: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://rpc.sepolia.org'],
     84532: ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com'],
     421614: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],
