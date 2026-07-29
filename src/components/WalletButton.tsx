@@ -20,11 +20,8 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
     findConnectedWalletProvider().then(async active => {
       if (disposed || !active) return
       provider = active
-      // SECURITY: do not call eth_accounts on mount, do not auto-call
-      // onConnectRef.current() on mount. This is a phishing-detection
-      // anti-pattern (silently re-asserting wallet connection without a user
-      // click). The user must press the Connect button to start the
-      // eth_requestAccounts → personal_sign flow.
+      // Soft reconnect is handled in App.tsx using eth_accounts (no popup).
+      // This component only listens for wallet-initiated account/chain changes.
       active.on?.('accountsChanged', handler)
       active.on?.('chainChanged', () => { /* surface in UI */ })
     }).catch(() => {})

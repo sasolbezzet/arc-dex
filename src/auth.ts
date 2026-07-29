@@ -191,7 +191,7 @@ export async function buildSiweMessage(
   return message.prepareMessage()
 }
 
-function readSession(): AuthSession | null {
+export function getAuthSession(): AuthSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     const session = raw ? JSON.parse(raw) : null
@@ -226,7 +226,7 @@ export function readTokenExp(token: string): number | null {
 }
 
 export function getAuthToken() {
-  return readSession()?.token || ''
+  return getAuthSession()?.token || ''
 }
 
 export function clearAuthSession() {
@@ -276,7 +276,7 @@ async function authenticate(
 export async function ensureAuthSession(address: string, forceNew = false) {
   const checksumAddress = getAddress(address)
   const normalized = checksumAddress.toLowerCase()
-  const existing = readSession()
+  const existing = getAuthSession()
   if (!forceNew && existing?.token && existing.address.toLowerCase() === normalized) return existing.token
   const provider = await findConnectedWalletProvider(checksumAddress)
   if (!provider) throw new Error('Wallet EVM tidak terdeteksi')

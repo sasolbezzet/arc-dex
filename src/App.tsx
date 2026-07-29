@@ -14,7 +14,8 @@ import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
 import { AiRouterPanel } from './components/AiRouterPanel'
 import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
-import { clearAuthSession, ensureAuthSession, getAuthToken } from './auth'
+import { clearAuthSession, ensureAuthSession, getAuthToken, getAuthSession } from './auth'
+import { findConnectedWalletProvider } from './walletProvider'
 import { ViewportPopover } from './components/ViewportPopover'
 import { listAgentIdentities, selectAgentIdentity, type AgentIdentity } from './services/agentIdentity'
 import { txHistory } from './txHistory'
@@ -88,6 +89,34 @@ export default function App() {
   useEffect(() => {
     txHistory.setOwner(address)
   }, [address])
+
+  // Soft reconnect: if an authenticated session still exists and the wallet
+  // provider still exposes the same account (eth_accounts does NOT trigger a
+  // popup), restore the connection silently. Circle wallet is reloaded using
+  // the stored auth token without asking for another signature.
+  useEffect(() => {
+    let cancelled = false
+    const attemptSoftReconnect = async () => {
+      try {
+        const session = getAuthSession()
+        if (!session?.token || !session?.address) return
+        const provider = await findConnectedWalletProvider()
+        if (!provider) return
+        const accounts = await provider.request({ method: 'eth_accounts' })
+        const account = accounts?.[0]
+        if (!account || account.toLowerCase() !== session.address.toLowerCase()) return
+        if (cancelled) return
+        setAddress(account)
+        fetchEoaBal(account)
+        await loadCircleWallet(account, session.token)
+      } catch (e) {
+        // Silent failure: require explicit connect on error
+        console.error('Soft reconnect failed:', e)
+      }
+    }
+    attemptSoftReconnect()
+    return () => { cancelled = true }
+  }, [])
 
   const routeMode = ['/pay/status', '/pay/sandbox'].includes(window.location.pathname)
     ? 'pay-console'
