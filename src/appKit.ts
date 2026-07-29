@@ -146,6 +146,7 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
     }
     const target = new URL(url)
     const proxyPreferred = /^\/v1\/(?:info|balances|deposits|estimate|transfer(?:\/[0-9a-f-]+)?)(?:\?.*)?$/i.test(target.pathname + target.search)
+    console.log(`[gateway-proxy] intercepting: ${method} ${url} → proxy=${proxyPreferred}`)
     if (!proxyPreferred) return originalFetch.call(window, input, init)
     const stored = localStorage.getItem('arc-dex-auth')
     let authToken = ''
@@ -715,10 +716,14 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   }
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, args.chain)
+  // Arc Testnet USDC does not support EIP-3009 (receiveWithAuthorization) or EIP-2612 (permit).
+  // Use 'approve' strategy (approve + deposit) instead of default 'authorize'.
+  const isArc = args.chain === 'Arc_Testnet'
   return await withGatewayProxy(() => kit.unifiedBalance.deposit({
     from: { adapter, chain: unifiedBalanceChain(args.chain) },
     amount: args.amount,
     token: 'USDC',
+    ...(isArc ? { allowanceStrategy: 'approve' } : {}),
   } as any))
 }
 
