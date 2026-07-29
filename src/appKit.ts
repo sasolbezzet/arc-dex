@@ -189,7 +189,7 @@ export async function buildEvmAdapter() {
   const provider = await findConnectedWalletProvider()
   if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
   const normalizedProvider = normalizeWalletProvider(provider)
-  const capabilities = { addressContext: 'user-controlled' as const, supportedChains: [ArcTestnet, BaseSepolia, EthereumSepolia, ArbitrumSepolia] }
+  const capabilities = { addressContext: 'user-controlled' as const, supportedChains: [ARC_TESTNET_APPKIT, BaseSepolia, EthereumSepolia, ArbitrumSepolia] }
   return new ViemAdapter({
     getWalletClient: async ({ chain }: any) => {
       const safeChain = normalizeViemChain(chain)
