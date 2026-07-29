@@ -722,37 +722,58 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   const isArc = args.chain === 'Arc_Testnet'
 
   if (isArc) {
-    // Arc Testnet: bypass Circle SDK deposit() which fails after approve due to RPC rate limit.
-    // Instead: approve USDC → call deposit() directly on Gateway Wallet via MetaMask.
-    try {
-      return await withGatewayProxy(() => kit.unifiedBalance.deposit({
-        from: { adapter, chain: unifiedBalanceChain(args.chain) },
-        amount: args.amount,
-        token: 'USDC',
-        allowanceStrategy: 'approve',
-      } as any))
-    } catch (sdkError) {
-      console.warn('[arc-deposit] SDK deposit failed, attempting manual deposit fallback...', sdkError instanceof Error ? sdkError.message : String(sdkError))
-      // Fallback: send deposit() directly via window.ethereum
-      const GATEWAY_WALLET = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9'
-      const USDC = '0x3600000000000000000000000000000000000000'
-      const amountWei = BigInt(Math.round(parseFloat(args.amount) * 1_000_000))
-      // deposit(address,uint256) = 0x47e7ef24
-      const depositData = '0x47e7ef24' +
-        USDC.slice(2).padStart(64, '0') +
+    // Arc Testnet: Circle SDK deposit() hangs after approve due to RPC rate limit.
+    // Bypass SDK entirely: manually approve + deposit via MetaMask.
+    const GATEWAY_WALLET = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9'
+    const USDC = '0x3600000000000000000000000000000000000000'
+    const amountWei = BigInt(Math.round(parseFloat(args.amount) * 1_000_000))
+    const provider = (window as any).ethereum
+    if (!provider) throw new Error('Wallet EVM tidak terdeteksi')
+    const accounts = await provider.request({ method: 'eth_accounts' })
+    const from = accounts?.[0]
+    if (!from) throw new Error('Wallet belum connected')
+
+    // Step 1: Check allowance — only approve if needed
+    const allowanceData = '0xdd62ed3e' + // allowance(address,address)
+      from.slice(2).padStart(64, '0') +
+      GATEWAY_WALLET.slice(2).padStart(64, '0')
+    const allowanceHex = await provider.request({
+      method: 'eth_call',
+      params: [{ to: USDC, data: allowanceData }, 'latest'],
+    })
+    const currentAllowance = BigInt(allowanceHex)
+    if (currentAllowance < amountWei) {
+      console.log('[arc-deposit] Approving USDC...', amountWei.toString())
+      const approveData = '0x095ea7b3' + // approve(address,uint256)
+        GATEWAY_WALLET.slice(2).padStart(64, '0') +
         amountWei.toString(16).padStart(64, '0')
-      const provider = (window as any).ethereum
-      if (!provider) throw new Error('Wallet tidak terdeteksi untuk deposit fallback')
-      const accounts = await provider.request({ method: 'eth_accounts' })
-      const from = accounts?.[0]
-      if (!from) throw new Error('Wallet belum connected')
-      const txHash = await provider.request({
+      const approveTx = await provider.request({
         method: 'eth_sendTransaction',
-        params: [{ from, to: GATEWAY_WALLET, data: depositData }],
+        params: [{ from, to: USDC, data: approveData }],
       })
-      console.log('[arc-deposit] Manual deposit tx sent:', txHash)
-      return { txHash, chain: 'Arc_Testnet' } as any
+      console.log('[arc-deposit] Approve tx:', approveTx)
+      // Wait for approve confirmation
+      for (let i = 0; i < 30; i++) {
+        const receipt = await provider.request({
+          method: 'eth_getTransactionReceipt',
+          params: [approveTx],
+        })
+        if (receipt) break
+        await new Promise(r => setTimeout(r, 2000))
+      }
     }
+
+    // Step 2: deposit() to Gateway Wallet
+    console.log('[arc-deposit] Sending deposit()...')
+    const depositData = '0x47e7ef24' + // deposit(address,uint256)
+      USDC.slice(2).padStart(64, '0') +
+      amountWei.toString(16).padStart(64, '0')
+    const txHash = await provider.request({
+      method: 'eth_sendTransaction',
+      params: [{ from, to: GATEWAY_WALLET, data: depositData }],
+    })
+    console.log('[arc-deposit] Deposit tx:', txHash)
+    return { txHash, chain: 'Arc_Testnet' } as any
   }
 
   return await withGatewayProxy(() => kit.unifiedBalance.deposit({
