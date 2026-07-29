@@ -170,7 +170,7 @@ export async function buildSiweMessage(
   expiresAt: string,
   provider: Eip1193Provider,
 ): Promise<string> {
-  const host = SIWE_DOMAIN || (typeof window !== 'undefined' ? window.location.host : 'arc-dex-bice.vercel.app')
+  const host = SIWE_DOMAIN || (typeof window !== 'undefined' ? window.location.host : 'arcoxdex.vercel.app')
   const origin = SIWE_ORIGIN || (typeof window !== 'undefined' ? window.location.origin : `https://${host}`)
   const chainId = await getActiveChainId(provider)
   // Dynamic import keeps the siwe/ethers chunk out of the main bundle when
