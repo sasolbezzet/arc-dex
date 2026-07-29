@@ -145,7 +145,7 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
       return originalFetch.call(window, input, init)
     }
     const target = new URL(url)
-    const proxyPreferred = /^\/v1\/(?:info|balances|deposits|estimate|transfer(?:\/[0-9a-f-]+)?)$/.test(target.pathname)
+    const proxyPreferred = /^\/v1\/(?:info|balances|deposits|estimate|transfer(?:\/[0-9a-f-]+)?)(?:\?.*)?$/i.test(target.pathname + target.search)
     if (!proxyPreferred) return originalFetch.call(window, input, init)
     const stored = localStorage.getItem('arc-dex-auth')
     let authToken = ''
@@ -159,15 +159,15 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
       method,
       headers,
       body,
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(90_000),
     })
   }
   try {
     return await operation()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (/Maximum retry attempts|Service temporarily unavailable|Failed to fetch|Gateway API error/i.test(message)) {
-      throw new Error('Circle Gateway testnet is temporarily unavailable. No successful transfer response was received. Check Unified Balance, then retry the same action.', { cause: error })
+    if (/Maximum retry attempts|Service temporarily unavailable|Failed to fetch|Gateway API error|NetworkError|timeout|aborted/i.test(message)) {
+      throw new Error('Deposit/withdrawal berhasil on-chain, tetapi Circle Gateway testnet belum mengkonfirmasi transfer. Unified Balance Anda akan ter-update dalam beberapa menit. Jika tidak update, coba refresh halaman dan cek Unified Balance.', { cause: error })
     }
     throw error
   } finally {
