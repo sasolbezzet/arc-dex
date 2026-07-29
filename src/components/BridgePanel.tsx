@@ -719,9 +719,52 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         await new Promise(r => setTimeout(r, pollDelay))
       }
       if (!attData.success) {
-        localSteps.push({ name:'mint', state:'error' })
-        if (historyId) txHistory.update(historyId, { status:'error', error:attData.error || 'Attestation timeout' })
-        throw new Error(attData.error || 'Attestation timeout')
+        // Attestation timeout — register auto-mint worker di backend
+        // Backend akan terus poll attestation di background (~10 menit)
+        // Frontend poll status sampai ready, lalu mint via MetaMask
+        localSteps.push({ name:'mint', state:'pending' })
+        if (historyId) txHistory.update(historyId, { status:'pending', error: 'Attestation pending, auto-mint worker aktif' })
+        setStatus({ type:'info', msg:`⏳ Attestation belum siap. Auto-mint worker aktif di background...\nBurn tx: ${burnTx.slice(0,20)}...`, steps:[...localSteps] })
+
+        // Register auto-mint job
+        await safePost(API, '/api/auto-mint/register', { burnTxHash: burnTx, fromChain, toChain })
+
+        // Poll auto-mint status sampai ready
+        let mintJob: any = null
+        const maxStatusPolls = 200 // ~10 menit @ 3s
+        for (let j = 0; j < maxStatusPolls; j++) {
+          try {
+            const jobResp = await fetch(API + '/api/auto-mint/status/' + burnTx, {
+              headers: { Authorization: 'Bearer ' + (JSON.parse(localStorage.getItem('arc-dex-auth')||'{}')?.token || '') },
+            })
+            mintJob = await jobResp.json()
+            if (mintJob.status === 'ready') break
+            if (mintJob.status === 'timeout' || mintJob.status === 'error') {
+              throw new Error(mintJob.error || 'Auto-mint timeout')
+            }
+            if (j % 10 === 0) {
+              setStatus({ type:'info', msg:`⏳ Auto-mint polling ${j+1}/${maxStatusPolls}...\nBurn tx: ${burnTx.slice(0,20)}...`, steps:[...localSteps] })
+            }
+          } catch (e) {
+            // Job mungkin belum terdaftar, retry
+          }
+          await new Promise(r => setTimeout(r, 3000))
+        }
+
+        if (!mintJob || mintJob.status !== 'ready') {
+          localSteps[localSteps.length-1].state='error'
+          if (historyId) txHistory.update(historyId, { status:'error', error:'Auto-mint timeout' })
+          throw new Error('Auto-mint: attestation tidak siap setelah 10 menit. Coba retry bridge manual.')
+        }
+
+        // Attestation siap — gunakan data dari auto-mint worker
+        attData = {
+          success: true,
+          message: mintJob.message,
+          attestation: mintJob.attestation,
+          messageTransmitter: mintJob.messageTransmitter,
+        }
+        setStatus({ type:'info', msg:`✓ Attestasi siap! (auto-mint)\n⏳ MetaMask popup: Mint ${token} di ${toChain}...`, steps:[...localSteps] })
       }
 
       // Step 4: Switch MetaMask ke destination chain + send receiveMessage via user wallet
