@@ -146,7 +146,6 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
     }
     const target = new URL(url)
     const proxyPreferred = /^\/v1\/(?:info|balances|deposits|estimate|transfer(?:\/[0-9a-f-]+)?)(?:\?.*)?$/i.test(target.pathname + target.search)
-    console.log(`[gateway-proxy] intercepting: ${method} ${url} → proxy=${proxyPreferred}`)
     if (!proxyPreferred) return originalFetch.call(window, input, init)
     const stored = localStorage.getItem('arc-dex-auth')
     let authToken = ''
