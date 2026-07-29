@@ -2,7 +2,8 @@
 
 **Target:** https://blockaid.io/contact (or team@blockaid.io)
 **Repository:** `sasolbezzet/arc-dex`
-**Fix commit:** `7f76a04e`
+**Original fix commit:** `7f76a04e`
+**Soft-reconnect update commit:** `476866b1`
 **Cross-ref:** MetaMask issue #272133 https://github.com/MetaMask/eth-phishing-detect/issues/272133
 
 ---
@@ -20,10 +21,20 @@ We also filed a MetaMask false-positive report at https://github.com/MetaMask/et
 | Blockaid rule | Before fix | After fix |
 |---|---|---|
 | `hardcoded-balance` | Rendered $12,450 USDC + 0.45 cirBTC in DOM on page load | Empty initial state, $0 / null until user connects |
-| `silent-reconnect` | eth_accounts called on mount | Removed; user presses Connect |
 | `unknown-dapp` | No robots.txt / sitemap.xml | Both files now present |
 | `personal_sign non-SIWE` | Generic 5-line login message | Frontend now builds EIP-4361 SIWE messages via the `siwe` library and falls back to the legacy 5-line message when the backend signals it does not yet support SIWE. Set `VITE_SIWE_ENABLED=false` to force legacy mode during backend migration. |
 | `strict-coop-breaks-wallet-popup` | COOP: same-origin | COOP: same-origin-allow-popups (wallet popups can communicate) |
+
+### Note on `eth_accounts` on page load (commit `476866b1`)
+
+We added a **soft reconnect** in commit `476866b1`. On page refresh, the app reads the locally-stored auth session and calls `eth_accounts` (no popup, no signature) only to check whether the previously-connected wallet still exposes the same address. If yes, it restores the UI connection state. This behavior:
+
+- Does **not** call `eth_requestAccounts`, `personal_sign`, `eth_signTypedData_v4`, or any transaction method automatically.
+- Does **not** pre-render fake balances or fake wallet addresses.
+- Only restores state when the wallet itself reports the same address that matches the stored, user-consented auth session.
+- Fails silently if no matching session/account exists, leaving the user at the Connect screen.
+
+This is the same read-only connection check used by major dApps to preserve UX across refreshes. It should not be confused with a wallet-drainer "silent reconnect" that immediately auto-signs or auto-transacts.
 
 ### Site does NOT do (any time)
 
