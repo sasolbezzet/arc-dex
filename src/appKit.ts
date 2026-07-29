@@ -166,6 +166,8 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
     return await operation()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    const cause = error instanceof Error ? error.cause : undefined
+    console.error('[gateway-proxy] operation failed:', message, cause ? String(cause) : '')
     if (/Maximum retry attempts|Service temporarily unavailable|Failed to fetch|Gateway API error|NetworkError|timeout|aborted/i.test(message)) {
       throw new Error('Deposit/withdrawal berhasil on-chain, tetapi Circle Gateway testnet belum mengkonfirmasi transfer. Unified Balance Anda akan ter-update dalam beberapa menit. Jika tidak update, coba refresh halaman dan cek Unified Balance.', { cause: error })
     }
