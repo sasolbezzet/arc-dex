@@ -54,10 +54,10 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
     for (let i = 0; i < 90; i++) {
       const r = await evmRequest({ method:'eth_getTransactionReceipt', params:[txHash] })
       if (r?.status === '0x1') return r
-      if (r?.status === '0x0') throw new Error('Retry mint transaction failed on-chain.')
+      if (r?.status === '0x0') throw new Error('Transaksi penerimaan gagal di jaringan.')
       await new Promise(resolve => setTimeout(resolve, 2000))
     }
-    throw new Error('Retry mint timeout. Cek explorer lalu coba lagi.')
+    throw new Error('Waktu penerimaan habis. Cek explorer lalu coba lagi.')
   }
   const toHex = (n: bigint) => `0x${n.toString(16)}`
   const getBufferedEvmFees = async (tx: any, multiplier = 3n) => {
@@ -124,7 +124,7 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
         toChain: rec.to,
       })
       if (!att.success || !att.message || !att.attestation || !att.messageTransmitter) {
-        throw new Error(att.error || 'Attestation belum tersedia. Coba retry lagi nanti.')
+        throw new Error(att.error || 'Konfirmasi jaringan belum tersedia. Coba lagi nanti.')
       }
       await switchDestinationChain()
       const accounts = await evmRequest({ method:'eth_requestAccounts' })
@@ -144,10 +144,10 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
         mintTx,
         mintExplorerUrl: explorerUrl,
         error: undefined,
-        note: `${rec.note || ''}\nRetry mint completed via MetaMask.`,
+        note: `${rec.note || ''}\nRetry penerimaan selesai via MetaMask.`,
       })
     } catch(e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Retry mint gagal'
+      const msg = e instanceof Error ? e.message : 'Retry penerimaan gagal'
       setRetryError(msg)
       txHistory.update(rec.id, { status:'error', error:msg })
     }
@@ -179,19 +179,19 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
           )}
           {rec.approveTx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#64748b' }}>Approve</span>
+              <span style={{ color: '#64748b' }}>Izinkan</span>
               <span style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.approveTx)}</span>
             </div>
           )}
           {rec.burnTx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#64748b' }}>Burn</span>
+              <span style={{ color: '#64748b' }}>Kirim</span>
               <a href={rec.burnExplorerUrl || '#'} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.burnTx)} →</a>
             </div>
           )}
           {rec.mintTx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#64748b' }}>Mint</span>
+              <span style={{ color: '#64748b' }}>Terima</span>
               <a href={rec.mintExplorerUrl || '#'} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.mintTx)} →</a>
             </div>
           )}
@@ -207,7 +207,7 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
           </button>
           {canRetry && (
             <button onClick={retryMint} disabled={retrying} style={{marginTop:4,background:'rgba(99,102,241,0.14)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.35)',padding:'6px 8px',borderRadius:8,cursor:retrying?'not-allowed':'pointer',fontSize:11}}>
-              {retrying ? 'Retry mint...' : 'Retry mint'}
+              {retrying ? 'Menunggu penerimaan...' : 'Retry penerimaan'}
             </button>
           )}
         </div>
@@ -340,13 +340,13 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
         </div>
         {pending.length > 0 ? (
           <>
-            <div style={{color:'#f59e0b',fontSize:12,marginBottom:8}}>{pending.length} transaksi perlu dicek. Bridge pending bisa retry mint jika attestation sudah siap.</div>
+            <div style={{color:'#f59e0b',fontSize:12,marginBottom:8}}>{pending.length} transaksi perlu dicek. Bridge pending bisa dilanjutkan jika konfirmasi jaringan sudah siap.</div>
             {pending.slice(0,6).map(rec=><HistoryRow key={`pending-${rec.id}`} rec={rec} />)}
           </>
         ) : (
           <div style={{color:'#10b981',fontSize:12,marginBottom:8}}>{t('info.retryClear')}</div>
         )}
-        {retryable.length > 0 && <div style={{color:'#94a3b8',fontSize:11,marginTop:8}}>{retryable.length} bridge bisa dicoba retry mint dari detail transaksi.</div>}
+        {retryable.length > 0 && <div style={{color:'#94a3b8',fontSize:11,marginTop:8}}>{retryable.length} bridge bisa dilanjutkan penerimaannya dari detail transaksi.</div>}
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
