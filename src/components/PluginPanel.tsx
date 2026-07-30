@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { safePost } from '../api'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
@@ -63,18 +63,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const syncWalletCredentials = async () => {
     if (!address) return
-    const existing = credentials.find(c => c.type === 'eoa' && c.value.toLowerCase() === address.toLowerCase())
+    const existing = credentials.find(c => c.type === 'eoa' && c.label === 'MetaMask EOA')
     if (!existing) {
       try { await safePost(API, '/api/vault/credentials', { type: 'eoa', label: 'MetaMask EOA', value: address }) } catch {}
     }
     if (circleWallet) {
-      const existingCircle = credentials.find(c => c.type === 'circle' && c.value.toLowerCase() === circleWallet.address.toLowerCase())
+      const existingCircle = credentials.find(c => c.type === 'circle' && c.label === 'Circle Wallet')
       if (!existingCircle) {
         try { await safePost(API, '/api/vault/credentials', { type: 'circle', label: 'Circle Wallet', value: circleWallet.address }) } catch {}
       }
     }
     if (solanaAddress) {
-      const existingSol = credentials.find(c => c.type === 'solana' && c.value === solanaAddress)
+      const existingSol = credentials.find(c => c.type === 'solana' && c.label === 'Solana Devnet')
       if (!existingSol) {
         try { await safePost(API, '/api/vault/credentials', { type: 'solana', label: 'Solana Devnet', value: solanaAddress }) } catch {}
       }
@@ -82,14 +82,22 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     fetchAll()
   }
 
+  const hasSynced = useRef(false)
   useEffect(() => {
-    if (credentials.length === 0 && address) syncWalletCredentials()
-  }, [address, circleWallet, solanaAddress, credentials.length])
+    if (!hasSynced.current && address) {
+      hasSynced.current = true
+      syncWalletCredentials()
+    }
+  }, [address, circleWallet, solanaAddress])
 
+  const limitsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const updateLimits = async (patch: Partial<Limits>) => {
     const next = { ...limits, ...patch }
     setLimits(next)
-    try { await safePost(API, '/api/vault/limits', next) } catch (e: any) { setError(e?.message || 'Update limits gagal') }
+    if (limitsTimer.current) clearTimeout(limitsTimer.current)
+    limitsTimer.current = setTimeout(async () => {
+      try { await safePost(API, '/api/vault/limits', next) } catch (e: any) { setError(e?.message || 'Update limits gagal') }
+    }, 800)
   }
 
   const addWhitelist = () => {

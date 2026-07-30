@@ -85,7 +85,9 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const [agentIdentities, setAgentIdentities] = useState<AgentIdentity[]>([])
   const [activeAgentIdentity, setActiveAgentIdentity] = useState<AgentIdentity|null>(null)
-  const [solanaAddress, _setSolanaAddress] = useState<string|null>(null)
+  const [solanaAddress, _setSolanaAddress] = useState<string|null>(() => {
+    try { return (window as any).solflare?.publicKey?.toString() || null } catch { return null }
+  })
   const connectInFlightRef = useRef('')
   const balanceRequestRef = useRef({ circle: 0, eoa: 0 })
 
