@@ -12,6 +12,7 @@ import { PaySandbox } from './components/PaySandbox'
 import { IntelPanel } from './components/IntelPanel'
 import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
 import { AiRouterPanel } from './components/AiRouterPanel'
+import { PluginPanel } from './components/PluginPanel'
 import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken, getAuthSession } from './auth'
@@ -32,6 +33,7 @@ const NAV = [
   { id: 'receive', path: '/receive', label: 'Request', icon: 'RC' },
   { id: 'unified', path: '/unified-balance', label: 'Unified Balance', icon: 'UB' },
   { id: 'ai-router', path: '/ai-router', label: 'AI Router', icon: 'AR' },
+  { id: 'plugin', path: '/plugin', label: 'Plugin', icon: 'PL' },
   { id: 'agentic', path: '/agent-jobs', label: 'Jobs', icon: 'AI' },
   { id: 'intel', path: '/intel', label: 'x402', icon: 'IX' },
   { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
@@ -83,6 +85,7 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const [agentIdentities, setAgentIdentities] = useState<AgentIdentity[]>([])
   const [activeAgentIdentity, setActiveAgentIdentity] = useState<AgentIdentity|null>(null)
+  const [solanaAddress, _setSolanaAddress] = useState<string|null>(null)
   const connectInFlightRef = useRef('')
   const balanceRequestRef = useRef({ circle: 0, eoa: 0 })
 
@@ -364,6 +367,8 @@ export default function App() {
                         ? <UnifiedBalancePanel eoaAddress={address} />
                       : page === 'ai-router'
                         ? <AiRouterPanel address={address} activeAgentIdentity={activeAgentIdentity} />
+                      : page === 'plugin'
+                        ? <PluginPanel address={address} circleWallet={circleWallet} solanaAddress={solanaAddress} />
                       : page === 'agentic'
                         ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} identities={agentIdentities} activeIdentity={activeAgentIdentity} onSelectIdentity={chooseAgentIdentity} onIdentityRefresh={() => refreshAgentIdentities(true)} />
                         : page === 'intel'
