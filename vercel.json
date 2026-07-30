@@ -12,6 +12,14 @@
       "destination": "https://43.163.98.128.nip.io/v1/:path*"
     },
     {
+      "source": "/mcp",
+      "destination": "https://43.163.98.128.nip.io/mcp"
+    },
+    {
+      "source": "/.well-known/:path*",
+      "destination": "https://43.163.98.128.nip.io/.well-known/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
@@ -28,7 +36,7 @@
         { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com https://ethereum-sepolia-rpc.publicnode.com https://sepolia.base.org https://base-sepolia-rpc.publicnode.com https://sepolia-rollup.arbitrum.io https://arbitrum-sepolia-rpc.publicnode.com https://rpc.sepolia.org wss://api.devnet.solana.com/; worker-src 'self' blob:; upgrade-insecure-requests; block-all-mixed-content; report-uri https://arcoxdex.vercel.app/api/csp-report"
+          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://gateway-api-testnet.circle.com https://api.devnet.solana.com https://ethereum-sepolia-rpc.publicnode.com https://sepolia.base.org https://base-sepolia-rpc.publicnode.com https://sepolia-rollup.arbitrum.io https://arbitrum-sepolia-rpc.publicnode.com https://rpc.sepolia.org wss://api.devnet.solana.com/ https://43.163.98.128.nip.io; worker-src 'self' blob:; upgrade-insecure-requests; block-all-mixed-content; report-uri https://arcoxdex.vercel.app/api/csp-report"
         }
       ]
     }
