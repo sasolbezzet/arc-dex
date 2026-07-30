@@ -54,7 +54,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
     setLoading(true); setStatus(null)
     try {
       if (source === 'eoa') {
-        setStatus({ type:'warning', msg:'USDC memakai permit + satu transaksi swap. Token tanpa permit mungkin meminta approval lebih dulu.' })
+        setStatus({ type:'warning', msg:'USDC hanya perlu 1 popup transaksi. Token lain mungkin meminta izin lebih dulu.' })
         const result = await swapFromEoa({ metamaskAddress: address, tokenIn, tokenOut, amountIn })
         const feeText = result?.platformFee?.amount ? ` • fee ${result.platformFee.amount} ${result.platformFee.token}` : ''
         txHistory.add({

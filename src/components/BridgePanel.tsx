@@ -308,8 +308,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const { burnTx, historyId, localSteps, sourceChain, destinationChain, amountLabel, tokenLabel } = params
     localSteps.push({ name:'attestation', state:'pending' })
     const attEst = sourceChain === 'Arc_Testnet' ? '~30 detik' : '~30 detik - 3 menit'
-    setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Polling attestasi (${attEst})...`, steps:[...localSteps] })
-    setStep('Menunggu attestasi...')
+    setStatus({ type:'info', msg:`✓ Dana sudah dikirim!\n⏳ Menunggu konfirmasi (${attEst})...`, steps:[...localSteps] })
+    setStep('Menunggu konfirmasi jaringan...')
 
     const maxPolls = 120
     const pollDelay = sourceChain === 'Arc_Testnet' ? 1000 : 3000
@@ -318,13 +318,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       attData = await safePost(API, '/api/get-attestation', {txHash: burnTx, fromChain: sourceChain, toChain: destinationChain, once: true})
       if (attData.success) break
       const statusText = attData.status ? ` (${attData.status})` : ''
-      setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Polling attestasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
+      setStatus({ type:'info', msg:`✓ Dana sudah dikirim!\n⏳ Menunggu konfirmasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
       await new Promise(r => setTimeout(r, pollDelay))
     }
     if (!attData?.success) {
       localSteps[localSteps.length-1].state = 'error'
-      txHistory.update(historyId, { status:'error', error:attData?.error || 'Attestation timeout' })
-      throw new Error(attData?.error || 'Attestation timeout')
+      txHistory.update(historyId, { status:'error', error:attData?.error || 'Konfirmasi jaringan timeout' })
+      throw new Error(attData?.error || 'Konfirmasi jaringan timeout')
     }
     localSteps[localSteps.length-1].state='success'
 
@@ -343,11 +343,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     const callData = buildReceiveMessageCalldata(attData.message, attData.attestation)
     localSteps.push({ name:'mint', state:'pending' })
-    setStep(`MetaMask: Mint USDC di ${destinationChain}...`)
-    setStatus({ type:'info', msg:`✓ Attestasi siap!\n⏳ MetaMask popup: Mint USDC di ${destinationChain}...`, steps:[...localSteps] })
+    setStep(`MetaMask: Terima USDC di ${destinationChain}...`)
+    setStatus({ type:'info', msg:`✓ Konfirmasi siap!\n⏳ MetaMask popup: Terima USDC di ${destinationChain}...`, steps:[...localSteps] })
     const mintTx = await sendEvmTxBuffered({ from:address, to:attData.messageTransmitter, data:callData })
     localSteps[localSteps.length-1].txHash = mintTx
-    setStatus({ type:'info', msg:'⏳ Menunggu mint...', steps:[...localSteps] })
+    setStatus({ type:'info', msg:'⏳ Menunggu penerimaan...', steps:[...localSteps] })
     await waitEvmTx(mintTx)
     localSteps[localSteps.length-1].state='success'
     const explorerUrl = explorerFor(destinationChain, mintTx)
@@ -636,7 +636,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     const burnTx = await sendEvmTxBuffered({ from:address, to:routerAddr || srcInfo.tokenMessenger, data:burnData })
     localSteps.push({ name:'burn', state:'pending', txHash:burnTx })
-    setStatus({ type:'info', msg:'⏳ Menunggu burn...', steps:[...localSteps] })
+    setStatus({ type:'info', msg:'⏳ Menunggu pengiriman...', steps:[...localSteps] })
     await waitEvmTx(burnTx)
     localSteps[localSteps.length-1].state='success'
     localSteps[localSteps.length-1].explorerUrl=explorerFor(fromChain, burnTx)
@@ -664,8 +664,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     // Attestation + Mint
     localSteps.push({ name:'attestation', state:'pending' })
     const attEst = fromChain === 'Arc_Testnet' ? '~30 detik' : '~30 detik - 3 menit'
-    setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Menunggu attestasi (${attEst})...`, steps:[...localSteps] })
-    setStep('Menunggu attestasi...')
+    setStatus({ type:'info', msg:`✓ Dana sudah dikirim!\n⏳ Menunggu konfirmasi (${attEst})...`, steps:[...localSteps] })
+    setStep('Menunggu konfirmasi jaringan...')
 
     if (isToSolana) {
       // Mint di Solana → frontend Solflare yang sign
@@ -689,7 +689,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           if (historyId) txHistory.update(historyId, { status:'error', error:e.message || 'Mint Solana gagal' })
           setStatus({
             type:'warning',
-            msg:`✗ Mint GAGAL di Solana Devnet\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (${bridgeTokenLabel} sudah di-burn):\n${burnTx.slice(0,40)}...\n\n${bridgeTokenLabel} Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
+            msg:`✗ Penerimaan GAGAL di Solana Devnet\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (${bridgeTokenLabel} sudah di-burn):\n${burnTx.slice(0,40)}...\n\n${bridgeTokenLabel} Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
             steps:[...localSteps]
           })
           throw new Error(e.message || 'Mint Solana gagal')
@@ -704,8 +704,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       // EVM→EVM Mint via MetaMask: backend hanya polling attestation, frontend sign tx
       localSteps[localSteps.length-1].state='success'
       const attEst2 = '~30 detik - 3 menit'
-      setStep('Menunggu attestasi...')
-      setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Polling attestasi (${attEst2})...`, steps:[...localSteps] })
+      setStep('Menunggu konfirmasi jaringan...')
+      setStatus({ type:'info', msg:`✓ Dana sudah dikirim!\n⏳ Menunggu konfirmasi (${attEst2})...`, steps:[...localSteps] })
 
       // Step 3: Poll attestation dengan request pendek agar chain slow-finality tidak timeout di proxy.
       const maxPolls = 120
@@ -715,16 +715,16 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         attData = await safePost(API, '/api/get-attestation', {txHash: burnTx, fromChain, toChain, once: true})
         if (attData.success) break
         const statusText = attData.status ? ` (${attData.status})` : ''
-        setStatus({ type:'info', msg:`✓ Burn sukses!\n⏳ Polling attestasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
+        setStatus({ type:'info', msg:`✓ Dana sudah dikirim!\n⏳ Menunggu konfirmasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
         await new Promise(r => setTimeout(r, pollDelay))
       }
       if (!attData.success) {
-        // Attestation timeout — register auto-mint worker di backend
+        // Konfirmasi jaringan timeout — register auto-mint worker di backend
         // Backend akan terus poll attestation di background (~10 menit)
         // Frontend poll status sampai ready, lalu mint via MetaMask
         localSteps.push({ name:'mint', state:'pending' })
-        if (historyId) txHistory.update(historyId, { status:'pending', error: 'Attestation pending, auto-mint worker aktif' })
-        setStatus({ type:'info', msg:`⏳ Attestation belum siap. Auto-mint worker aktif di background...\nBurn tx: ${burnTx.slice(0,20)}...`, steps:[...localSteps] })
+        if (historyId) txHistory.update(historyId, { status:'pending', error: 'Attestation pending, penyelesaian otomatis aktif' })
+        setStatus({ type:'info', msg:`⏳ Konfirmasi jaringan belum siap. Penyelesaian otomatis aktif di background...\nBurn tx: ${burnTx.slice(0,20)}...`, steps:[...localSteps] })
 
         // Register auto-mint job
         await safePost(API, '/api/auto-mint/register', { burnTxHash: burnTx, fromChain, toChain })
@@ -740,10 +740,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
             mintJob = await jobResp.json()
             if (mintJob.status === 'ready') break
             if (mintJob.status === 'timeout' || mintJob.status === 'error') {
-              throw new Error(mintJob.error || 'Auto-mint timeout')
+              throw new Error(mintJob.error || 'Penyelesaian otomatis timeout')
             }
             if (j % 10 === 0) {
-              setStatus({ type:'info', msg:`⏳ Auto-mint polling ${j+1}/${maxStatusPolls}...\nBurn tx: ${burnTx.slice(0,20)}...`, steps:[...localSteps] })
+              setStatus({ type:'info', msg:`⏳ Penyelesaian otomatis ${j+1}/${maxStatusPolls}...\nBurn tx: ${burnTx.slice(0,20)}...`, steps:[...localSteps] })
             }
           } catch (e) {
             // Job mungkin belum terdaftar, retry
@@ -753,8 +753,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
         if (!mintJob || mintJob.status !== 'ready') {
           localSteps[localSteps.length-1].state='error'
-          if (historyId) txHistory.update(historyId, { status:'error', error:'Auto-mint timeout' })
-          throw new Error('Auto-mint: attestation tidak siap setelah 10 menit. Coba retry bridge manual.')
+          if (historyId) txHistory.update(historyId, { status:'error', error:'Penyelesaian otomatis timeout' })
+          throw new Error('Penyelesaian otomatis: konfirmasi jaringan belum siap setelah 10 menit. Coba lagi nanti.')
         }
 
         // Attestation siap — gunakan data dari auto-mint worker
@@ -764,12 +764,12 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
           attestation: mintJob.attestation,
           messageTransmitter: mintJob.messageTransmitter,
         }
-        setStatus({ type:'info', msg:`✓ Attestasi siap! (auto-mint)\n⏳ MetaMask popup: Mint ${token} di ${toChain}...`, steps:[...localSteps] })
+        setStatus({ type:'info', msg:`✓ Konfirmasi siap! (penyelesaian otomatis)\n⏳ MetaMask popup: Terima ${token} di ${toChain}...`, steps:[...localSteps] })
       }
 
       // Step 4: Switch MetaMask ke destination chain + send receiveMessage via user wallet
-      setStep(`MetaMask: Mint ${token} di ${toChain}...`)
-      setStatus({ type:'info', msg:`✓ Attestasi siap!\n⏳ MetaMask popup 3/3: Mint ${token} di ${toChain}...`, steps:[...localSteps] })
+      setStep(`MetaMask: Terima ${token} di ${toChain}...`)
+      setStatus({ type:'info', msg:`✓ Konfirmasi siap!\n⏳ MetaMask popup 3/3: Terima ${token} di ${toChain}...`, steps:[...localSteps] })
 
       // Switch ke destination chain
       const toInfo = EVM_CHAINS.find(c=>c.id===toChain)
@@ -812,13 +812,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       try {
         mintTx = await sendEvmTxBuffered({ from:address, to:msgTxAddr, data:callData })
         localSteps[localSteps.length-1].txHash = mintTx
-        setStatus({ type:'info', msg:'⏳ Menunggu mint...', steps:[...localSteps] })
+        setStatus({ type:'info', msg:'⏳ Menunggu penerimaan...', steps:[...localSteps] })
         await waitEvmTx(mintTx)
       } catch(e:any) {
         localSteps[localSteps.length-1].state='error'
-        if (historyId) txHistory.update(historyId, { status:'error', error:e.message || 'Mint via MetaMask gagal' })
-        setStatus({ type:'error', msg:`✗ Mint GAGAL di ${toChain}\nAlasan: ${e.message?.slice(0,200)}\n\nBurn sudah sukses (tx: ${burnTx.slice(0,12)}...).\nHubungi support atau retry bridge manual.`, steps:[...localSteps] })
-        throw new Error(e.message || 'Mint via MetaMask gagal')
+        if (historyId) txHistory.update(historyId, { status:'error', error:e.message || 'Penerimaan via MetaMask gagal' })
+        setStatus({ type:'error', msg:`✗ Penerimaan GAGAL di ${toChain}\nAlasan: ${e.message?.slice(0,200)}\n\nBurn sudah sukses (tx: ${burnTx.slice(0,12)}...).\nHubungi support atau retry bridge manual.`, steps:[...localSteps] })
+        throw new Error(e.message || 'Penerimaan via MetaMask gagal')
       }
 
       localSteps[localSteps.length-1].state='success'
@@ -863,11 +863,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         dstDomain: DST_DOMAIN.Arc_Testnet,
         note: 'Solana burn complete. Arc mint pending.',
       })
-      setStatus({ type:'info', msg:`✓ Burn sukses di Solana!\n⏳ Menunggu attestation (~20 detik)...`, steps:[...localSteps] })
+      setStatus({ type:'info', msg:`✓ Dana sudah dikirim di Solana!\n⏳ Menunggu konfirmasi jaringan (~20 detik)...`, steps:[...localSteps] })
 
       // Mint di Arc harus ditandatangani wallet user. Server-signed mint sengaja disabled.
       localSteps.push({ name:'attestation', state:'pending' })
-      setStatus({ type:'info', msg:'⏳ Polling attestation dari Solana...', steps:[...localSteps] })
+      setStatus({ type:'info', msg:'⏳ Menunggu konfirmasi dari Solana...', steps:[...localSteps] })
       const maxPolls = 120
       let attData: any = null
       for (let i = 0; i < maxPolls; i++) {
@@ -879,13 +879,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         })
         if (attData.success) break
         const statusText = attData.status ? ` (${attData.status})` : ''
-        setStatus({ type:'info', msg:`✓ Burn sukses di Solana!\n⏳ Polling attestasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
+        setStatus({ type:'info', msg:`✓ Dana sudah dikirim di Solana!\n⏳ Menunggu konfirmasi ${i+1}/${maxPolls}${statusText}...`, steps:[...localSteps] })
         await new Promise(r => setTimeout(r, 3000))
       }
       if (!attData?.success) {
         localSteps[localSteps.length-1].state = 'error'
-        txHistory.update(historyId, { status:'error', error:attData?.error || 'Attestation timeout dari Solana' })
-        throw new Error(attData?.error || 'Attestation timeout dari Solana')
+        txHistory.update(historyId, { status:'error', error:attData?.error || 'Konfirmasi jaringan timeout dari Solana' })
+        throw new Error(attData?.error || 'Konfirmasi jaringan timeout dari Solana')
       }
       localSteps[localSteps.length-1].state='success'
 
@@ -922,11 +922,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         attLenHex + attPadded
 
       localSteps.push({ name:'mint', state:'pending' })
-      setStep('MetaMask: Mint USDC di Arc Testnet...')
-      setStatus({ type:'info', msg:'✓ Attestasi siap!\n⏳ MetaMask popup: Mint USDC di Arc Testnet...', steps:[...localSteps] })
+      setStep('MetaMask: Terima USDC di Arc Testnet...')
+      setStatus({ type:'info', msg:'✓ Konfirmasi siap!\n⏳ MetaMask popup: Terima USDC di Arc Testnet...', steps:[...localSteps] })
       const mintTx = await sendEvmTxBuffered({ from:address, to:attData.messageTransmitter, data:callData })
       localSteps[localSteps.length-1].txHash = mintTx
-      setStatus({ type:'info', msg:'⏳ Menunggu mint di Arc Testnet...', steps:[...localSteps] })
+      setStatus({ type:'info', msg:'⏳ Menunggu penerimaan di Arc Testnet...', steps:[...localSteps] })
       await waitEvmTx(mintTx)
       localSteps[localSteps.length-1].state='success'
       const mintExplorerUrl = explorerFor('Arc_Testnet', mintTx)
@@ -1374,9 +1374,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   }
 
   const STEP_LABELS: Record<string,string> = {
-    'circle-transfer':'0. Circle→MetaMask','approve':'1. Approve',
-    'burn':'2. Burn','attestation':'3. Attestation','mint':'4. Mint',
-    'fetchattestation':'3. Attestation',
+    'circle-transfer':'0. Circle→MetaMask','approve':'1. Izinkan',
+    'burn':'2. Kirim','attestation':'3. Konfirmasi','mint':'4. Terima',
+    'fetchattestation':'3. Konfirmasi',
   }
 
   return (
