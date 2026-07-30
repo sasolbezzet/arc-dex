@@ -110,15 +110,24 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setLoading(false)
   }
 
-  // Auto-poll MCP sessions every 15s for live status
+  // Auto-poll MCP sessions + approvals every 8s for live status.
+  // Approvals must be polled: an agent (ChatGPT/Claude) can create a pending
+  // approval while the user is looking at the page — without polling it never
+  // appears until a manual reload.
   useEffect(() => {
     if (!sessionToken) return
     const poll = setInterval(async () => {
       try {
-        const s = await fetch(`${API}/api/vault/sessions`, { headers: authHeaders() }).then(r => r.json())
+        const [s, appr, act] = await Promise.all([
+          fetch(`${API}/api/vault/sessions`, { headers: authHeaders() }).then(r => r.json()),
+          fetch(`${API}/api/vault/approvals`, { headers: authHeaders() }).then(r => r.json()),
+          fetch(`${API}/api/vault/activity?limit=20`, { headers: authHeaders() }).then(r => r.json()),
+        ])
         setMcpSessions(s.sessions || [])
+        setApprovals(appr.approvals || [])
+        setActivity(act.activity || [])
       } catch {}
-    }, 15000)
+    }, 8000)
     return () => clearInterval(poll)
   }, [sessionToken])
 
@@ -368,7 +377,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Approvals */}
-      <Section title='✅ Approvals'>
+      <Section title='✅ Approvals' badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{approvals.filter(a => a.status === 'pending').length} menunggu</span> : undefined}>
         {approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>Tidak ada permintaan persetujuan.</div>
         ) : (
