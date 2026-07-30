@@ -8,6 +8,8 @@ type Activity = { id: string; type: string; data: any; ts: number }
 
 const API = ''
 const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
+const SERVER_URL = 'https://arcoxdex.vercel.app'
+const AUTH_URL = `${SERVER_URL}/api/auth/authorize`
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14 }}>
@@ -140,10 +142,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
         } />
         <ol style={{ color: '#94a3b8', fontSize: 11, paddingLeft: 16, marginTop: 8 }}>
-          <li>Buka Claude Desktop / ChatGPT Settings → Plugins / MCP</li>
-          <li>Pilih Add MCP server</li>
-          <li>Paste URL di atas</li>
-          <li>Agent siap digunakan dalam limit yang kamu set</li>
+          <li>Buka ChatGPT Settings → Plugins → Add MCP server</li>
+          <li>Paste MCP URL di atas</li>
+          <li>OAuth: pilih Dynamic Client Registration (DCR)</li>
+          <li>Atau manual: Auth URL = <code style={{fontSize:10,color:'#818cf8'}}>{AUTH_URL}</code>, Token URL = <code style={{fontSize:10,color:'#818cf8'}}>{SERVER_URL}/api/auth/token</code></li>
+          <li>Setelah connect, login dengan wallet address di halaman auth</li>
         </ol>
       </Section>
 
