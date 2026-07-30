@@ -59,6 +59,21 @@ async function siweLogin(address: string): Promise<string | null> {
 }
 
 export function PluginPanel({ address, circleWallet, solanaAddress }: { address: string | null; circleWallet: { id: string; address: string } | null; solanaAddress: string | null }) {
+  // ── OAuth callback params (from ChatGPT/Claude redirect) ──
+  const [oauthParams, setOauthParams] = useState<{ client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
+  const [oauthStatus, setOauthStatus] = useState<'idle' | 'signing' | 'approving' | 'done' | 'error'>('idle')
+
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search)
+    if (p.get('auth') === 'mcp' && p.get('client_id') && p.get('redirect_uri')) {
+      setOauthParams({
+        client_id: p.get('client_id') || '',
+        redirect_uri: p.get('redirect_uri') || '',
+        state: p.get('state') || '',
+        code_challenge: p.get('code_challenge') || '',
+      })
+    }
+  }, [])
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [limits, setLimits] = useState<Limits>({ maxPerTx: 100, dailyLimit: 500, autoApprove: true, whitelist: [] })
@@ -180,6 +195,46 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     </span>
   )
 
+  // ── OAuth approve flow: sign SIWE → get auth code → redirect back to ChatGPT ──
+  const approveOAuth = async () => {
+    if (!address || !oauthParams) return
+    setOauthStatus('signing')
+    try {
+      // 1. Get SIWE challenge from MCP server
+      const msgResp = await fetch(`${API}/api/auth/siwe-message?address=${address}&client_id=${oauthParams.client_id}`, { headers: authHeaders() })
+      const msgData = await msgResp.json()
+      if (!msgData.message) throw new Error('Gagal mendapat challenge')
+
+      // 2. Sign with MetaMask
+      const provider = (window as any).ethereum
+      if (!provider) { setOauthStatus('error'); return }
+      const accounts = await provider.request({ method: 'eth_requestAccounts' })
+      const from = accounts[0]
+      const signature = await provider.request({ method: 'personal_sign', params: [msgData.message, from] })
+      setOauthStatus('approving')
+
+      // 3. Verify → get auth code → redirect
+      const codeResp = await fetch(`${API}/api/auth/siwe-verify`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: from, message: msgData.message, signature,
+          clientId: oauthParams.client_id, redirectUri: oauthParams.redirect_uri,
+          state: oauthParams.state, codeChallenge: oauthParams.code_challenge,
+        })
+      })
+      const codeData = await codeResp.json()
+      if (codeData.redirect) {
+        setOauthStatus('done')
+        window.location.href = codeData.redirect
+        return
+      }
+      throw new Error(codeData.error || 'Gagal mendapat kode otorisasi')
+    } catch (e: any) {
+      setOauthStatus('error')
+      setError(e?.message || 'OAuth approval gagal')
+    }
+  }
+
   if (!address) return <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>Hubungkan wallet untuk membuka Plugin.</div>
 
   // Not authenticated — show login
@@ -204,6 +259,43 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {error && <div style={{ color: '#f87171', fontSize: 12, padding: 10, background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>{error}</div>}
+
+      {/* OAuth approval modal (from ChatGPT/Claude) */}
+      {oauthParams && (
+        <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+          <div style={{ textAlign: 'center', marginBottom: 16 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🔌</div>
+            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Permintaan Koneksi MCP</div>
+            <div style={{ color: '#94a3b8', fontSize: 12 }}>AI agent ingin terhubung ke wallet ARCOX kamu</div>
+          </div>
+          <div style={{ background: 'rgba(18,18,26,0.6)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>Agent:</div>
+            <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{oauthParams.client_id.startsWith('arcox_') ? 'ChatGPT / Claude' : oauthParams.client_id}</div>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 8, marginBottom: 4 }}>Akses yang diminta:</div>
+            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Lihat saldo wallet</div>
+            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Request approval transaksi (dalam limit)</div>
+            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Lihat credential vault</div>
+          </div>
+          <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
+            ⚠️ Tanda tangan wallet diperlukan sebagai bukti kepemilikan. Kunci private kamu tidak pernah dikirim.
+          </div>
+          <button onClick={approveOAuth} disabled={oauthStatus === 'signing' || oauthStatus === 'approving' || oauthStatus === 'done'} style={{
+            width: '100%', padding: 14, borderRadius: 10, border: 'none',
+            background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+            color: '#fff', fontSize: 14, fontWeight: 700, cursor: oauthStatus === 'idle' ? 'pointer' : 'wait',
+            opacity: oauthStatus === 'done' ? 0.5 : 1,
+          }}>
+            {oauthStatus === 'signing' ? '⏳ Menunggu tanda tangan MetaMask...' :
+             oauthStatus === 'approving' ? '⏳ Memverifikasi...' :
+             oauthStatus === 'done' ? '✅ Terhubung! Mengalihkan...' :
+             oauthStatus === 'error' ? '❌ Gagal — Coba lagi' :
+             '🔓 Setujui dengan Wallet'}
+          </button>
+          {oauthStatus === 'error' && (
+            <button onClick={() => setOauthStatus('idle')} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>Coba Lagi</button>
+          )}
+        </div>
+      )}
 
       {/* Connection status bar */}
       <div className='glass' style={{ borderRadius: 12, padding: 10, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
