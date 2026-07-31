@@ -73,7 +73,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         code_challenge: p.get('code_challenge') || '',
       })
     }
+    // Deep-link from the AI agent: /plugin?tab=approvals&approval=<id>
+    // Highlight the referenced approval so the user lands right on it.
+    if (p.get('approval')) setHighlightApproval(p.get('approval'))
   }, [])
+  const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [limits, setLimits] = useState<Limits>({ maxPerTx: 100, dailyLimit: 500, autoApprove: true, whitelist: [] })
@@ -377,22 +381,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Approvals */}
-      <Section title='✅ Approvals' badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{approvals.filter(a => a.status === 'pending').length} menunggu</span> : undefined}>
+      <Section title='✅ Approvals' badge={approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').length} menunggu</span> : undefined}>
         {approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>Tidak ada permintaan persetujuan.</div>
         ) : (
           approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').map(a => (
-            <div key={a.id} style={{ padding: '8px', background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6 }}>
+            <div key={a.id} style={{ padding: '8px', background: a.id === highlightApproval ? 'rgba(245,158,11,0.12)' : 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6, border: a.id === highlightApproval ? '1px solid rgba(245,158,11,0.6)' : '1px solid rgba(245,158,11,0.25)' }}>
               <div style={{ color: '#e2e8f0', fontSize: 12 }}>{a.agent}: {a.action} {a.amount} {a.token} {a.to ? `→ ${a.to.slice(0, 10)}...` : ''}</div>
               <div style={{ color: '#64748b', fontSize: 10 }}>Source: {a.source} · {fmtTime(a.createdAt)}</div>
-              {a.status === 'pending' ? (
-                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                  <button onClick={() => approve(a.id)} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Approve</button>
-                  <button onClick={() => reject(a.id)} style={{ flex: 1, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Reject</button>
-                </div>
-              ) : (
-                <div style={{ color: '#10b981', fontSize: 10, marginTop: 4 }}>Auto-approved (dalam limit)</div>
-              )}
+              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                <button onClick={() => approve(a.id)} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Approve & Sign</button>
+                <button onClick={() => reject(a.id)} style={{ flex: 1, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Reject</button>
+              </div>
             </div>
           ))
         )}
