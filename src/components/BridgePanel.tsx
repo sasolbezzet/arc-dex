@@ -258,6 +258,24 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     setNativeQuote(null)
   }, [fromChain, toChain, token, amount])
 
+  // Prefill from a Plugin approval deep-link:
+  // /arc-dex/bridge?bridgeFrom=...&bridgeTo=...&bridgeAmount=...&bridgeToken=...&bridgeSource=...
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search)
+    if (!p.get('bridgeAmount') && !p.get('bridgeFrom')) return
+    const validEvm = new Set(EVM_CHAINS.map(c => c.id))
+    const from = p.get('bridgeFrom')
+    const to = p.get('bridgeTo')
+    if (from && (validEvm.has(from) || from === 'Solana_Devnet')) setFromChain(from)
+    if (to && (validEvm.has(to) || to === 'Solana_Devnet')) setToChain(to)
+    const amt = p.get('bridgeAmount')
+    if (amt && Number(amt) > 0) setAmount(amt)
+    const tk = p.get('bridgeToken')
+    if (tk && BRIDGE_TOKENS.includes(tk)) setToken(tk)
+    const src = p.get('bridgeSource')
+    if (src === 'circle' || src === 'eoa') setSource(src as 'circle' | 'eoa')
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     const run = async () => {

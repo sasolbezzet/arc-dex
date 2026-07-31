@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { sendTokenFromEoa } from '../services/eoaTransactions'
+import { swapFromEoa } from '../services/swapService'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
-type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number }
+type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
 type Limits = { maxPerTx: number; dailyLimit: number; autoApprove: boolean; whitelist: string[] }
 type Activity = { id: string; type: string; data: any; ts: number }
 type McpSession = { clientId: string; agent: string; connectedAt: number; lastActivity: number; active: boolean }
@@ -75,8 +77,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     // Deep-link from the AI agent: /plugin?tab=approvals&approval=<id>
     // Highlight the referenced approval so the user lands right on it.
-    if (p.get('approval')) setHighlightApproval(p.get('approval'))
+    if (p.get('approval')) {
+      setHighlightApproval(p.get('approval'))
+      setDeepLink(true)
+    }
+    if (p.get('tab') === 'approvals') setDeepLink(true)
   }, [])
+  const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
@@ -152,6 +159,17 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (saved) setSessionToken(saved)
   }, [])
 
+  // Deep-link auto-login: when the user arrives from an agent link
+  // (/plugin?tab=approvals&approval=...) with no active session, kick off SIWE
+  // login automatically so the pending approval loads instead of a Sign-In wall.
+  const autoLoginTried = useRef(false)
+  useEffect(() => {
+    if (deepLink && !sessionToken && address && !oauthParams && !autoLoginTried.current) {
+      autoLoginTried.current = true
+      doLogin()
+    }
+  }, [deepLink, sessionToken, address, oauthParams])
+
   // Fetch data when token changes
   useEffect(() => { if (sessionToken) fetchAll() }, [sessionToken])
 
@@ -193,7 +211,65 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const addWhitelist = () => { if (!newWhitelist) return; updateLimits({ whitelist: [...limits.whitelist, newWhitelist] }); setNewWhitelist('') }
   const removeWhitelist = (item: string) => updateLimits({ whitelist: limits.whitelist.filter(w => w !== item) })
-  const approve = async (id: string) => { try { await fetch(`${API}/api/vault/approvals/${id}/approve`, { method: 'POST', headers: authHeaders() }) } catch {}; fetchAll() }
+
+  // Approve = actually sign the transaction with MetaMask, then record the
+  // result on the backend approval. Send/swap execute inline via the proven
+  // browser signing paths (same code the Send/Swap panels use). Bridge is a
+  // multi-step flow, so it hands off to the full Bridge page (prefilled).
+  const [signingId, setSigningId] = useState<string | null>(null)
+  const approve = async (a: Approval) => {
+    if (!address) { setError('Wallet belum terhubung.'); return }
+    setError(null)
+    let details: any = {}
+    try { details = a.details ? JSON.parse(a.details) : {} } catch {}
+
+    // Bridge: hand off to the Bridge page with prefilled params. The user
+    // completes the multi-step bridge (with MetaMask signing) there.
+    if (a.action === 'bridge') {
+      const fromChain = details.fromChain || 'Arc_Testnet'
+      const toChain = details.toChain || a.to || 'Base_Sepolia'
+      const params = new URLSearchParams({
+        bridgeFrom: fromChain, bridgeTo: toChain,
+        bridgeAmount: a.amount, bridgeToken: a.token || 'USDC',
+        bridgeSource: a.source || 'eoa', approval: a.id,
+      })
+      window.location.href = `/arc-dex/bridge?${params.toString()}`
+      return
+    }
+
+    setSigningId(a.id)
+    try {
+      let txHash = ''
+      let explorerUrl = ''
+      if (a.action === 'send') {
+        if (!a.to) throw new Error('Alamat tujuan tidak ada pada permintaan.')
+        const res = await sendTokenFromEoa({ from: address, to: a.to, token: a.token || 'USDC', amount: a.amount })
+        txHash = res.txHash || ''
+        explorerUrl = res.explorerUrl || ''
+      } else if (a.action === 'swap') {
+        const tokenOut = details.tokenOut || 'USDC'
+        const res = await swapFromEoa({ metamaskAddress: address, tokenIn: a.token || 'USDC', tokenOut, amountIn: a.amount })
+        txHash = res?.txHash || res?.transactionHash || ''
+        explorerUrl = res?.explorerUrl || ''
+      } else {
+        throw new Error(`Aksi tidak dikenal: ${a.action}`)
+      }
+      // Record the signed tx on the backend approval (flips status → approved).
+      try {
+        await fetch(`${API}/api/vault/approvals/${a.id}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ txHash, explorerUrl }),
+        })
+      } catch {}
+      fetchAll()
+    } catch (e: any) {
+      // User rejected in MetaMask or tx failed — leave approval pending.
+      const msg = e?.code === 4001 ? 'Tanda tangan dibatalkan di MetaMask.' : (e?.message || 'Transaksi gagal.')
+      setError(msg)
+    }
+    setSigningId(null)
+  }
   const reject = async (id: string) => { try { await fetch(`${API}/api/vault/approvals/${id}/reject`, { method: 'POST', headers: authHeaders() }) } catch {}; fetchAll() }
   const fmtTime = (ts: number) => new Date(ts).toLocaleString('id-ID', { hour12: false })
 
@@ -380,21 +456,49 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         )}
       </Section>
 
-      {/* Approvals */}
-      <Section title='✅ Approvals' badge={approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').length} menunggu</span> : undefined}>
-        {approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').length === 0 ? (
+      {/* Approvals — pending only */}
+      <Section title='✅ Approvals' badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{approvals.filter(a => a.status === 'pending').length} menunggu</span> : undefined}>
+        {approvals.filter(a => a.status === 'pending').length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>Tidak ada permintaan persetujuan.</div>
         ) : (
-          approvals.filter(a => a.status === 'pending' || a.status === 'auto_approved').map(a => (
+          approvals.filter(a => a.status === 'pending').map(a => (
             <div key={a.id} style={{ padding: '8px', background: a.id === highlightApproval ? 'rgba(245,158,11,0.12)' : 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6, border: a.id === highlightApproval ? '1px solid rgba(245,158,11,0.6)' : '1px solid rgba(245,158,11,0.25)' }}>
               <div style={{ color: '#e2e8f0', fontSize: 12 }}>{a.agent}: {a.action} {a.amount} {a.token} {a.to ? `→ ${a.to.slice(0, 10)}...` : ''}</div>
               <div style={{ color: '#64748b', fontSize: 10 }}>Source: {a.source} · {fmtTime(a.createdAt)}</div>
+              {a.action === 'bridge' && <div style={{ color: '#818cf8', fontSize: 10, marginTop: 4 }}>Bridge butuh beberapa langkah — Approve akan membuka halaman Bridge yang sudah terisi.</div>}
               <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <button onClick={() => approve(a.id)} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Approve & Sign</button>
-                <button onClick={() => reject(a.id)} style={{ flex: 1, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Reject</button>
+                <button onClick={() => approve(a)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: signingId === a.id ? 'wait' : 'pointer' }}>{signingId === a.id ? '⏳ Menunggu MetaMask...' : a.action === 'bridge' ? 'Approve & Buka Bridge' : 'Approve & Sign'}</button>
+                <button onClick={() => reject(a.id)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Reject</button>
               </div>
             </div>
           ))
+        )}
+      </Section>
+
+      {/* Approval History — approved / rejected */}
+      <Section title='📖 Riwayat Approval' badge={approvals.filter(a => a.status !== 'pending').length > 0 ? <span style={{ fontSize: 11, color: '#64748b' }}>{approvals.filter(a => a.status !== 'pending').length}</span> : undefined}>
+        {approvals.filter(a => a.status !== 'pending').length === 0 ? (
+          <div style={{ color: '#64748b', fontSize: 12 }}>Belum ada riwayat.</div>
+        ) : (
+          approvals
+            .filter(a => a.status !== 'pending')
+            .sort((x, y) => (y.approvedAt || y.createdAt) - (x.approvedAt || x.createdAt))
+            .slice(0, 20)
+            .map(a => {
+              const ok = a.status === 'approved' || a.status === 'auto_approved'
+              return (
+                <div key={a.id} style={{ padding: '8px', background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6, borderLeft: `3px solid ${ok ? '#10b981' : '#f87171'}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ color: '#e2e8f0', fontSize: 12 }}>{a.action} {a.amount} {a.token} {a.to ? `→ ${a.to.slice(0, 10)}...` : ''}</div>
+                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: ok ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: ok ? '#10b981' : '#f87171' }}>{a.status === 'auto_approved' ? 'auto' : a.status === 'approved' ? 'disetujui' : 'ditolak'}</span>
+                  </div>
+                  <div style={{ color: '#64748b', fontSize: 10 }}>{a.agent} · {fmtTime(a.approvedAt || a.createdAt)}</div>
+                  {a.txHash && (
+                    <a href={a.explorerUrl || `https://testnet.arcscan.app/tx/${a.txHash}`} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontSize: 10, textDecoration: 'none' }}>tx: {a.txHash.slice(0, 12)}... ↗</a>
+                  )}
+                </div>
+              )
+            })
         )}
       </Section>
 
