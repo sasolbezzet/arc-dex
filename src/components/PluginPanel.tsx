@@ -98,17 +98,33 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
 
+  // Clear a stale/invalid session so the deep-link auto-login can re-fire (or the
+  // Sign-In wall appears). Backend session tokens are in-memory and die on every
+  // backend restart, leaving localStorage holding a token the server rejects (401).
+  const clearStaleSession = () => {
+    localStorage.removeItem('arx_vault_token')
+    autoLoginTried.current = false
+    setSessionToken(null)
+  }
+
+  // Fetch a vault endpoint; on 401 clear the stale session and signal the caller.
+  const vaultFetch = async (path: string, init?: RequestInit) => {
+    const r = await fetch(`${API}${path}`, { ...(init || {}), headers: { ...(init?.headers || {}), ...authHeaders() } })
+    if (r.status === 401) { clearStaleSession(); throw new Error('__SESSION_EXPIRED__') }
+    return r.json()
+  }
+
   const fetchAll = async () => {
     if (!sessionToken) return
     setLoading(true)
     setError(null)
     try {
       const [creds, lim, appr, act, sess] = await Promise.all([
-        fetch(`${API}/api/vault/credentials`, { headers: authHeaders() }).then(r => r.json()),
-        fetch(`${API}/api/vault/limits`, { headers: authHeaders() }).then(r => r.json()),
-        fetch(`${API}/api/vault/approvals`, { headers: authHeaders() }).then(r => r.json()),
-        fetch(`${API}/api/vault/activity?limit=20`, { headers: authHeaders() }).then(r => r.json()),
-        fetch(`${API}/api/vault/sessions`, { headers: authHeaders() }).then(r => r.json()),
+        vaultFetch('/api/vault/credentials'),
+        vaultFetch('/api/vault/limits'),
+        vaultFetch('/api/vault/approvals'),
+        vaultFetch('/api/vault/activity?limit=20'),
+        vaultFetch('/api/vault/sessions'),
       ])
       setCredentials(creds.credentials || [])
       setLimits(lim.limits || { maxPerTx: 100, dailyLimit: 500, autoApprove: true, whitelist: [] })
@@ -116,7 +132,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       setActivity(act.activity || [])
       setMcpSessions(sess.sessions || [])
     } catch (e: any) {
-      setError(e?.message || 'Gagal memuat vault')
+      if (e?.message !== '__SESSION_EXPIRED__') setError(e?.message || 'Gagal memuat vault')
     }
     setLoading(false)
   }
@@ -130,9 +146,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const poll = setInterval(async () => {
       try {
         const [s, appr, act] = await Promise.all([
-          fetch(`${API}/api/vault/sessions`, { headers: authHeaders() }).then(r => r.json()),
-          fetch(`${API}/api/vault/approvals`, { headers: authHeaders() }).then(r => r.json()),
-          fetch(`${API}/api/vault/activity?limit=20`, { headers: authHeaders() }).then(r => r.json()),
+          vaultFetch('/api/vault/sessions'),
+          vaultFetch('/api/vault/approvals'),
+          vaultFetch('/api/vault/activity?limit=20'),
         ])
         setMcpSessions(s.sessions || [])
         setApprovals(appr.approvals || [])
