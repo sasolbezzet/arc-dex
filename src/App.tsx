@@ -353,7 +353,7 @@ export default function App() {
         ? <IntroPage walletSetupError={walletSetupError} navigate={navigate} t={t} />
         : page === 'docs'
           ? <DocsPanel />
-          : !address
+          : !address && page !== 'plugin'
             ? <ConnectRequired walletSetupError={walletSetupError} t={t} />
             : page === 'portfolio'
               ? <PortfolioPage address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} balanceLoading={balanceLoading} balanceError={balanceError} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} />
@@ -625,3 +625,4 @@ function unifiedBalanceEntries(balance: any) {
   }
   return []
 }
+// v2.1.1-passkey

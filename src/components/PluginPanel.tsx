@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
+import { registerPasskey, loginPasskey, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
+import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable } from '../services/walletConnect'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
@@ -95,8 +97,39 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
+  const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean }>(() => {
+    const s = getMscaState()
+    return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false }
+  })
+  const [busy, setBusy] = useState<string | null>(null)
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
+
+  // ── MSCA / Passkey handlers ──
+  const run = async (label: string, fn: () => Promise<any>) => {
+    setBusy(label)
+    try { return await fn() }
+    catch (e: any) { setError(e?.message || String(e)); console.error('[msca]', e) }
+    finally { setBusy(null) }
+  }
+  const registerMsca = async () => {
+    const { walletAddress } = await registerPasskey()
+    setMscaState(prev => ({ ...prev, walletAddress }))
+  }
+  const loginMsca = async () => {
+    const { walletAddress } = await loginPasskey()
+    setMscaState(prev => ({ ...prev, walletAddress }))
+  }
+  const setupSession = async () => {
+    if (!sessionToken) throw new Error('Login dulu')
+    const result = await setupSessionKey(sessionToken)
+    setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active }))
+  }
+  const revokeSession = async () => {
+    if (!sessionToken) throw new Error('Login dulu')
+    await revokeSessionKey(sessionToken)
+    setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '' }))
+  }
 
   // Clear a stale/invalid session so the deep-link auto-login can re-fire (or the
   // Sign-In wall appears). Backend session tokens are in-memory and die on every
@@ -167,6 +200,51 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       localStorage.setItem('arx_vault_token', token)
     }
     setAuthLoading(false)
+  }
+
+  // WalletConnect login — for Chrome users without MetaMask extension
+  const doWalletConnectLogin = async () => {
+    const addr = await connectWalletConnect()
+    if (!addr) return
+    // Set WC provider as active EIP-1193 provider
+    const wcProvider = getWalletConnectProviderSync()
+    if (wcProvider) {
+      // Inject WC provider into window.ethereum so siweLogin can use it
+      ;(window as any).ethereum = wcProvider
+    }
+    // Now do SIWE login with WC-connected address
+    setAuthLoading(true)
+    const token = await siweLogin(addr)
+    if (token) {
+      setSessionToken(token)
+      localStorage.setItem('arx_vault_token', token)
+    }
+    setAuthLoading(false)
+  }
+
+  // Passkey login — register or login with passkey, then get session token from backend
+  const doPasskeyLogin = async () => {
+    let walletAddress: string
+    const existing = getMscaState()
+    if (existing.walletAddress) {
+      // Already have MSCA — login with existing passkey
+      const result = await loginPasskey()
+      walletAddress = result.walletAddress
+    } else {
+      // First time — register new passkey + create MSCA
+      const result = await registerPasskey()
+      walletAddress = result.walletAddress
+    }
+    // Get session token from backend (skip SIWE)
+    const res = await fetch(`${API}/api/auth/passkey-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletAddress }),
+    })
+    const data = await res.json()
+    if (!data.success) throw new Error(data.error || 'Passkey login gagal')
+    setSessionToken(data.token)
+    localStorage.setItem('arx_vault_token', data.token)
   }
 
   // Restore session from localStorage on mount
@@ -340,7 +418,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
-  if (!address) return <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>Hubungkan wallet untuk membuka Plugin.</div>
+  // No address guard here — passkey/WalletConnect login handles auth without MetaMask
 
   // Not authenticated — show login
   if (!sessionToken) return (
@@ -349,10 +427,26 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         <div style={{ fontSize: 32, marginBottom: 12 }}>🔐</div>
         <div style={{ color: '#e2e8f0', fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Autentikasi Diperlukan</div>
         <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>
-          Demi keamanan, akses Plugin memerlukan tanda tangan wallet.<br/>
-          Wallet address saja tidak cukup — bukti kepemilikan via signature diperlukan.
+          Pilih metode login:<br/>
+          Passkey (biometric) atau Sign-In with Wallet (MetaMask).
         </div>
-        <button onClick={doLogin} disabled={authLoading} style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.15)', color: '#818cf8', fontSize: 14, fontWeight: 600, cursor: authLoading ? 'wait' : 'pointer' }}>
+
+        {/* Passkey login — no MetaMask needed */}
+        <button onClick={() => run('passkey-login', doPasskeyLogin)} disabled={busy === 'passkey-login' || authLoading} style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(74,222,128,0.4)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginBottom: 8 }}>
+          {busy === 'passkey-login' ? 'Memproses...' : '🔐 Login dengan Passkey'}
+        </button>
+
+        <div style={{ color: '#64748b', fontSize: 11, margin: '8px 0' }}>atau</div>
+
+        {/* WalletConnect — for Chrome without MetaMask */}
+        {isWalletConnectAvailable() && (
+          <button onClick={() => run('wc-login', doWalletConnectLogin)} disabled={busy === 'wc-login' || authLoading} style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(34,197,94,0.4)', background: 'rgba(34,197,94,0.1)', color: '#22c55e', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginBottom: 8 }}>
+            {busy === 'wc-login' ? 'Memproses...' : '📱 WalletConnect (QR)'}
+          </button>
+        )}
+
+        {/* SIWE login — MetaMask needed */}
+        <button onClick={doLogin} disabled={authLoading || busy === 'passkey-login' || busy === 'wc-login'} style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.15)', color: '#818cf8', fontSize: 14, fontWeight: 600, cursor: authLoading ? 'wait' : 'pointer' }}>
           {authLoading ? 'Memproses...' : '🔓 Sign In with Wallet'}
         </button>
       </div>
@@ -542,6 +636,53 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             </div>
           ))}
         </div>
+      </Section>
+
+      {/* Agent Wallet (MSCA + Passkey) */}
+      <Section title='🔑 Agent Wallet' badge={mscaState.sessionActive ? <StatusDot on={true} label='Session aktif' /> : undefined}>
+        {!mscaState.walletAddress ? (
+          <div>
+            <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
+              Buat smart account (MSCA) dengan passkey. Agent bisa tx langsung di Claude/GPT tanpa MetaMask.
+            </div>
+            <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
+              🔐 Buat dengan Passkey
+            </button>
+          </div>
+        ) : (
+          <div>
+            <Row label='MSCA Address' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.walletAddress?.slice(0, 10)}...{mscaState.walletAddress?.slice(-6)}</span>} />
+            <Row label='Passkey' value={<span style={{ color: '#4ade80' }}>✓ Terdaftar</span>} />
+            {mscaState.delegateAddress ? (
+              <>
+                <Row label='Delegate Key' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.delegateAddress?.slice(0, 10)}...{mscaState.delegateAddress?.slice(-6)}</span>} />
+                <Row label='Status' value={mscaState.sessionActive
+                  ? <span style={{ color: '#4ade80' }}>● Aktif — Agent bisa tx langsung</span>
+                  : <span style={{ color: '#f59e0b' }}>○ Nonaktif</span>
+                } />
+              </>
+            ) : (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
+                  Aktifkan session key agar agent bisa execute tx langsung di chat (gasless).
+                </div>
+                <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'session'} onClick={() => run('session', setupSession)}>
+                  🔑 Aktifkan Session Key
+                </button>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              {mscaState.sessionActive && (
+                <button className='btn' style={{ flex: 1, background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }} disabled={busy === 'revoke'} onClick={() => run('revoke', revokeSession)}>
+                  Cabut Akses
+                </button>
+              )}
+              <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
+                🔐 Login Passkey
+              </button>
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* Activity */}

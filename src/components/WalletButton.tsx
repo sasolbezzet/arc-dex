@@ -1,18 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
 import { findConnectedWalletProvider, getWalletProvider, setWalletProvider } from '../walletProvider'
+import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable } from '../services/walletConnect'
+
 declare global { interface Window { ethereum?: any } }
+
 interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void }
+
 export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   const { t } = useI18n()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showOptions, setShowOptions] = useState(false)
   const onConnectRef = useRef(onConnect)
   const onDisconnectRef = useRef(onDisconnect)
-  useEffect(() => {
-    onConnectRef.current = onConnect
-    onDisconnectRef.current = onDisconnect
-  })
+  useEffect(() => { onConnectRef.current = onConnect; onDisconnectRef.current = onDisconnect })
+
   useEffect(() => {
     let provider = getWalletProvider()
     let disposed = false
@@ -20,17 +23,22 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
     findConnectedWalletProvider().then(async active => {
       if (disposed || !active) return
       provider = active
-      // Soft reconnect is handled in App.tsx using eth_accounts (no popup).
-      // This component only listens for wallet-initiated account/chain changes.
       active.on?.('accountsChanged', handler)
       active.on?.('chainChanged', () => { /* surface in UI */ })
     }).catch(() => {})
-    return () => {
-      disposed = true
-      provider?.removeListener?.('accountsChanged', handler)
-    }
+    return () => { disposed = true; provider?.removeListener?.('accountsChanged', handler) }
   }, [])
-  const connect = async () => {
+
+  // Also listen for WalletConnect provider events
+  useEffect(() => {
+    const wc = getWalletConnectProviderSync()
+    if (!wc) return
+    const handler = (a: string[]) => { if (a[0]) onConnectRef.current(a[0]); else onDisconnectRef.current() }
+    wc.on?.('accountsChanged', handler)
+    return () => { wc.removeListener?.('accountsChanged', handler) }
+  }, [address])
+
+  const connectInjected = async () => {
     setError(''); setLoading(true)
     const provider = getWalletProvider()
     if (!provider) { setError(t('wallet.installMetamask')); setLoading(false); return }
@@ -39,22 +47,63 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
       setWalletProvider(provider)
       await onConnect(accounts[0])
     } catch(e:any) { setError(e?.message || t('wallet.connectFailed')) }
-  setLoading(false)
+    setLoading(false)
   }
+
+  const connectWC = async () => {
+    setError(''); setLoading(true); setShowOptions(false)
+    try {
+      const addr = await connectWalletConnect()
+      if (addr) {
+        const wcProvider = getWalletConnectProviderSync()
+        if (wcProvider) setWalletProvider(wcProvider)
+        await onConnect(addr)
+      }
+    } catch(e:any) { setError(e?.message || 'WalletConnect gagal') }
+    setLoading(false)
+  }
+
+  const disconnect = async () => {
+    await disconnectWalletConnect()
+    onDisconnect()
+  }
+
+  // Check if injected wallet (MetaMask etc) is available
+  const hasInjected = Boolean((window as any).ethereum)
+
   if (address) return (
     <div className='wallet-connected'>
       <div className='glass' style={{padding:'6px 12px',borderRadius:10,fontSize:12}}>
         <span style={{color:'#64748b'}}>{t('wallet.connected')} </span>
         <span style={{color:'#818cf8',fontFamily:'monospace'}}>{address.slice(0,6)}...{address.slice(-4)}</span>
       </div>
-      <button onClick={onDisconnect} style={{background:'rgba(239,68,68,0.2)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)',padding:'6px 12px',borderRadius:10,cursor:'pointer',fontSize:12}}>{t('wallet.disconnect')}</button>
+      <button onClick={disconnect} style={{background:'rgba(239,68,68,0.2)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)',padding:'6px 12px',borderRadius:10,cursor:'pointer',fontSize:12}}>{t('wallet.disconnect')}</button>
     </div>
   )
+
+  // If WalletConnect is available, show options
+  if (isWalletConnectAvailable() && showOptions) return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4,minWidth:0}}>
+      {hasInjected && (
+        <button onClick={connectInjected} disabled={loading} className='btn btn-primary' style={{width:'auto',padding:'8px 20px',fontSize:13}}>
+          {loading ? '...' : '🦊 MetaMask'}
+        </button>
+      )}
+      <button onClick={connectWC} disabled={loading} className='btn btn-primary' style={{width:'auto',padding:'8px 20px',fontSize:13,background:'rgba(99,102,241,0.8)'}}>
+        {loading ? '...' : '📱 WalletConnect'}
+      </button>
+      <button onClick={() => setShowOptions(false)} style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:11}}>← kembali</button>
+    </div>
+  )
+
   return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4,minWidth:0}}>
-      <button onClick={connect} disabled={loading} className='btn btn-primary' style={{width:'auto',padding:'8px 20px',fontSize:13}}>
+      <button onClick={() => { if (!hasInjected && isWalletConnectAvailable()) { connectWC() } else if (hasInjected) { connectInjected() } else { setShowOptions(true) } }} disabled={loading} className='btn btn-primary' style={{width:'auto',padding:'8px 20px',fontSize:13}}>
         {loading ? t('wallet.connecting') : t('wallet.connect')}
       </button>
+      {isWalletConnectAvailable() && !showOptions && (
+        <button onClick={() => setShowOptions(true)} style={{background:'none',border:'none',color:'#818cf8',cursor:'pointer',fontSize:11}}>atau pilih wallet</button>
+      )}
       {error && <span className='wallet-error'>{error}</span>}
     </div>
   )
