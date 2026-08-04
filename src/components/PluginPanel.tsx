@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
-import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable } from '../services/walletConnect'
+import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile, redirectToWalletForSign } from '../services/walletConnect'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
@@ -214,10 +214,22 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     // Now do SIWE login with WC-connected address
     setAuthLoading(true)
-    const token = await siweLogin(addr)
-    if (token) {
-      setSessionToken(token)
-      localStorage.setItem('arx_vault_token', token)
+    if (isMobile()) {
+      // On mobile, siweLogin sends personal_sign through WC relay.
+      // Redirect user to wallet app to approve the signature.
+      const loginPromise = siweLogin(addr)
+      setTimeout(() => redirectToWalletForSign(), 1500)
+      const token = await loginPromise
+      if (token) {
+        setSessionToken(token)
+        localStorage.setItem('arx_vault_token', token)
+      }
+    } else {
+      const token = await siweLogin(addr)
+      if (token) {
+        setSessionToken(token)
+        localStorage.setItem('arx_vault_token', token)
+      }
     }
     setAuthLoading(false)
   }

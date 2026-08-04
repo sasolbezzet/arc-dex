@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
 import { findConnectedWalletProvider, getWalletProvider, setWalletProvider } from '../walletProvider'
-import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable } from '../services/walletConnect'
+import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile, redirectToWalletForSign } from '../services/walletConnect'
 
 declare global { interface Window { ethereum?: any } }
 
@@ -12,6 +12,7 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showOptions, setShowOptions] = useState(false)
+  const [mobileSignHint, setMobileSignHint] = useState(false)
   const onConnectRef = useRef(onConnect)
   const onDisconnectRef = useRef(onDisconnect)
   useEffect(() => { onConnectRef.current = onConnect; onDisconnectRef.current = onDisconnect })
@@ -51,15 +52,32 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   }
 
   const connectWC = async () => {
-    setError(''); setLoading(true); setShowOptions(false)
+    setError(''); setLoading(true); setShowOptions(false); setMobileSignHint(false)
     try {
       const addr = await connectWalletConnect()
       if (addr) {
-        const wcProvider = getWalletConnectProviderSync()
-        if (wcProvider) setWalletProvider(wcProvider)
-        await onConnect(addr)
+        const wcProv = getWalletConnectProviderSync()
+        if (wcProv) setWalletProvider(wcProv)
+
+        if (isMobile()) {
+          // On mobile: onConnect → ensureAuthSession → personal_sign via WC relay.
+          // The signing request goes to the wallet app. We need to redirect
+          // the user back to the wallet to approve the signature.
+          setMobileSignHint(true)
+          const connectPromise = onConnect(addr)
+          // Give 1.5s for the personal_sign request to reach the relay,
+          // then deep-link to the wallet app.
+          setTimeout(() => redirectToWalletForSign(), 1500)
+          await connectPromise
+          setMobileSignHint(false)
+        } else {
+          await onConnect(addr)
+        }
       }
-    } catch(e:any) { setError(e?.message || 'WalletConnect gagal') }
+    } catch(e:any) {
+      setMobileSignHint(false)
+      setError(e?.message || 'WalletConnect gagal')
+    }
     setLoading(false)
   }
 
@@ -99,10 +117,15 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4,minWidth:0}}>
       <button onClick={() => { if (!hasInjected && isWalletConnectAvailable()) { connectWC() } else if (hasInjected) { connectInjected() } else { setShowOptions(true) } }} disabled={loading} className='btn btn-primary' style={{width:'auto',padding:'8px 20px',fontSize:13}}>
-        {loading ? t('wallet.connecting') : t('wallet.connect')}
+        {loading
+          ? (mobileSignHint ? '✍️ Buka wallet...' : t('wallet.connecting'))
+          : t('wallet.connect')}
       </button>
-      {isWalletConnectAvailable() && !showOptions && (
+      {isWalletConnectAvailable() && !showOptions && !loading && (
         <button onClick={() => setShowOptions(true)} style={{background:'none',border:'none',color:'#818cf8',cursor:'pointer',fontSize:11}}>atau pilih wallet</button>
+      )}
+      {mobileSignHint && (
+        <span style={{color:'#fbbf24',fontSize:11,textAlign:'right'}}>Buka wallet Anda untuk tanda tangan login</span>
       )}
       {error && <span className='wallet-error'>{error}</span>}
     </div>

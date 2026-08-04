@@ -34,6 +34,8 @@ const WALLET_LINKS: Record<string, { native: string; universal: string }> = {
 let pendingUri: string | null = null
 let uriResolve: ((uri: string) => void) | null = null
 
+export const isMobile = () => /Android|iPhone|iPad/i.test(navigator.userAgent || '')
+
 /**
  * Reset the WC provider singleton so a fresh init is performed on next attempt.
  * This prevents the stale-provider hang where a previous cancelled/failed
@@ -46,6 +48,18 @@ function resetProvider() {
   wcProvider = null
   pendingUri = null
   uriResolve = null
+  // Clear stale WalletConnect v2 localStorage entries that can cause
+  // init to hang on mobile Chrome when recovering from a broken session.
+  try {
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && (key.startsWith('wc@2:') || key.startsWith('wc_') || key === 'walletconnect')) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k))
+  } catch { /* ignore */ }
 }
 
 export async function getWalletConnectProvider(): Promise<any | null> {
@@ -59,10 +73,8 @@ export async function getWalletConnectProvider(): Promise<any | null> {
       // tidak mismatch. Mainnet + Arc = optional.
       chains: [11155111],
       optionalChains: [1, ARC_CHAIN_ID],
-      // FIX: Removed 'eth_sign' — modern wallets (MetaMask Mobile, Trust, OKX)
-      // auto-reject session proposals containing eth_sign because it is considered
-      // unsafe (phishing risk). This was the PRIMARY reason WalletConnect failed
-      // to connect on both web and mobile.
+      // IMPORTANT: eth_sign intentionally excluded — modern wallets auto-reject
+      // session proposals containing eth_sign (phishing risk).
       methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData', 'eth_signTypedData_v4', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'],
       events: ['accountsChanged', 'chainChanged'],
       rpcMap: {
@@ -107,12 +119,25 @@ export async function getWalletConnectProvider(): Promise<any | null> {
   }
 }
 
-function waitForUri(): Promise<string> {
+/**
+ * Wait for the WC display_uri event with a timeout.
+ * On mobile with slow connections, the relay WebSocket may take time
+ * to establish. If it exceeds timeoutMs, reject so the UI can show
+ * an error instead of hanging indefinitely.
+ */
+function waitForUri(timeoutMs = 20000): Promise<string> {
   if (pendingUri) return Promise.resolve(pendingUri)
-  return new Promise(resolve => { uriResolve = resolve })
+  return new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      uriResolve = null
+      reject(new Error('Koneksi ke relay WalletConnect gagal — periksa internet Anda lalu coba lagi'))
+    }, timeoutMs)
+    uriResolve = (uri: string) => {
+      clearTimeout(timer)
+      resolve(uri)
+    }
+  })
 }
-
-const isMobile = () => /Android|iPhone|iPad/i.test(navigator.userAgent || '')
 
 function showQRModal(uri: string) {
   hideQRModal()
@@ -203,10 +228,42 @@ function hideQRModal() {
   document.getElementById('wc-qr-modal')?.remove()
 }
 
+/**
+ * Redirect the mobile user back to the wallet app.
+ * Called after WC connect when a signing request (personal_sign) is about
+ * to be sent through the relay — the user needs to be in the wallet app
+ * to approve it.
+ */
+export function redirectToWalletForSign() {
+  if (!isMobile() || !wcProvider?.session) return
+
+  const peer = wcProvider.session?.peer?.metadata
+  const redirect = peer?.redirect
+  const name = (peer?.name || '').toLowerCase()
+
+  // 1. Try the session peer's own redirect metadata (most reliable)
+  if (redirect?.native) {
+    window.location.href = redirect.native
+    return
+  }
+  if (redirect?.universal) {
+    window.location.href = redirect.universal
+    return
+  }
+
+  // 2. Fallback: known wallet deep-links by name
+  if (name.includes('metamask')) { window.location.href = 'https://metamask.app.link'; return }
+  if (name.includes('trust')) { window.location.href = 'https://link.trustwallet.com'; return }
+  if (name.includes('okx') || name.includes('okex')) { window.location.href = 'okex://main'; return }
+  if (name.includes('bitget') || name.includes('bitkeep')) { window.location.href = 'https://bkcode.vip'; return }
+  if (name.includes('rainbow')) { window.location.href = 'https://rnbwapp.com'; return }
+
+  // 3. No redirect available — rely on push notification / user awareness
+  console.log('[WC] No redirect available for wallet:', peer?.name)
+}
+
 // Setelah connect: tambah + pindah ke Arc Testnet (best effort, non-blocking)
 async function ensureArcChain(provider: any): Promise<void> {
-  // ponytail: skip if wallet session doesn't include Arc chain — add/switch akan reject.
-  // Upgrade: cek session namespaces sebelum attempt switch.
   try {
     const session = provider.session
     if (session?.namespaces?.eip155?.chains) {
@@ -241,23 +298,22 @@ async function ensureArcChain(provider: any): Promise<void> {
 
 export async function connectWalletConnect(): Promise<string | null> {
   try {
-    // FIX: Reset stale provider before attempting new connection.
-    // If previous session was cancelled/failed, wcProvider may be in a
-    // half-connected state that prevents display_uri from firing.
+    // Reset stale provider before attempting new connection.
     if (wcProvider && !wcProvider.session) {
       resetProvider()
     }
 
     const provider = await getWalletConnectProvider()
-    if (!provider) throw new Error('WalletConnect tidak tersedia')
+    if (!provider) throw new Error('WalletConnect tidak tersedia — pastikan VITE_WC_PROJECT_ID sudah dikonfigurasi')
 
     pendingUri = null
 
     // enable() = connect + session settle + accounts terisi.
-    // Lebih reliable dari connect() untuk ambil address.
     const enablePromise: Promise<string[]> = provider.enable()
 
-    await waitForUri()
+    // Wait for URI with timeout — prevents infinite hang on mobile
+    // when the relay WebSocket fails to establish.
+    await waitForUri(20000)
     console.log('[WC] URI shown, waiting wallet approve')
 
     let accounts: string[] = []
@@ -268,8 +324,6 @@ export async function connectWalletConnect(): Promise<string | null> {
       ])
     } catch (e) {
       console.log('[WC] enable result:', (e as Error)?.message || e)
-      // FIX: On timeout or rejection, clean up the provider so next attempt
-      // starts fresh instead of hanging on the stale session.
       resetProvider()
       throw e
     }
@@ -309,10 +363,6 @@ export async function connectWalletConnect(): Promise<string | null> {
     if (/reject|denied|cancel|reset/i.test(e?.message || '')) {
       resetProvider()
       return null
-    }
-    if (/timeout/i.test(e?.message || '')) {
-      resetProvider()
-      throw e
     }
     resetProvider()
     throw e
