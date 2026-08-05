@@ -7,7 +7,7 @@ import { EthereumProvider } from '@walletconnect/ethereum-provider'
 const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || ''
 
 const ARC_CHAIN_ID = 5042002
-const ARC_HEX = '0x4CFD32' // 5042002 hex
+const ARC_HEX = '0x4cef52' // 5042002 hex (0x4CFD32 was WRONG = 5045554)
 const ARC_CHAIN_PARAMS = {
   chainId: ARC_HEX,
   chainName: 'Arc Testnet',
