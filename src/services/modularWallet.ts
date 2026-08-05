@@ -13,18 +13,11 @@ import {
   toCircleSmartAccount,
   toWebAuthnCredential,
   WebAuthnMode,
-  createAddressMapping,
-  OwnerIdentifierType,
-  type P256Credential,
 } from '@circle-fin/modular-wallets-core'
 import {
   createPublicClient,
-  defineChain,
-  http,
   encodeFunctionData,
-  parseUnits,
   type Hex,
-  type Address,
 } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { sendUserOperation, waitForUserOperationReceipt, toWebAuthnAccount, createBundlerClient } from 'viem/account-abstraction'
@@ -34,14 +27,14 @@ const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sd
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
 const API = ''  // same origin proxy
 
-const ARC_RPC = 'https://arc-testnet.drpc.org'
+
 
 // ── Persisted state ──
 const STORAGE_KEY = 'arx_msca_state'
 
 interface MscaState {
   walletAddress: string
-  credential: P256Credential | null
+  credential: { id: string; publicKey: string } | null
   delegateAddress: string
   sessionActive: boolean
 }
@@ -71,7 +64,7 @@ function modularTransport() {
 }
 
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(): Promise<{ walletAddress: string; credential: P256Credential }> {
+export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string } }> {
   const pkTransport = passkeyTransport()
 
   // Step 1: Register passkey credential (browser prompts user for biometric)
@@ -103,7 +96,7 @@ export async function registerPasskey(): Promise<{ walletAddress: string; creden
 }
 
 // ── Login with existing passkey ──
-export async function loginPasskey(): Promise<{ walletAddress: string; credential: P256Credential }> {
+export async function loginPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string } }> {
   const state = loadState()
   const pkTransport = passkeyTransport()
 
@@ -186,7 +179,7 @@ export async function setupSessionKey(vaultToken: string): Promise<{
 
   // Wait for confirmation
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
-  console.log('[session] Mapping receipt:', receipt.status)
+  console.log('[session] Mapping receipt:', receipt.success)
 
   // Step 3: Store delegate key on server (vault)
   const res = await fetch(`${API}/api/session/setup`, {
