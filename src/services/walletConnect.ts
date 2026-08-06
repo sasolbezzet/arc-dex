@@ -95,9 +95,8 @@ export async function getWalletConnectProvider(): Promise<any | null> {
       console.log('[WC] URI ready')
       pendingUri = uri
       if (uriResolve) { uriResolve(uri); uriResolve = null }
-      // AppKit owns the mobile wallet picker and deep links. Our custom
-      // fallback appears only if AppKit fails to render.
-      if (!document.querySelector('w3m-modal')) showQRModal(uri)
+      // AppKit owns the wallet picker and deep links on mobile. Do not render
+      // a competing custom modal: it leaves users stuck in "waiting wallet".
     })
 
     wcProvider.on('connect', () => { console.log('[WC] connected'); hideQRModal() })
@@ -309,7 +308,7 @@ export async function connectWalletConnect(): Promise<string | null> {
 
     // Wait for URI with timeout — prevents infinite hang on mobile
     // when the relay WebSocket fails to establish.
-    await waitForUri(20000)
+    await waitForUri(30000)
     console.log('[WC] URI shown, waiting wallet approve')
 
     let accounts: string[] = []
@@ -361,6 +360,12 @@ export async function connectWalletConnect(): Promise<string | null> {
       return null
     }
     resetProvider()
+    if (/Koneksi ke relay WalletConnect gagal/.test(e?.message || '')) {
+      throw new Error('Relay WalletConnect tidak merespons. Periksa jaringan/VPN/ad blocker lalu coba lagi.')
+    }
+    if (/WalletConnect timeout/.test(e?.message || '')) {
+      throw new Error('Wallet belum menyetujui koneksi. Pilih wallet dari panel WalletConnect, approve, lalu kembali ke Chrome.')
+    }
     throw e
   }
 }
