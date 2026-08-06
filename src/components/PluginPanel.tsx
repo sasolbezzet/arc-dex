@@ -132,12 +132,22 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, walletAddress }))
   }
   const setupSession = async () => {
-    if (!sessionToken) throw new Error('Login dulu')
+    if (!sessionToken) {
+      // Auto-login: sign SIWE message to get vault session before session key setup.
+      if (!address) throw new Error('Wallet belum terhubung')
+      const token = await siweLogin(address)
+      if (!token) throw new Error('Login vault gagal. Tanda tangan wallet diperlukan.')
+      setSessionToken(token)
+      localStorage.setItem('arx_vault_token', token)
+      const result = await setupSessionKey(token)
+      setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active }))
+      return
+    }
     const result = await setupSessionKey(sessionToken)
     setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active }))
   }
   const revokeSession = async () => {
-    if (!sessionToken) throw new Error('Login dulu')
+    if (!sessionToken) throw new Error('Login vault gagal')
     await revokeSessionKey(sessionToken)
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '' }))
   }
