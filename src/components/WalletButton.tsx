@@ -21,6 +21,11 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
     let provider = getWalletProvider()
     let disposed = false
     const handler = (a: string[]) => { if (a[0]) onConnectRef.current(a[0]); else onDisconnectRef.current() }
+
+    // During OAuth flow (auth=mcp in URL), skip WalletConnect auto-restore
+    // to prevent mobile deep-link to wallet app before user approves.
+    const isOAuthFlow = new URLSearchParams(window.location.search).get('auth') === 'mcp'
+
     findConnectedWalletProvider().then(async active => {
       if (disposed || !active) return
       provider = active
@@ -28,17 +33,20 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
       active.on?.('chainChanged', () => { /* surface in UI */ })
     }).catch(() => {})
     // WalletConnect persists its session in storage; restore it after reload.
-    restoreWalletConnect().then(addr => {
-      if (!disposed && addr) {
-        const wc = getWalletConnectProviderSync()
-        if (wc) {
-          setWalletProvider(wc)
-          wc.on?.('accountsChanged', handler)
-          provider = wc
+    // Skip during OAuth flow to avoid triggering wallet app deep-link.
+    if (!isOAuthFlow) {
+      restoreWalletConnect().then(addr => {
+        if (!disposed && addr) {
+          const wc = getWalletConnectProviderSync()
+          if (wc) {
+            setWalletProvider(wc)
+            wc.on?.('accountsChanged', handler)
+            provider = wc
+          }
+          onConnectRef.current(addr)
         }
-        onConnectRef.current(addr)
-      }
-    }).catch(() => {})
+      }).catch(() => {})
+    }
     return () => { disposed = true; provider?.removeListener?.('accountsChanged', handler) }
   }, [])
 
