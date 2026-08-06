@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
 import { findConnectedWalletProvider, getWalletProvider, setWalletProvider } from '../walletProvider'
-import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile, redirectToWalletForSign } from '../services/walletConnect'
+import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile } from '../services/walletConnect'
 
 declare global { interface Window { ethereum?: any } }
 
@@ -60,17 +60,13 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
         if (wcProv) setWalletProvider(wcProv)
 
         if (isMobile()) {
-          // On mobile: onConnect → ensureAuthSession → personal_sign via WC relay.
-          // The signing request goes to the wallet app. We need to redirect
-          // the user back to the wallet to approve the signature.
-          setMobileSignHint(true)
-          const connectPromise = onConnect(addr)
-          // Give 1.5s for the personal_sign request to reach the relay,
-          // then deep-link to the wallet app.
-          setTimeout(() => redirectToWalletForSign(), 1500)
-          await connectPromise
-          setMobileSignHint(false)
-        } else {
+        // WC relay delivers the signing request to the wallet app. Do not
+        // force a second redirect from Chrome: it can interrupt the pending
+        // request and lose the browser return context.
+        setMobileSignHint(true)
+        await onConnect(addr)
+        setMobileSignHint(false)
+      } else {
           await onConnect(addr)
         }
       }

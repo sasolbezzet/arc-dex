@@ -87,7 +87,7 @@ export async function getWalletConnectProvider(): Promise<any | null> {
         name: 'ARCOX DEX',
         description: 'Arc Testnet DEX + AI Agent',
         url: 'https://arcoxdex.vercel.app',
-        icons: ['https://arcoxdex.vercel.app/icon.png'],
+        icons: ['https://arcoxdex.vercel.app/favicon.svg'],
       },
     })
 
@@ -185,16 +185,10 @@ function showQRModal(uri: string) {
       btn.onclick = () => {
         const s = document.getElementById('wc-status')
         if (s) { s.textContent = `Membuka ${name}... approve di app wallet, lalu kembali ke sini`; s.style.color = '#34d399' }
-        const enc = encodeURIComponent(uri)
-        // Coba native scheme; kalau gagal (app tidak terinstall), fallback universal link
-        const t0 = Date.now()
-        window.location.href = links.native + enc
-        setTimeout(() => {
-          // Masih di page setelah 2.5s = app tidak terinstall
-          if (Date.now() - t0 < 2600 && document.visibilityState === 'visible') {
-            if (links.universal !== links.native) window.open(links.universal + enc, '_blank')
-          }
-        }, 2000)
+        // Universal links work reliably from Chrome mobile and preserve the
+        // WalletConnect pairing context better than forced native schemes.
+        const link = links.universal !== links.native ? links.universal : links.native
+        window.location.assign(link + encodeURIComponent(uri))
       }
       grid.appendChild(btn)
     }
