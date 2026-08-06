@@ -82,7 +82,7 @@ export async function getWalletConnectProvider(): Promise<any | null> {
         11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
         [ARC_CHAIN_ID]: 'https://rpc.testnet.arc.network',
       },
-      showQrModal: false,
+      showQrModal: true,
       metadata: {
         name: 'ARCOX DEX',
         description: 'Arc Testnet DEX + AI Agent',
@@ -95,7 +95,9 @@ export async function getWalletConnectProvider(): Promise<any | null> {
       console.log('[WC] URI ready')
       pendingUri = uri
       if (uriResolve) { uriResolve(uri); uriResolve = null }
-      showQRModal(uri)
+      // AppKit owns the mobile wallet picker and deep links. Our custom
+      // fallback appears only if AppKit fails to render.
+      if (!document.querySelector('w3m-modal')) showQRModal(uri)
     })
 
     wcProvider.on('connect', () => { console.log('[WC] connected'); hideQRModal() })
