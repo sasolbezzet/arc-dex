@@ -47,8 +47,11 @@ async function siweLogin(address: string): Promise<string | null> {
     // 2. Request signature — works with MetaMask, WalletConnect, or any injected provider.
     const provider = await findConnectedWalletProvider(address)
     if (!provider) { alert('Wallet tidak terdeteksi. Connect wallet terlebih dahulu.'); return null }
-    const accounts = await provider.request({ method: 'eth_requestAccounts' }) as string[]
-    const from = accounts[0]
+    const accounts = await provider.request({ method: 'eth_accounts' }) as string[]
+    const from = accounts?.[0]
+    if (!from || from.toLowerCase() !== address.toLowerCase()) {
+      throw new Error('Wallet terhubung berbeda dari wallet utama ARCOX.')
+    }
     const signature = await provider.request({ method: 'personal_sign', params: [ch.message, from] }) as string
 
     // 3. Verify → get session token
