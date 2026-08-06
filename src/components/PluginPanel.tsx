@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
-import { connectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile, redirectToWalletForSign } from '../services/walletConnect'
+import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
@@ -226,11 +226,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     // Now do SIWE login with WC-connected address
     setAuthLoading(true)
     if (isMobile()) {
-      // On mobile, siweLogin sends personal_sign through WC relay.
-      // Redirect user to wallet app to approve the signature.
-      const loginPromise = siweLogin(addr)
-      setTimeout(() => redirectToWalletForSign(), 1500)
-      const token = await loginPromise
+      const token = await siweLogin(addr)
       if (token) {
         setSessionToken(token)
         localStorage.setItem('arx_vault_token', token)
@@ -441,38 +437,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
-  // No address guard here — passkey/WalletConnect login handles auth without MetaMask
-
-  // Not authenticated — show login
-  if (!sessionToken) return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center' }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>🔐</div>
-        <div style={{ color: '#e2e8f0', fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Autentikasi Diperlukan</div>
-        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>
-          Pilih metode login:<br/>
-          Passkey (biometric) atau Sign-In with Wallet (MetaMask).
-        </div>
-
-        {/* Passkey login — no MetaMask needed */}
-        <button onClick={() => run('passkey-login', doPasskeyLogin)} disabled={busy === 'passkey-login' || authLoading} style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(74,222,128,0.4)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginBottom: 8 }}>
-          {busy === 'passkey-login' ? 'Memproses...' : '🔐 Login dengan Passkey'}
-        </button>
-
-        <div style={{ color: '#64748b', fontSize: 11, margin: '8px 0' }}>atau</div>
-
-        {/* WalletConnect — for Chrome without MetaMask */}
-        {isWalletConnectAvailable() && (
-          <button onClick={() => run('wc-login', doWalletConnectLogin)} disabled={busy === 'wc-login' || authLoading} style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(34,197,94,0.4)', background: 'rgba(34,197,94,0.1)', color: '#22c55e', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginBottom: 8 }}>
-            {busy === 'wc-login' ? 'Memproses...' : '📱 WalletConnect (QR)'}
-          </button>
-        )}
-
-        {/* SIWE login — MetaMask needed */}
-        <button onClick={doLogin} disabled={authLoading || busy === 'passkey-login' || busy === 'wc-login'} style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.15)', color: '#818cf8', fontSize: 14, fontWeight: 600, cursor: authLoading ? 'wait' : 'pointer' }}>
-          {authLoading ? 'Memproses...' : '🔓 Sign In with Wallet'}
-        </button>
-      </div>
+  // Wallet utama adalah identitas Plugin. Tidak ada login kedua di sini.
+  if (!address) return (
+    <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
+      Hubungkan wallet utama untuk membuka Plugin.
     </div>
   )
 
