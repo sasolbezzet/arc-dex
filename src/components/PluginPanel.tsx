@@ -3,6 +3,7 @@ import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
 import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
+import { findConnectedWalletProvider } from '../walletProvider'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
@@ -42,12 +43,12 @@ async function siweLogin(address: string): Promise<string | null> {
     }).then(r => r.json())
     if (!ch.message) return null
 
-    // 2. Request MetaMask signature
-    const provider = (window as any).ethereum
-    if (!provider) { alert('MetaMask tidak terdeteksi'); return null }
-    const accounts = await provider.request({ method: 'eth_requestAccounts' })
+    // 2. Request signature — works with MetaMask, WalletConnect, or any injected provider.
+    const provider = await findConnectedWalletProvider(address)
+    if (!provider) { alert('Wallet tidak terdeteksi. Connect wallet terlebih dahulu.'); return null }
+    const accounts = await provider.request({ method: 'eth_requestAccounts' }) as string[]
     const from = accounts[0]
-    const signature = await provider.request({ method: 'personal_sign', params: [ch.message, from] })
+    const signature = await provider.request({ method: 'personal_sign', params: [ch.message, from] }) as string
 
     // 3. Verify → get session token
     const verify = await fetch(`${API}/api/vault/verify`, {
