@@ -94,7 +94,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [mcpSessions, setMcpSessions] = useState<McpSession[]>([])
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [authLoading, setAuthLoading] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
   const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean }>(() => {
