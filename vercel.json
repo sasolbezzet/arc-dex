@@ -13,7 +13,7 @@
     },
     {
       "source": "/mcp",
-      "destination": "https://43.134.14.43.nip.io/mcp"
+      "destination": "/api/mcp"
     },
     {
       "source": "/.well-known/:path*",
