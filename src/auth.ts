@@ -6,7 +6,7 @@ const STORAGE_KEY = 'arc-dex-auth'
 const BACKEND_PREFERENCE_KEY = 'arc-dex-auth-backend-pref'
 // Re-auth window: any JWT older than this is treated as expired even if the
 // server returns a longer token. Defense in depth against C-001.
-const MAX_TOKEN_AGE_MS = 12 * 60 * 60 * 1000 // 12 hours
+const MAX_TOKEN_AGE_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 // ≥16 random bytes (128 bits) → cryptographically strong nonce.
 const NONCE_BYTES = 16
 // Arc Testnet chainId (decimal). Hex value is 0x4cef52.
