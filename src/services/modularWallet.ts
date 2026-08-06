@@ -16,11 +16,9 @@ import {
 } from '@circle-fin/modular-wallets-core'
 import {
   createPublicClient,
-  encodeFunctionData,
-  type Hex,
 } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
-import { sendUserOperation, waitForUserOperationReceipt, toWebAuthnAccount, createBundlerClient } from 'viem/account-abstraction'
+import { toWebAuthnAccount } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
@@ -125,7 +123,11 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
   return { walletAddress, credential }
 }
 
-// ── Setup session key: generate delegate EOA + create address mapping ──
+// ── Setup session key: generate delegate EOA + store in vault ──
+// NOTE: Circle MSCA does not expose addOwner via UserOp in current
+// testnet version (reverts with "execution reverted"). The delegate
+// key is stored in the vault for backend-side signing. On-chain owner
+// mapping will be added when Circle supports it.
 export async function setupSessionKey(vaultToken: string): Promise<{
   walletAddress: string
   delegateAddress: string
@@ -139,49 +141,7 @@ export async function setupSessionKey(vaultToken: string): Promise<{
   const delegateAccount = privateKeyToAccount(delegatePrivateKey as any)
   const delegateAddress = delegateAccount.address
 
-  // Step 2: Create address mapping — add delegate EOA as owner of MSCA
-  // This requires passkey authentication (user touch)
-  const modTransport = modularTransport()
-  const client = createPublicClient({
-    chain: arcTestnet,
-    transport: modTransport as any,
-  })
-
-  const bundlerClient = createBundlerClient({
-    account: await toCircleSmartAccount({
-      client: client as any,
-      owner: toWebAuthnAccount({ credential: state.credential! }),
-    }),
-    chain: arcTestnet,
-    transport: modTransport as any,
-  })
-
-  // Send user operation to add delegate as owner
-  const userOpHash = await sendUserOperation(bundlerClient as any, {
-    calls: [{
-      to: state.walletAddress as Hex,
-      data: encodeFunctionData({
-        abi: [{
-          name: 'addOwner',
-          type: 'function',
-          stateMutability: 'nonpayable',
-          inputs: [{ name: 'owner', type: 'address' }],
-          outputs: [],
-        }],
-        functionName: 'addOwner',
-        args: [delegateAddress as Hex],
-      }),
-    }],
-    paymaster: true,
-  })
-
-  console.log('[session] Address mapping userOp:', userOpHash)
-
-  // Wait for confirmation
-  const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
-  console.log('[session] Mapping receipt:', receipt.success)
-
-  // Step 3: Store delegate key on server (vault)
+  // Step 2: Store delegate key on server (vault) — skip on-chain addOwner
   const res = await fetch(`${API}/api/session/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
@@ -194,7 +154,7 @@ export async function setupSessionKey(vaultToken: string): Promise<{
   const data = await res.json()
   if (!data.success) throw new Error(data.error || 'Session setup gagal')
 
-  // Step 4: Update local state
+  // Step 3: Update local state
   saveState({ ...state, delegateAddress, sessionActive: true })
 
   return {
