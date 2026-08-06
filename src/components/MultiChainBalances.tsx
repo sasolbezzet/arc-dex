@@ -31,6 +31,7 @@ export function MultiChainBalances({ walletAddress }: Props) {
   const [balances, setBalances] = useState<Balance>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
   const [activeChain, setActiveChain] = useState<string>('arc-testnet')
 
   const fetchBalances = useCallback(async () => {
@@ -66,6 +67,29 @@ export function MultiChainBalances({ walletAddress }: Props) {
 
   return (
     <div style={{ marginBottom: 16 }}>
+      {/* Wallet address with copy */}
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+          background: 'rgba(15,15,25,0.6)', borderRadius: 8, padding: '8px 12px',
+          border: '1px solid #1e293b', cursor: 'pointer',
+        }}
+        onClick={() => {
+          navigator.clipboard.writeText(walletAddress)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 2000)
+        }}
+        title='Klik untuk copy address'
+      >
+        <span style={{ color: '#94a3b8', fontSize: 11 }}>Address:</span>
+        <code style={{ color: '#e2e8f0', fontSize: 12, flex: 1, wordBreak: 'break-all' }}>
+          {walletAddress}
+        </code>
+        <span style={{ fontSize: 11, color: copied ? '#4ade80' : '#64748b', whiteSpace: 'nowrap' }}>
+          {copied ? '✓ Copied' : '📋 Copy'}
+        </span>
+      </div>
+
       {/* Total summary */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         {TOKENS.map(token => (
