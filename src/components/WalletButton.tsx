@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
 import { findConnectedWalletProvider, getWalletProvider, setWalletProvider } from '../walletProvider'
-import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile } from '../services/walletConnect'
+import { connectWalletConnect, restoreWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile } from '../services/walletConnect'
 
 declare global { interface Window { ethereum?: any } }
 
@@ -26,6 +26,18 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
       provider = active
       active.on?.('accountsChanged', handler)
       active.on?.('chainChanged', () => { /* surface in UI */ })
+    }).catch(() => {})
+    // WalletConnect persists its session in storage; restore it after reload.
+    restoreWalletConnect().then(addr => {
+      if (!disposed && addr) {
+        const wc = getWalletConnectProviderSync()
+        if (wc) {
+          setWalletProvider(wc)
+          wc.on?.('accountsChanged', handler)
+          provider = wc
+        }
+        onConnectRef.current(addr)
+      }
     }).catch(() => {})
     return () => { disposed = true; provider?.removeListener?.('accountsChanged', handler) }
   }, [])

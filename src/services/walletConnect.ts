@@ -291,6 +291,20 @@ async function ensureArcChain(provider: any): Promise<void> {
   }
 }
 
+export async function restoreWalletConnect(): Promise<string | null> {
+  try {
+    const provider = await getWalletConnectProvider()
+    if (!provider?.session) return null
+    const accounts = await provider.request({ method: 'eth_accounts' })
+    const address = accounts?.[0] || provider.accounts?.[0]
+    if (address) return address
+  } catch (e) {
+    console.warn('[WC] restore failed:', e)
+    resetProvider()
+  }
+  return null
+}
+
 export async function connectWalletConnect(): Promise<string | null> {
   try {
     // Reset stale provider before attempting new connection.
