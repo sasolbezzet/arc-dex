@@ -528,11 +528,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
         } />
         <ol style={{ color: '#94a3b8', fontSize: 11, paddingLeft: 16, marginTop: 8 }}>
-          <li>Buka ChatGPT Settings → Plugins → Add MCP server</li>
+          <li>ChatGPT: Settings → Connectors → Add custom connector. Claude: Settings → Connectors → Add custom connector.</li>
           <li>Paste MCP URL di atas</li>
           <li>OAuth: pilih Dynamic Client Registration (DCR)</li>
           <li>Atau manual: Auth URL = <code style={{fontSize:10,color:'#818cf8'}}>{AUTH_URL}</code>, Token URL = <code style={{fontSize:10,color:'#818cf8'}}>{SERVER_URL}/api/auth/token</code></li>
-          <li>Setelah connect, login dengan wallet address di halaman auth</li>
+          <li>Setelah connect, setujui dengan tanda tangan wallet di halaman auth.</li>
         </ol>
       </Section>
 
@@ -655,7 +655,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         {!mscaState.walletAddress ? (
           <div>
             <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
-              Buat smart account (MSCA) dengan passkey. Agent bisa tx langsung di Claude/GPT tanpa MetaMask.
+              Buat smart account (MSCA) dengan passkey. Login Plugin tanpa MetaMask; transaksi chat tetap mengikuti limit dan otorisasi MCP.
             </div>
             <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
               🔐 Buat dengan Passkey
@@ -669,14 +669,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               <>
                 <Row label='Delegate Key' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.delegateAddress?.slice(0, 10)}...{mscaState.delegateAddress?.slice(-6)}</span>} />
                 <Row label='Status' value={mscaState.sessionActive
-                  ? <span style={{ color: '#4ade80' }}>● Aktif — Agent bisa tx langsung</span>
+                  ? <span style={{ color: '#4ade80' }}>● Aktif — transfer dalam limit</span>
                   : <span style={{ color: '#f59e0b' }}>○ Nonaktif</span>
                 } />
               </>
             ) : (
               <div style={{ marginTop: 8 }}>
                 <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
-                  Aktifkan session key agar agent bisa execute tx langsung di chat (gasless).
+                  Aktifkan session key untuk transfer yang diizinkan. Swap session belum tersedia sampai calldata router diverifikasi.
                 </div>
                 <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'session'} onClick={() => run('session', setupSession)}>
                   🔑 Aktifkan Session Key
