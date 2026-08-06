@@ -419,11 +419,17 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const msgData = await msgResp.json()
       if (!msgData.message) throw new Error('Gagal mendapat challenge')
 
-      // 2. Sign with MetaMask
-      const provider = (window as any).ethereum
-      if (!provider) { setOauthStatus('error'); return }
-      const accounts = await provider.request({ method: 'eth_requestAccounts' })
-      const from = accounts[0]
+      // 2. Sign with the already-connected wallet provider.
+      // Do not use window.ethereum: on mobile it can trigger an unintended app switch.
+      const provider = await findConnectedWalletProvider(address)
+      if (!provider) {
+        throw new Error('Wallet utama tidak terdeteksi. Hubungkan wallet di halaman ARCOX terlebih dahulu.')
+      }
+      const accounts = await provider.request({ method: 'eth_accounts' })
+      const from = accounts?.[0]
+      if (!from || from.toLowerCase() !== address.toLowerCase()) {
+        throw new Error('Wallet terhubung berbeda dari wallet utama ARCOX.')
+      }
       const signature = await provider.request({ method: 'personal_sign', params: [msgData.message, from] })
       setOauthStatus('approving')
 
