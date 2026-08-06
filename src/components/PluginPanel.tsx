@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
+import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 
@@ -686,6 +687,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
         )}
       </Section>
+
+      {/* Multi-chain Agent Wallet Balances */}
+      {mscaState.walletAddress && (
+        <Section title='💰 Agent Wallet Balances'>
+          <MultiChainBalances walletAddress={mscaState.walletAddress} />
+        </Section>
+      )}
 
       {/* Activity */}
       <Section title='📜 Activity'>
