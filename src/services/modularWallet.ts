@@ -21,7 +21,7 @@ import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { toWebAuthnAccount } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
-const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
+const CLIENT_URL = (import.meta.env.VITE_CIRCLE_CLIENT_URL as string) || '/api/circle-modular/w3s/buidl'
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
 const API = ''  // same origin proxy
 
