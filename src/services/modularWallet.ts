@@ -21,9 +21,32 @@ import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { toWebAuthnAccount } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
-const CLIENT_URL = (import.meta.env.VITE_CIRCLE_CLIENT_URL as string) || '/api/circle-modular/w3s/buidl'
+const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
 const API = ''  // same origin proxy
+
+// ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
+// The SDK validates CLIENT_URL as a real Circle domain (isCircleUrl check), so we
+// must keep the full URL. But we intercept fetch() at runtime to route all requests
+// through our backend proxy, avoiding mobile network/adblock blocks on
+// modular-sdk.circle.com.
+if (typeof window !== 'undefined' && !window.__circleProxyInstalled) {
+  window.__circleProxyInstalled = true
+  const origFetch = window.fetch.bind(window)
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url || ''
+    if (url.includes('modular-sdk.circle.com/v1/rpc')) {
+      const proxied = url.replace(
+        'https://modular-sdk.circle.com/v1/rpc',
+        '/api/circle-modular',
+      )
+      return origFetch(proxied, init)
+    }
+    return origFetch(input, init)
+  }
+}
+
+declare global { interface Window { __circleProxyInstalled?: boolean } }
 
 
 
