@@ -28,12 +28,14 @@ export default async function handler(req, res) {
     const proxyRes = await new Promise((resolve, reject) => {
       const proto = backendUrl.protocol === 'https:' ? https : http
       const headers = {
-        'Content-Type': req.headers['content-type'] || 'application/json',
-        'Accept': req.headers['accept'] || 'application/json, text/event-stream',
-        'Content-Length': body.length,
-      }
-      if (req.headers['authorization']) headers['Authorization'] = req.headers['authorization']
-      if (req.headers['mcp-session-id']) headers['mcp-session-id'] = req.headers['mcp-session-id']
+   'Content-Type': req.headers['content-type'] || 'application/json',
+   'Accept': req.headers['accept'] || 'application/json, text/event-stream',
+   'Content-Length': body.length,
+   // Preserve Host: backend’s StreamableHTTP transport validates origin/host.
+   'Host': backendUrl.host,
+ }
+ if (req.headers['authorization']) headers['Authorization'] = req.headers['authorization']
+ if (req.headers['mcp-session-id']) headers['mcp-session-id'] = req.headers['mcp-session-id']
 
       const proxyReq = proto.request(backendUrl, { method: 'POST', headers }, resolve)
       proxyReq.on('error', reject)
