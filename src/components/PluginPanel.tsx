@@ -109,7 +109,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const run = async (label: string, fn: () => Promise<any>) => {
     setBusy(label)
     try { return await fn() }
-    catch (e: any) { setError(e?.message || String(e)); console.error('[msca]', e) }
+    catch (e: any) {
+      const msg = e?.message || String(e)
+      // WebAuthn errors need user-friendly hints
+      if (msg.includes('timed out') || msg.includes('not allowed') || msg.includes('NotSupportedError')) {
+        setError('Passkey tidak tersedia. Pastikan Windows Hello / Touch ID / security key sudah aktif di perangkat Anda, lalu coba lagi. Atau gunakan "Sign In with Wallet" sebagai alternatif.')
+      } else if (msg.includes('Cannot find the entity config')) {
+        setError('Konfigurasi Circle belum lengkap. Hubungi admin.')
+      } else {
+        setError(msg)
+      }
+      console.error('[msca]', e)
+    }
     finally { setBusy(null) }
   }
   const registerMsca = async () => {
