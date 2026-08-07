@@ -128,6 +128,17 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     finally { setBusy(null) }
   }
+  const passkeySessionToken = async (walletAddress: string) => {
+    const res = await fetch(`${API}/api/auth/passkey-login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletAddress }),
+    })
+    const data = await res.json()
+    if (!data.success || !data.token) throw new Error(data?.error || 'Passkey login gagal')
+    setSessionToken(data.token)
+    localStorage.setItem('arx_vault_token', data.token)
+    return data.token
+  }
   const registerMsca = async () => {
     const existing = getMscaState()
     if (existing.walletAddress) {
@@ -136,15 +147,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     const { walletAddress } = await registerPasskey()
     setMscaState(prev => ({ ...prev, walletAddress }))
+    // Registrasi passkey = otorisasi Agent Wallet. Peroleh vault session token
+    // (arx_vs_*) sekarang supaya "Aktifkan Session Key" nggak butuh SIWE ulang.
+    try { await passkeySessionToken(walletAddress) } catch (e: any) { console.warn('[msca] passkey-login token', e?.message) }
   }
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
     const { walletAddress } = await registerPasskey()
     setMscaState(prev => ({ ...prev, walletAddress }))
+    try { await passkeySessionToken(walletAddress) } catch (e: any) { console.warn('[msca] passkey-login token', e?.message) }
   }
   const loginMsca = async () => {
     const { walletAddress } = await loginPasskey()
     setMscaState(prev => ({ ...prev, walletAddress }))
+    try { await passkeySessionToken(walletAddress) } catch (e: any) { console.warn('[msca] passkey-login token', e?.message) }
   }
   const setupSession = async () => {
     if (!sessionToken) {
