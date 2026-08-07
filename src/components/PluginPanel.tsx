@@ -129,6 +129,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     finally { setBusy(null) }
   }
   const registerMsca = async () => {
+    const existing = getMscaState()
+    if (existing.walletAddress) {
+      // MSCA sudah terkunci — jangan buat baru tanpa konfirmasi eksplisit.
+      throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
+    }
+    const { walletAddress } = await registerPasskey()
+    setMscaState(prev => ({ ...prev, walletAddress }))
+  }
+  const forceRegisterMsca = async () => {
+    // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
     const { walletAddress } = await registerPasskey()
     setMscaState(prev => ({ ...prev, walletAddress }))
   }
@@ -280,6 +290,31 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setSessionToken(data.token)
     localStorage.setItem('arx_vault_token', data.token)
   }
+
+  // Poll backend session-key status so the indicator reflects the server truth,
+  // not just the last local saveState (localStorage can be stale after a failed
+  // setup or a backend-side revoke).
+  const refreshSessionStatus = async () => {
+    if (!sessionToken) return
+    try {
+      const r = await fetch(`${API}/api/session/status`, { headers: authHeaders() })
+      if (r.status === 401) { clearStaleSession(); return }
+      const data = await r.json()
+      const info = data?.session || null
+      const active = Boolean(info && info.active)
+      setMscaState(prev => ({
+        walletAddress: prev.walletAddress,
+        delegateAddress: info?.delegateAddress || prev.delegateAddress || '',
+        sessionActive: active,
+      }))
+    } catch { /* ignore transient network errors */ }
+  }
+  useEffect(() => {
+    if (!sessionToken) return
+    refreshSessionStatus()
+    const poll = setInterval(refreshSessionStatus, 8000)
+    return () => clearInterval(poll)
+  }, [sessionToken])
 
   // Restore session from localStorage on mount
   useEffect(() => {
@@ -651,7 +686,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Agent Wallet (MSCA + Passkey) */}
-      <Section title='🔑 Agent Wallet' badge={mscaState.sessionActive ? <StatusDot on={true} label='Session aktif' /> : undefined}>
+      <Section title='🔑 Agent Wallet' badge={
+        mscaState.walletAddress
+          ? (mscaState.sessionActive ? <StatusDot on={true} label='Session aktif' /> : <StatusDot on={false} label='Session belum aktif' />)
+          : undefined
+      }>
         {!mscaState.walletAddress ? (
           <div>
             <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
@@ -691,6 +730,17 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               )}
               <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
                 🔐 Login Passkey
+              </button>
+            </div>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+              <div style={{ color: '#64748b', fontSize: 11, marginBottom: 6 }}>
+                Ganti ke Agent Wallet baru? Membuat wallet baru menghasilkan alamat baru — dana dan izin wallet lama TIDAK berpindah otomatis.
+              </div>
+              <button className='btn' style={{ width: '100%', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', background: 'rgba(239,68,68,0.08)' }} disabled={busy === 'register'} onClick={async () => {
+                if (!window.confirm('Buat Agent Wallet MSCA baru?\n\nWallet baru mendapat alamat baru. Dana dan izin wallet lama TIDAK berpindah otomatis. Lanjutkan?')) return
+                run('register', forceRegisterMsca)
+              }}>
+                🆕 Buat Wallet Baru (ganti MSCA)
               </button>
             </div>
           </div>
