@@ -724,9 +724,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
               Buat smart account (MSCA) dengan passkey. Login Plugin tanpa MetaMask; transaksi chat tetap mengikuti limit dan otorisasi MCP.
             </div>
-            <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
-              🔐 Buat dengan Passkey
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
+                🔐 Login Passkey
+              </button>
+              <button className='btn' style={{ flex: 1, border: '1px solid #1e1e2e' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
+                ✨ Buat Baru
+              </button>
+            </div>
           </div>
         ) : (
           <div>
