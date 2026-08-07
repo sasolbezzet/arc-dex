@@ -170,11 +170,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       if (!token) throw new Error('Login vault gagal. Tanda tangan wallet diperlukan.')
       setSessionToken(token)
       localStorage.setItem('arx_vault_token', token)
-      const result = await setupSessionKey(token)
+      const result = await setupSessionKey(token, address)
       setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active }))
       return
     }
-    const result = await setupSessionKey(sessionToken)
+    const result = await setupSessionKey(sessionToken, address)
     setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active }))
   }
   const revokeSession = async () => {

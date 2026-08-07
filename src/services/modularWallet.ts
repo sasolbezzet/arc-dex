@@ -151,7 +151,7 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
 // testnet version (reverts with "execution reverted"). The delegate
 // key is stored in the vault for backend-side signing. On-chain owner
 // mapping will be added when Circle supports it.
-export async function setupSessionKey(vaultToken: string): Promise<{
+export async function setupSessionKey(vaultToken: string, ownerAddress?: string): Promise<{
   walletAddress: string
   delegateAddress: string
   active: boolean
@@ -172,6 +172,9 @@ export async function setupSessionKey(vaultToken: string): Promise<{
       walletAddress: state.walletAddress,
       delegateAddress,
       delegatePrivateKey,
+      // OAuth/SIWE identity (wallet utama / EOA) so MCP sessions authenticated
+      // as this address resolve the MSCA-held session key.
+      ownerAddress,
     }),
   })
   const data = await res.json()
