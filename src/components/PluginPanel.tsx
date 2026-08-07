@@ -139,6 +139,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     localStorage.setItem('arx_vault_token', data.token)
     return data.token
   }
+  const autoActivateSession = async (walletAddress: string, eoaAddress?: string) => {
+    // Ensure a vault session token for this MSCA, then (re)activate its session
+    // key. Backend `storeSessionKey` auto-revokes any other active MSCA owned by
+    // the same identity (ownerAddress/EURO), so the selected one becomes the
+    // single active session and the rest turn off automatically.
+    const token = await passkeySessionToken(walletAddress)
+    if (!token) throw new Error('Passkey token gagal')
+    const result = await setupSessionKey(token, eoaAddress)
+    setMscaState(prev => ({
+      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active,
+    }))
+    return token
+  }
   const registerMsca = async () => {
     const existing = getMscaState()
     if (existing.walletAddress) {
@@ -146,21 +159,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
     }
     const { walletAddress } = await registerPasskey()
-    setMscaState(prev => ({ ...prev, walletAddress }))
-    // Registrasi passkey = otorisasi Agent Wallet. Peroleh vault session token
-    // (arx_vs_*) sekarang supaya "Aktifkan Session Key" nggak butuh SIWE ulang.
-    try { await passkeySessionToken(walletAddress) } catch (e: any) { console.warn('[msca] passkey-login token', e?.message) }
+    // Registrasi passkey = otorisasi Agent Wallet. Auto-aktifkan session key utk
+    // wallet baru; wallet lama (jika ada) otomatis di-off oleh backend.
+    await autoActivateSession(walletAddress, address ?? undefined)
   }
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
     const { walletAddress } = await registerPasskey()
-    setMscaState(prev => ({ ...prev, walletAddress }))
-    try { await passkeySessionToken(walletAddress) } catch (e: any) { console.warn('[msca] passkey-login token', e?.message) }
+    await autoActivateSession(walletAddress, address ?? undefined)
   }
   const loginMsca = async () => {
+    // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
+    // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
     const { walletAddress } = await loginPasskey()
-    setMscaState(prev => ({ ...prev, walletAddress }))
-    try { await passkeySessionToken(walletAddress) } catch (e: any) { console.warn('[msca] passkey-login token', e?.message) }
+    await autoActivateSession(walletAddress, address ?? undefined)
   }
   const setupSession = async () => {
     if (!sessionToken) {
