@@ -156,7 +156,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     // Register delegate as on-chain owner via recovery mechanism (ONE-TIME)
     // After this, backend can sign all transactions automatically
-    await registerDelegateOwner(result.delegateAddress)
+    // Non-blocking: if fails, log and continue — user can retry later
+    registerDelegateOwner(result.delegateAddress).catch(e => {
+      console.warn('[Plugin] registerDelegateOwner failed (non-blocking):', e?.message)
+    })
     setMscaState(prev => ({
       ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: true,
     }))
@@ -341,7 +344,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!getMscaState().deployed) {
       const result = await setupSessionKey(data.token, undefined)
       await deploySmartAccount(result.delegateAddress)
-      await registerDelegateOwner(result.delegateAddress)
+      // Register delegate as owner — non-blocking, log error if fails
+      registerDelegateOwner(result.delegateAddress).catch(e => {
+        console.warn('[Plugin] registerDelegateOwner failed (non-blocking):', e?.message)
+      })
     }
   }
 
