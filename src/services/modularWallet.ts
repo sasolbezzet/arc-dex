@@ -16,6 +16,8 @@ import {
 } from '@circle-fin/modular-wallets-core'
 import {
   createPublicClient,
+  encodeFunctionData,
+  parseAbi,
 } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
@@ -117,8 +119,9 @@ export async function registerPasskey(): Promise<{ walletAddress: string; creden
   return { walletAddress, credential }
 }
 
-// ── Deploy MSCA once, signed by the original passkey owner ──
-export async function deploySmartAccount(): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
+// ── Deploy MSCA on-chain via passkey UserOp ──
+// After deployment, backend can sign tx via delegate EOA.
+export async function deploySmartAccount(delegateAddress?: string): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
   const state = loadState()
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum mengaktifkan Agent Wallet.')
 
@@ -135,9 +138,28 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
 
   // Deployment is the first UserOperation. It requires an intentional passkey
   // approval and must happen in the browser, where the WebAuthn credential lives.
+  // Build calls: deploy (self-transfer) + addOwners if delegate provided
+  const calls: Array<{ to: `0x${string}`; value: bigint; data: `0x${string}` }> = [
+    { to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` },
+  ]
+  if (delegateAddress) {
+    const addOwnersData = encodeFunctionData({
+      abi: parseAbi(['function addOwners(address[] ownersToAdd, uint256[] weightsToAdd, tuple(uint256 x, uint256 y)[] publicKeyOwnersToAdd, uint256[] publicKeyWeightsToAdd, uint256 newThresholdWeight)']),
+      functionName: 'addOwners',
+      args: [
+        [delegateAddress as `0x${string}`],  // ownersToAdd
+        [1n],                                  // weightsToAdd (weight=1)
+        [],                                    // publicKeyOwnersToAdd (empty for EOA)
+        [],                                    // publicKeyWeightsToAdd (empty)
+        1n,                                    // newThresholdWeight (threshold=1)
+      ],
+    })
+    calls.push({ to: smartAccount.address as `0x${string}`, value: 0n, data: addOwnersData })
+  }
+
   const userOpHash = await sendUserOperation(client as any, {
     account: smartAccount as any,
-    calls: [{ to: smartAccount.address, value: 0n, data: '0x' }],
+    calls,
   })
   const receipt = await waitForUserOperationReceipt(client as any, { hash: userOpHash })
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')

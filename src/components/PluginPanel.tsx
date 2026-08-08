@@ -149,8 +149,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const token = await passkeySessionToken(walletAddress)
     if (!token) throw new Error('Passkey token gagal')
     const result = await setupSessionKey(token, eoaAddress)
+    // Deploy MSCA if not yet deployed — pass delegate address so addOwners is included
+    const alreadyDeployed = getMscaState().deployed
+    if (!alreadyDeployed) {
+      await deploySmartAccount(result.delegateAddress)
+    }
     setMscaState(prev => ({
-      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: getMscaState().deployed,
+      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: true,
     }))
     return token
   }
@@ -161,23 +166,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
     }
     const { walletAddress } = await registerPasskey()
-    // Registrasi passkey = otorisasi Agent Wallet. Deploy contract first, then
-    // auto-aktifkan session key utk wallet baru; wallet lama (jika ada) otomatis
-    // di-off oleh backend.
-    await deploySmartAccount()
+    // Flow: setupSessionKey (generate delegate) → deploySmartAccount (deploy + addOwners)
+    // Backend generates delegate EOA, then frontend deploys MSCA with delegate as owner.
     await autoActivateSession(walletAddress, address ?? undefined)
   }
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
     const { walletAddress } = await registerPasskey()
-    await deploySmartAccount()
     await autoActivateSession(walletAddress, address ?? undefined)
   }
   const loginMsca = async () => {
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
     const { walletAddress } = await loginPasskey()
-    await deploySmartAccount()
     await autoActivateSession(walletAddress, address ?? undefined)
   }
   const setupSession = async () => {
@@ -323,8 +324,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const result = await registerPasskey()
       walletAddress = result.walletAddress
     }
-    // Ensure contract deployed once (passkey-signed UserOp); no-op when already active.
-    await deploySmartAccount()
     // Get session token from backend (skip SIWE)
     const res = await fetch(`${API}/api/auth/passkey-login`, {
       method: 'POST',
@@ -335,6 +334,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!data.success) throw new Error(data.error || 'Passkey login gagal')
     setSessionToken(data.token)
     localStorage.setItem('arx_vault_token', data.token)
+    // Deploy if needed — get delegate address first via setupSessionKey
+    if (!getMscaState().deployed) {
+      const result = await setupSessionKey(data.token, undefined)
+      await deploySmartAccount(result.delegateAddress)
+    }
   }
 
   // Poll backend session-key status so the indicator reflects the server truth,
