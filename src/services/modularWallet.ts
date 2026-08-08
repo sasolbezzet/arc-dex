@@ -132,6 +132,25 @@ export async function deploySmartAccount(delegateAddress?: string): Promise<{ wa
     owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
   })
   if (await smartAccount.isDeployed()) {
+    // Wallet already deployed — if delegate provided, add as on-chain owner
+    if (delegateAddress) {
+      const addOwnersData = encodeFunctionData({
+        abi: parseAbi(['function addOwners(address[] ownersToAdd, uint256[] weightsToAdd, tuple(uint256 x, uint256 y)[] publicKeyOwnersToAdd, uint256[] publicKeyWeightsToAdd, uint256 newThresholdWeight)']),
+        functionName: 'addOwners',
+        args: [
+          [delegateAddress as `0x${string}`],
+          [1n],
+          [],
+          [],
+          1n,
+        ],
+      })
+      const userOpHash = await sendUserOperation(client as any, {
+        account: smartAccount as any,
+        calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: addOwnersData }],
+      })
+      await waitForUserOperationReceipt(client as any, { hash: userOpHash })
+    }
     saveState({ ...state, deployed: true })
     return { walletAddress: state.walletAddress, deployed: true }
   }
