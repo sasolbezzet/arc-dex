@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -102,9 +102,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
-  const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean }>(() => {
+  const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean; deployed?: boolean }>(() => {
     const s = getMscaState()
-    return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false }
+    return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false, deployed: s.deployed }
   })
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -148,7 +148,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!token) throw new Error('Passkey token gagal')
     const result = await setupSessionKey(token, eoaAddress)
     setMscaState(prev => ({
-      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active,
+      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: getMscaState().deployed,
     }))
     return token
   }
@@ -159,19 +159,23 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
     }
     const { walletAddress } = await registerPasskey()
-    // Registrasi passkey = otorisasi Agent Wallet. Auto-aktifkan session key utk
-    // wallet baru; wallet lama (jika ada) otomatis di-off oleh backend.
+    // Registrasi passkey = otorisasi Agent Wallet. Deploy contract first, then
+    // auto-aktifkan session key utk wallet baru; wallet lama (jika ada) otomatis
+    // di-off oleh backend.
+    await deploySmartAccount()
     await autoActivateSession(walletAddress, address ?? undefined)
   }
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
     const { walletAddress } = await registerPasskey()
+    await deploySmartAccount()
     await autoActivateSession(walletAddress, address ?? undefined)
   }
   const loginMsca = async () => {
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
     const { walletAddress } = await loginPasskey()
+    await deploySmartAccount()
     await autoActivateSession(walletAddress, address ?? undefined)
   }
   const setupSession = async () => {
@@ -183,16 +187,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       setSessionToken(token)
       localStorage.setItem('arx_vault_token', token)
       const result = await setupSessionKey(token, address)
-      setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active }))
+      setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: prev.deployed }))
       return
     }
     const result = await setupSessionKey(sessionToken, address)
-    setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active }))
+    setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: prev.deployed }))
   }
   const revokeSession = async () => {
     if (!sessionToken) throw new Error('Login vault gagal')
     await revokeSessionKey(sessionToken)
-    setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '' }))
+    setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
   }
 
   // Clear a stale/invalid session so the deep-link auto-login can re-fire (or the
@@ -307,6 +311,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const result = await registerPasskey()
       walletAddress = result.walletAddress
     }
+    // Ensure contract deployed once (passkey-signed UserOp); no-op when already active.
+    await deploySmartAccount()
     // Get session token from backend (skip SIWE)
     const res = await fetch(`${API}/api/auth/passkey-login`, {
       method: 'POST',
@@ -334,6 +340,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         walletAddress: prev.walletAddress,
         delegateAddress: info?.delegateAddress || prev.delegateAddress || '',
         sessionActive: active,
+        deployed: prev.deployed,
       }))
     } catch { /* ignore transient network errors */ }
   }
@@ -716,7 +723,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       {/* Agent Wallet (MSCA + Passkey) */}
       <Section title='🔑 Agent Wallet' badge={
         mscaState.walletAddress
-          ? (mscaState.sessionActive ? <StatusDot on={true} label='Session aktif' /> : <StatusDot on={false} label='Session belum aktif' />)
+          ? (mscaState.sessionActive ? <StatusDot on={true} label={mscaState.deployed ? 'Deployed & aktif' : 'Session aktif'} /> : <StatusDot on={false} label='Session belum aktif' />)
           : undefined
       }>
         {!mscaState.walletAddress ? (
@@ -737,6 +744,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <div>
             <Row label='MSCA Address' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.walletAddress?.slice(0, 10)}...{mscaState.walletAddress?.slice(-6)}</span>} />
             <Row label='Passkey' value={<span style={{ color: '#4ade80' }}>✓ Terdaftar</span>} />
+            <Row label='Contract' value={mscaState.deployed
+              ? <span style={{ color: '#4ade80' }}>✓ Deployed</span>
+              : <span style={{ color: '#f59e0b' }}>○ Belum deployed</span>
+            } />
             {mscaState.delegateAddress ? (
               <>
                 <Row label='Delegate Key' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.delegateAddress?.slice(0, 10)}...{mscaState.delegateAddress?.slice(-6)}</span>} />

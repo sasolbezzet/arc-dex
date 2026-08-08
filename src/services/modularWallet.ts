@@ -18,7 +18,7 @@ import {
   createPublicClient,
 } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
-import { toWebAuthnAccount } from 'viem/account-abstraction'
+import { toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
@@ -58,6 +58,7 @@ interface MscaState {
   credential: { id: string; publicKey: string } | null
   delegateAddress: string
   sessionActive: boolean
+  deployed?: boolean
 }
 
 function loadState(): Partial<MscaState> {
@@ -114,6 +115,35 @@ export async function registerPasskey(): Promise<{ walletAddress: string; creden
   saveState({ walletAddress, credential, sessionActive: false })
 
   return { walletAddress, credential }
+}
+
+// ── Deploy MSCA once, signed by the original passkey owner ──
+export async function deploySmartAccount(): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
+  const state = loadState()
+  if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum mengaktifkan Agent Wallet.')
+
+  const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+  const smartAccount = await toCircleSmartAccount({
+    address: state.walletAddress as `0x${string}`,
+    client: client as any,
+    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+  })
+  if (await smartAccount.isDeployed()) {
+    saveState({ ...state, deployed: true })
+    return { walletAddress: state.walletAddress, deployed: true }
+  }
+
+  // Deployment is the first UserOperation. It requires an intentional passkey
+  // approval and must happen in the browser, where the WebAuthn credential lives.
+  const userOpHash = await sendUserOperation(client as any, {
+    account: smartAccount as any,
+    calls: [{ to: smartAccount.address, value: 0n, data: '0x' }],
+  })
+  const receipt = await waitForUserOperationReceipt(client as any, { hash: userOpHash })
+  if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
+
+  saveState({ ...state, deployed: true })
+  return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
 
 // ── Login with existing passkey ──
