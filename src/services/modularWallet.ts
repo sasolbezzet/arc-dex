@@ -18,11 +18,13 @@ import {
 import {
   createPublicClient,
   encodeFunctionData,
-  parseAbi,
 } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
+
+// Raw ABI for addOwners — parseAbi can't handle tuple[] with components
+const ADD_OWNERS_ABI = [{ inputs: [{ name: 'ownersToAdd', type: 'address[]' }, { name: 'weightsToAdd', type: 'uint256[]' }, { name: 'publicKeyOwnersToAdd', type: 'tuple[]', components: [{ name: 'x', type: 'uint256' }, { name: 'y', type: 'uint256' }] }, { name: 'publicKeyWeightsToAdd', type: 'uint256[]' }, { name: 'newThresholdWeight', type: 'uint256' }], name: 'addOwners', outputs: [], stateMutability: 'nonpayable', type: 'function' }]
 
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
@@ -136,7 +138,7 @@ export async function deploySmartAccount(delegateAddress?: string): Promise<{ wa
     // Wallet already deployed — if delegate provided, add as on-chain owner
     if (delegateAddress) {
       const addOwnersData = encodeFunctionData({
-        abi: parseAbi(['function addOwners(address[] ownersToAdd, uint256[] weightsToAdd, tuple(uint256 x, uint256 y)[] publicKeyOwnersToAdd, uint256[] publicKeyWeightsToAdd, uint256 newThresholdWeight)']),
+        abi: ADD_OWNERS_ABI,
         functionName: 'addOwners',
         args: [
           [delegateAddress as `0x${string}`],
@@ -164,7 +166,7 @@ export async function deploySmartAccount(delegateAddress?: string): Promise<{ wa
   ]
   if (delegateAddress) {
     const addOwnersData = encodeFunctionData({
-      abi: parseAbi(['function addOwners(address[] ownersToAdd, uint256[] weightsToAdd, tuple(uint256 x, uint256 y)[] publicKeyOwnersToAdd, uint256[] publicKeyWeightsToAdd, uint256 newThresholdWeight)']),
+      abi: ADD_OWNERS_ABI,
       functionName: 'addOwners',
       args: [
         [delegateAddress as `0x${string}`],  // ownersToAdd
