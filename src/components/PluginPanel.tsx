@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deploySmartAccount, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -126,9 +126,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
-  const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean; deployed?: boolean }>(() => {
+  const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean; deployed?: boolean; deploymentStatus?: Record<string, { status: 'deployed' | 'failed' | 'unsupported'; error?: string; userOpHash?: string; updatedAt: number }>; chainAuthorizationStatus?: Record<string, 'authorized' | 'failed'> }>(() => {
     const s = getMscaState()
-    return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false, deployed: s.deployed }
+    return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false, deployed: s.deployed, deploymentStatus: s.deploymentStatus, chainAuthorizationStatus: undefined }
   })
   const [busy, setBusy] = useState<string | null>(null)
   const [destinationReady, setDestinationReady] = useState(false)
@@ -164,17 +164,49 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     localStorage.setItem('arx_vault_token', data.token)
     return data.token
   }
-  const autoActivateSession = async (walletAddress: string, eoaAddress?: string) => {
+  const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string) => {
+    const deployment = getDeploymentStatus()[chainKey]
+    if (deployment?.status !== 'deployed') throw new Error(`${chainKey}: MSCA belum deployed`)
+    const authorization = await registerDelegateOwner(delegateAddress, chainKey)
+    if (!authorization.success || !authorization.userOpHash) throw new Error(`${chainKey}: authorization UserOp tidak tersedia`)
+    const response = await fetch(`${API}/api/session/authorize-chain`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ walletAddress, delegateAddress, chainKey, authorizationUserOpHash: authorization.userOpHash }),
+    })
+    const data = await response.json()
+    if (!response.ok || !data.success) throw new Error(data.error || `${chainKey}: verifikasi authorization gagal`)
+    return data
+  }
+
+  const autoActivateSession = async (walletAddress: string, eoaAddress?: string, existingToken?: string) => {
     // Deploy first, then register the automation signer on-chain, and only then
     // persist it server-side. A failed owner registration must never leave an
     // apparently-active backend signer that will later revert.
-    const token = await passkeySessionToken(walletAddress)
+    const token = existingToken || await passkeySessionToken(walletAddress)
     if (!token) throw new Error('Passkey token gagal')
-    if (!getMscaState().deployed) await deploySmartAccount()
+    const deployment = await deployAllSmartAccounts()
+    const arcResult = deployment.results['arc-testnet']
+    setMscaState(prev => ({ ...prev, walletAddress, deployed: arcResult?.status === 'deployed', deploymentStatus: getDeploymentStatus() }))
+    if (arcResult?.status !== 'deployed') {
+      const failed = Object.entries(deployment.results).filter(([, result]) => result.status === 'failed').map(([chain, result]) => `${chain}: ${result.error || 'gagal'}`).join('; ')
+      throw new Error(`Deployment MSCA Arc gagal. Session key belum diaktifkan.${failed ? ` ${failed}` : ''}`)
+    }
     const result = await setupSessionKey(token, eoaAddress)
+    const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
+    const destinationErrors: string[] = []
+    for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+      try {
+        await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token)
+        chainAuthorizationStatus[chainKey] = 'authorized'
+      } catch (error: any) {
+        chainAuthorizationStatus[chainKey] = 'failed'
+        destinationErrors.push(error?.message || `${chainKey}: authorization gagal`)
+      }
+    }
     setMscaState(prev => ({
-      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: true,
+      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: deployment.results['arc-testnet']?.status === 'deployed', deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus,
     }))
+    if (destinationErrors.length) setError(`MSCA Arc aktif, tetapi authorization chain belum lengkap: ${destinationErrors.join('; ')}`)
     return token
   }
   const registerMsca = async () => {
@@ -222,20 +254,31 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
   }
 
+  const retryMscaDeployments = async () => {
+    const deployment = await deployAllSmartAccounts()
+    if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal. Periksa policy Gas Station dan coba lagi.')
+    const walletAddress = mscaState.walletAddress
+    const delegateAddress = mscaState.delegateAddress
+    const token = sessionToken || (walletAddress ? await passkeySessionToken(walletAddress) : '')
+    const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
+    const errors: string[] = []
+    if (walletAddress && delegateAddress && token) {
+      for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+        try { await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token); chainAuthorizationStatus[chainKey] = 'authorized' }
+        catch (error: any) { chainAuthorizationStatus[chainKey] = 'failed'; errors.push(error?.message || `${chainKey}: authorization gagal`) }
+      }
+    }
+    setMscaState(prev => ({ ...prev, deployed: true, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    if (errors.length) setError(`Deployment berhasil sebagian; authorization belum lengkap: ${errors.join('; ')}`)
+  }
+
   const prepareBaseSepoliaBridge = async () => {
     if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error('Aktifkan session key Arc terlebih dahulu.')
     const token = sessionToken || await passkeySessionToken(mscaState.walletAddress)
     if (!token) throw new Error('Passkey token gagal.')
     await deploySmartAccountOnChain('base-sepolia')
-    const authorization = await registerDelegateOwner(mscaState.delegateAddress, 'base-sepolia')
-    if (!authorization.success || !authorization.userOpHash) throw new Error('Otorisasi delegate Base Sepolia gagal.')
-    const response = await fetch(`${API}/api/session/authorize-chain`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ walletAddress: mscaState.walletAddress, delegateAddress: mscaState.delegateAddress, chainKey: 'base-sepolia', authorizationUserOpHash: authorization.userOpHash }),
-    })
-    const data = await response.json()
-    if (!response.ok || !data.success) throw new Error(data.error || 'Verifikasi session Base Sepolia gagal.')
+    await authorizeDelegateOnChain('base-sepolia', mscaState.walletAddress, mscaState.delegateAddress, token)
+    setMscaState(prev => ({ ...prev, chainAuthorizationStatus: { ...(prev.chainAuthorizationStatus || {}), 'base-sepolia': 'authorized' } }))
     setDestinationReady(true)
   }
 
@@ -371,11 +414,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!data.success) throw new Error(data.error || 'Passkey login gagal')
     setSessionToken(data.token)
     localStorage.setItem('arx_vault_token', data.token)
-    // Deploy if needed — get delegate address first via setupSessionKey
-    if (!getMscaState().deployed) {
-      await deploySmartAccount()
-      await setupSessionKey(data.token, address ?? undefined)
-    }
+    // Reuse the same fail-closed multi-chain deployment + delegate authorization flow.
+    await autoActivateSession(walletAddress, address ?? undefined, data.token)
   }
 
   // Poll backend session-key status so the indicator reflects the server truth,
@@ -394,6 +434,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         delegateAddress: info?.delegateAddress || prev.delegateAddress || '',
         sessionActive: active,
         deployed: prev.deployed,
+        deploymentStatus: prev.deploymentStatus,
+        chainAuthorizationStatus: prev.chainAuthorizationStatus,
       }))
     } catch { /* ignore transient network errors */ }
   }
@@ -816,7 +858,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         {!mscaState.walletAddress ? (
           <div>
             <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
-              Buat smart account (MSCA) dengan passkey. Login Plugin tanpa MetaMask; transaksi chat tetap mengikuti limit dan otorisasi MCP.
+              Buat smart account (MSCA) dengan passkey. Setelah passkey selesai, deployment otomatis dicoba di Arc, Base, dan Arbitrum dengan Circle Gas Station. Ethereum Sepolia ditampilkan unsupported karena Circle belum menyediakan MSCA di chain itu.
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
@@ -830,6 +872,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         ) : (
           <div>
             <Row label='MSCA Address' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.walletAddress?.slice(0, 10)}...{mscaState.walletAddress?.slice(-6)}</span>} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, margin: '8px 0' }}>
+              {[
+                ['arc-testnet', 'Arc Testnet'], ['ethereum-sepolia', 'Ethereum Sepolia'],
+                ['base-sepolia', 'Base Sepolia'], ['arbitrum-sepolia', 'Arbitrum Sepolia'],
+              ].map(([key, label]) => {
+                const status = mscaState.deploymentStatus?.[key]
+                const color = status?.status === 'deployed' ? '#10b981' : status?.status === 'unsupported' ? '#f59e0b' : status?.status === 'failed' ? '#f87171' : '#64748b'
+                const text = status?.status === 'deployed' ? 'deployed' : status?.status === 'unsupported' ? 'MSCA unsupported' : status?.status === 'failed' ? 'failed' : 'not checked'
+                return <div key={key} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(18,18,26,0.6)', border: `1px solid ${color}33`, fontSize: 10 }}><div style={{ color: '#cbd5e1' }}>{label}</div><div style={{ color }}>{text}</div></div>
+              })}
+            </div>
+            {Object.values(mscaState.deploymentStatus || {}).some(status => status.status === 'failed') && <button className='btn' style={{ width: '100%', marginBottom: 8, fontSize: 11 }} disabled={busy === 'deployments'} onClick={() => run('deployments', retryMscaDeployments)}>↻ Ulangi deployment chain gagal</button>}
             <Row label='Passkey' value={<span style={{ color: '#4ade80' }}>✓ Terdaftar</span>} />
             <Row label='Contract' value={mscaState.deployed
               ? <span style={{ color: '#4ade80' }}>✓ Deployed</span>

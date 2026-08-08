@@ -16,7 +16,7 @@ import {
   recoveryActions,
 } from '@circle-fin/modular-wallets-core'
 import { createPublicClient, defineChain } from 'viem'
-import { toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
+import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
@@ -51,12 +51,15 @@ declare global { interface Window { __circleProxyInstalled?: boolean } }
 // ── Persisted state ──
 const STORAGE_KEY = 'arx_msca_state'
 
+type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; error?: string; updatedAt: number }
+
 interface MscaState {
   walletAddress: string
   credential: { id: string; publicKey: string } | null
   delegateAddress: string
   sessionActive: boolean
   deployed?: boolean
+  deploymentStatus?: Record<string, DeploymentStatus>
 }
 
 function loadState(): Partial<MscaState> {
@@ -85,6 +88,8 @@ const EVM_CHAIN_CONFIG = {
   'arbitrum-sepolia': { slug: 'arbSepolia', chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia-rollup.arbitrum.io/rpc'] } } }) },
 } as const
 
+export const MSCA_DEPLOYMENT_CHAINS = ['arc-testnet', 'ethereum-sepolia', 'base-sepolia', 'arbitrum-sepolia'] as const
+
 function chainConfig(chainKey = 'arc-testnet') {
   const config = EVM_CHAIN_CONFIG[chainKey as keyof typeof EVM_CHAIN_CONFIG]
   if (!config) throw new Error(`Unsupported MSCA chain: ${chainKey}`)
@@ -93,6 +98,19 @@ function chainConfig(chainKey = 'arc-testnet') {
 
 function modularTransport(chainKey = 'arc-testnet') {
   return toModularTransport(`${CLIENT_URL}/${chainConfig(chainKey).slug}`, CLIENT_KEY)
+}
+
+// Public clients read chain state and construct the deterministic account.
+// Bundler clients submit ERC-4337 UserOperations and attach Circle Gas Station
+// paymaster data when the Console policy permits the operation.
+function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
+  return createBundlerClient({
+    account,
+    chain: chainConfig(chainKey).chain,
+    client: publicClient,
+    transport: modularTransport(chainKey) as any,
+    paymaster: true,
+  })
 }
 
 // ── Register passkey + create MSCA ──
@@ -139,7 +157,9 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
     client: client as any,
     owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
   })
+  const bundlerClient = bundlerClientFor('arc-testnet', smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
+    saveDeploymentStatus('arc-testnet', { status: 'deployed', updatedAt: Date.now() })
     saveState({ ...state, deployed: true })
     return { walletAddress: state.walletAddress, deployed: true }
   }
@@ -149,16 +169,46 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   // NOTE: addOwners must be a SEPARATE UserOp after deployment (registerDelegateOwner).
   // Calling addOwners in the same UserOp as deploy causes "execution reverted"
   // because the MSCA storage isn't fully initialized yet.
-  const userOpHash = await sendUserOperation(client as any, {
-    account: smartAccount as any,
+  const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
   })
-  const receipt = await waitForUserOperationReceipt(client as any, { hash: userOpHash })
+  const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
 
-  saveState({ ...state, deployed: true })
+  saveDeploymentStatus('arc-testnet', { status: 'deployed', userOpHash, updatedAt: Date.now() })
+  saveState({ ...loadState(), deployed: true })
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
+
+function saveDeploymentStatus(chainKey: string, status: DeploymentStatus) {
+  const state = loadState()
+  saveState({ ...state, deploymentStatus: { ...(state.deploymentStatus || {}), [chainKey]: status } })
+}
+
+export async function deployAllSmartAccounts(): Promise<{ walletAddress: string; results: Record<string, DeploymentStatus> }> {
+  const state = loadState()
+  if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum deploy multi-chain.')
+  const results: Record<string, DeploymentStatus> = {}
+  for (const chainKey of MSCA_DEPLOYMENT_CHAINS) {
+    if (chainKey === 'ethereum-sepolia') {
+      const result: DeploymentStatus = { status: 'unsupported', error: 'Circle saat ini tidak mendukung MSCA di Ethereum Sepolia.', updatedAt: Date.now() }
+      results[chainKey] = result; saveDeploymentStatus(chainKey, result); continue
+    }
+    try {
+      await deploySmartAccountOnChain(chainKey)
+      const result: DeploymentStatus = { status: 'deployed', ...(loadState().deploymentStatus?.[chainKey] || {}), updatedAt: Date.now() }
+      results[chainKey] = result; saveDeploymentStatus(chainKey, result)
+    } catch (error: any) {
+      const result: DeploymentStatus = { status: 'failed', error: error?.message || `MSCA deployment failed on ${chainKey}`, updatedAt: Date.now() }
+      results[chainKey] = result; saveDeploymentStatus(chainKey, result)
+    }
+  }
+  const latest = loadState()
+  saveState({ ...latest, deployed: latest.deploymentStatus?.['arc-testnet']?.status === 'deployed' })
+  return { walletAddress: state.walletAddress, results }
+}
+
+export function getDeploymentStatus(): Record<string, DeploymentStatus> { return loadState().deploymentStatus || {} }
 
 // Deploy the same deterministic MSCA on a destination EVM chain using the
 // original passkey credential. This must run in the browser because only the
@@ -173,15 +223,19 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
     client: client as any,
     owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
   })
-  if (await smartAccount.isDeployed()) return { walletAddress: state.walletAddress, deployed: true }
-  const userOpHash = await sendUserOperation(client as any, {
-    account: smartAccount as any,
+  const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
+  if (await smartAccount.isDeployed()) {
+    saveDeploymentStatus(chainKey, { status: 'deployed', updatedAt: Date.now() })
+    return { walletAddress: state.walletAddress, deployed: true }
+  }
+  const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    paymaster: false,
   })
-  const receipt = await waitForUserOperationReceipt(client as any, { hash: userOpHash })
+  const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
-  saveState({ ...state, deployed: state.deployed ?? true })
+  saveDeploymentStatus(chainKey, { status: 'deployed', userOpHash, updatedAt: Date.now() })
+  const latest = loadState()
+  saveState({ ...latest, deployed: latest.deployed ?? true })
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
 
@@ -323,18 +377,18 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   })
 
   // Extend client with recoveryActions to call registerRecoveryAddress
-  const { createBundlerClient } = await import('viem/account-abstraction')
   const bundlerClient = createBundlerClient({
     account: smartAccount as any,
     client: client as any,
     transport: modularTransport(chainKey) as any,
+    paymaster: true,
   }).extend(recoveryActions)
 
   try {
     const userOpHash = await bundlerClient.registerRecoveryAddress({
       account: smartAccount as any,
       recoveryAddress: delegateAddress as `0x${string}`,
-      paymaster: false,
+      // Gas Station is configured on the bundler client above.
     })
     return { success: true, userOpHash }
   } catch (e: any) {
