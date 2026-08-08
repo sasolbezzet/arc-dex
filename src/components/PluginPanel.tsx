@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx, registerDelegateOwner } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -33,6 +33,13 @@ const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
     <span style={{ color: '#64748b' }}>{label}</span>
     <span style={{ color: '#e2e8f0' }}>{value}</span>
   </div>
+)
+
+const StatusDot = ({ on, label }: { on: boolean; label: string }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '2px 8px', borderRadius: 4, background: on ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.1)', color: on ? '#10b981' : '#64748b' }}>
+    <span style={{ width: 6, height: 6, borderRadius: '50%', background: on ? '#10b981' : '#64748b', boxShadow: on ? '0 0 6px #10b981' : 'none' }} />
+    {label}
+  </span>
 )
 
 // 🔐 SIWE login button
@@ -72,6 +79,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // ── OAuth callback params (from ChatGPT/Claude redirect) ──
   const [oauthParams, setOauthParams] = useState<{ client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
   const [oauthStatus, setOauthStatus] = useState<'idle' | 'signing' | 'approving' | 'done' | 'error'>('idle')
+  const [deepLink, setDeepLink] = useState(false)
+  const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
@@ -91,8 +100,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     if (p.get('tab') === 'approvals') setDeepLink(true)
   }, [])
-  const [deepLink, setDeepLink] = useState(false)
-  const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [limits, setLimits] = useState<Limits>({ maxPerTx: 100, dailyLimit: 500, autoApprove: true, whitelist: [] })
@@ -142,24 +149,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     return data.token
   }
   const autoActivateSession = async (walletAddress: string, eoaAddress?: string) => {
-    // Ensure a vault session token for this MSCA, then (re)activate its session
-    // key. Backend `storeSessionKey` auto-revokes any other active MSCA owned by
-    // the same identity (ownerAddress/EURO), so the selected one becomes the
-    // single active session and the rest turn off automatically.
+    // Deploy first, then register the automation signer on-chain, and only then
+    // persist it server-side. A failed owner registration must never leave an
+    // apparently-active backend signer that will later revert.
     const token = await passkeySessionToken(walletAddress)
     if (!token) throw new Error('Passkey token gagal')
+    if (!getMscaState().deployed) await deploySmartAccount()
     const result = await setupSessionKey(token, eoaAddress)
-    // Deploy MSCA if not yet deployed — pass delegate address so addOwners is included
-    const alreadyDeployed = getMscaState().deployed
-    if (!alreadyDeployed) {
-      await deploySmartAccount()
-    }
-    // Register delegate as on-chain owner via recovery mechanism (ONE-TIME)
-    // After this, backend can sign all transactions automatically
-    // Non-blocking: if fails, log and continue — user can retry later
-    registerDelegateOwner(result.delegateAddress).catch(e => {
-      console.warn('[Plugin] registerDelegateOwner failed (non-blocking):', e?.message)
-    })
     setMscaState(prev => ({
       ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: true,
     }))
@@ -189,9 +185,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
   const setupSession = async () => {
     if (!sessionToken) {
-      // Auto-login: sign SIWE message to get vault session before session key setup.
-      if (!address) throw new Error('Wallet belum terhubung')
-      const token = await siweLogin(address)
+      // Automation setup must authenticate the selected MSCA with passkey;
+      // an EOA SIWE token is not sufficient to authorize a delegate signer.
+      const selectedMsca = getMscaState().walletAddress
+      if (!selectedMsca) throw new Error('Agent Wallet MSCA belum dibuat')
+      const token = await passkeySessionToken(selectedMsca)
       if (!token) throw new Error('Login vault gagal. Tanda tangan wallet diperlukan.')
       setSessionToken(token)
       localStorage.setItem('arx_vault_token', token)
@@ -342,12 +340,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     localStorage.setItem('arx_vault_token', data.token)
     // Deploy if needed — get delegate address first via setupSessionKey
     if (!getMscaState().deployed) {
-      const result = await setupSessionKey(data.token, undefined)
       await deploySmartAccount()
-      // Register delegate as owner — non-blocking, log error if fails
-      registerDelegateOwner(result.delegateAddress).catch(e => {
-        console.warn('[Plugin] registerDelegateOwner failed (non-blocking):', e?.message)
-      })
+      await setupSessionKey(data.token, address ?? undefined)
     }
   }
 
@@ -501,13 +495,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const chatgptConnected = mcpSessions.some(s => s.active && s.agent?.includes('chatgpt'))
   const claudeConnected = mcpSessions.some(s => s.active && s.agent?.includes('claude'))
   const anyConnected = mcpSessions.some(s => s.active)
-  const StatusDot = ({ on, label }: { on: boolean; label: string }) => (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '2px 8px', borderRadius: 4, background: on ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.1)', color: on ? '#10b981' : '#64748b' }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: on ? '#10b981' : '#64748b', boxShadow: on ? '0 0 6px #10b981' : 'none' }} />
-      {label}
-    </span>
-  )
-
   // ── OAuth approve flow: sign SIWE → get auth code → redirect back to ChatGPT ──
   const approveOAuth = async () => {
     if (!address || !oauthParams) return

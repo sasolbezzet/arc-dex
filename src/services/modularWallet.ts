@@ -17,14 +17,9 @@ import {
 } from '@circle-fin/modular-wallets-core'
 import {
   createPublicClient,
-  encodeFunctionData,
 } from 'viem'
-import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
 import { toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
-
-// Raw ABI for addOwners — parseAbi can't handle tuple[] with components
-const ADD_OWNERS_ABI = [{ inputs: [{ name: 'ownersToAdd', type: 'address[]' }, { name: 'weightsToAdd', type: 'uint256[]' }, { name: 'publicKeyOwnersToAdd', type: 'tuple[]', components: [{ name: 'x', type: 'uint256' }, { name: 'y', type: 'uint256' }] }, { name: 'publicKeyWeightsToAdd', type: 'uint256[]' }, { name: 'newThresholdWeight', type: 'uint256' }], name: 'addOwners', outputs: [], stateMutability: 'nonpayable', type: 'function' }]
 
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
@@ -86,8 +81,9 @@ function passkeyTransport() {
   return toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
 }
 
-function modularTransport() {
-  return toModularTransport(`${CLIENT_URL}/arcTestnet`, CLIENT_KEY)
+function modularTransport(chainKey = 'arc-testnet') {
+  const slug = chainKey === 'arc-testnet' ? 'arcTestnet' : chainKey
+  return toModularTransport(`${CLIENT_URL}/${slug}`, CLIENT_KEY)
 }
 
 // ── Register passkey + create MSCA ──
@@ -185,11 +181,9 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
   return { walletAddress, credential }
 }
 
-// ── Setup session key: generate delegate EOA + store in vault ──
-// NOTE: Circle MSCA does not expose addOwner via UserOp in current
-// testnet version (reverts with "execution reverted"). The delegate
-// key is stored in the vault for backend-side signing. On-chain owner
-// mapping will be added when Circle supports it.
+// ── Setup session key: authorize delegate on-chain, then store it in vault ──
+// The backend must never activate a signer before the MSCA has accepted it.
+// The delegate is an automation key, not the user's EOA or passkey key.
 export async function setupSessionKey(vaultToken: string, ownerAddress?: string): Promise<{
   walletAddress: string
   delegateAddress: string
@@ -198,28 +192,38 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string)
   const state = loadState()
   if (!state.walletAddress) throw new Error('MSCA wallet belum dibuat. Register passkey dulu.')
 
-  // Step 1: Generate delegate EOA keypair
-  const delegatePrivateKey = generatePrivateKey()
-  const delegateAccount = privateKeyToAccount(delegatePrivateKey as any)
-  const delegateAddress = delegateAccount.address
+  if (!state.deployed) throw new Error('MSCA harus deployed sebelum mengaktifkan automation signer.')
 
-  // Step 2: Store delegate key on server (vault) — skip on-chain addOwner
+  // Reserve the automation signer on the backend. The private key never enters
+  // the browser; only its public address is returned for passkey authorization.
+  const reserveRes = await fetch(`${API}/api/session/generate-key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
+    body: JSON.stringify({ walletAddress: state.walletAddress, ownerAddress }),
+  })
+  const reserved = await reserveRes.json()
+  if (!reserveRes.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
+  const delegateAddress = reserved.delegateAddress
+
+  // The passkey authorizes exactly this reserved address on-chain.
+  const authorization = await registerDelegateOwner(delegateAddress)
+  if (!authorization.success || !authorization.userOpHash) throw new Error('Automation signer authorization did not return a UserOperation hash')
+
+  // Activate the already-reserved signer only after authorization succeeded.
   const res = await fetch(`${API}/api/session/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
     body: JSON.stringify({
       walletAddress: state.walletAddress,
       delegateAddress,
-      delegatePrivateKey,
-      // OAuth/SIWE identity (wallet utama / EOA) so MCP sessions authenticated
-      // as this address resolve the MSCA-held session key.
+      authorizationUserOpHash: authorization.userOpHash,
       ownerAddress,
     }),
   })
   const data = await res.json()
   if (!data.success) throw new Error(data.error || 'Session setup gagal')
 
-  // Step 3: Update local state
+  // Step 4: Update local state
   saveState({ ...state, delegateAddress, sessionActive: true })
 
   return {
