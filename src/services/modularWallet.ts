@@ -15,9 +15,7 @@ import {
   WebAuthnMode,
   recoveryActions,
 } from '@circle-fin/modular-wallets-core'
-import {
-  createPublicClient,
-} from 'viem'
+import { createPublicClient, defineChain } from 'viem'
 import { toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
@@ -81,9 +79,20 @@ function passkeyTransport() {
   return toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
 }
 
+const EVM_CHAIN_CONFIG = {
+  'arc-testnet': { slug: 'arcTestnet', chain: arcTestnet },
+  'base-sepolia': { slug: 'baseSepolia', chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia.base.org'] } } }) },
+  'arbitrum-sepolia': { slug: 'arbSepolia', chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia-rollup.arbitrum.io/rpc'] } } }) },
+} as const
+
+function chainConfig(chainKey = 'arc-testnet') {
+  const config = EVM_CHAIN_CONFIG[chainKey as keyof typeof EVM_CHAIN_CONFIG]
+  if (!config) throw new Error(`Unsupported MSCA chain: ${chainKey}`)
+  return config
+}
+
 function modularTransport(chainKey = 'arc-testnet') {
-  const slug = chainKey === 'arc-testnet' ? 'arcTestnet' : chainKey
-  return toModularTransport(`${CLIENT_URL}/${slug}`, CLIENT_KEY)
+  return toModularTransport(`${CLIENT_URL}/${chainConfig(chainKey).slug}`, CLIENT_KEY)
 }
 
 // ── Register passkey + create MSCA ──
@@ -148,6 +157,31 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
 
   saveState({ ...state, deployed: true })
+  return { walletAddress: state.walletAddress, deployed: true, userOpHash }
+}
+
+// Deploy the same deterministic MSCA on a destination EVM chain using the
+// original passkey credential. This must run in the browser because only the
+// passkey can produce the valid first UserOperation signature.
+export async function deploySmartAccountOnChain(chainKey: string): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
+  const state = loadState()
+  if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum deploy destination MSCA.')
+  const config = chainConfig(chainKey)
+  const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
+  const smartAccount = await toCircleSmartAccount({
+    address: state.walletAddress as `0x${string}`,
+    client: client as any,
+    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+  })
+  if (await smartAccount.isDeployed()) return { walletAddress: state.walletAddress, deployed: true }
+  const userOpHash = await sendUserOperation(client as any, {
+    account: smartAccount as any,
+    calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
+    paymaster: false,
+  })
+  const receipt = await waitForUserOperationReceipt(client as any, { hash: userOpHash })
+  if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
+  saveState({ ...state, deployed: state.deployed ?? true })
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
 
@@ -276,11 +310,12 @@ export function clearMscaState() {
 // ── Register delegate EOA as on-chain owner via recovery mechanism ──
 // ONE-TIME: passkey signs UserOp to add delegate as owner. After this,
 // backend can sign all transactions automatically with delegate EOA.
-export async function registerDelegateOwner(delegateAddress: string): Promise<{ success: boolean; userOpHash?: string }> {
+export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-testnet'): Promise<{ success: boolean; userOpHash?: string }> {
   const state = loadState()
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
+  const config = chainConfig(chainKey)
 
-  const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+  const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
   const smartAccount = await toCircleSmartAccount({
     address: state.walletAddress as `0x${string}`,
     client: client as any,
@@ -292,14 +327,14 @@ export async function registerDelegateOwner(delegateAddress: string): Promise<{ 
   const bundlerClient = createBundlerClient({
     account: smartAccount as any,
     client: client as any,
-    transport: modularTransport() as any,
+    transport: modularTransport(chainKey) as any,
   }).extend(recoveryActions)
 
   try {
     const userOpHash = await bundlerClient.registerRecoveryAddress({
       account: smartAccount as any,
       recoveryAddress: delegateAddress as `0x${string}`,
-      paymaster: true,
+      paymaster: false,
     })
     return { success: true, userOpHash }
   } catch (e: any) {

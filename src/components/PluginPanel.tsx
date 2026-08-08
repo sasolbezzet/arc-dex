@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deploySmartAccount, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -131,6 +131,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false, deployed: s.deployed }
   })
   const [busy, setBusy] = useState<string | null>(null)
+  const [destinationReady, setDestinationReady] = useState(false)
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
 
@@ -219,6 +220,23 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!sessionToken) throw new Error('Login vault gagal')
     await revokeSessionKey(sessionToken)
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
+  }
+
+  const prepareBaseSepoliaBridge = async () => {
+    if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error('Aktifkan session key Arc terlebih dahulu.')
+    const token = sessionToken || await passkeySessionToken(mscaState.walletAddress)
+    if (!token) throw new Error('Passkey token gagal.')
+    await deploySmartAccountOnChain('base-sepolia')
+    const authorization = await registerDelegateOwner(mscaState.delegateAddress, 'base-sepolia')
+    if (!authorization.success || !authorization.userOpHash) throw new Error('Otorisasi delegate Base Sepolia gagal.')
+    const response = await fetch(`${API}/api/session/authorize-chain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ walletAddress: mscaState.walletAddress, delegateAddress: mscaState.delegateAddress, chainKey: 'base-sepolia', authorizationUserOpHash: authorization.userOpHash }),
+    })
+    const data = await response.json()
+    if (!response.ok || !data.success) throw new Error(data.error || 'Verifikasi session Base Sepolia gagal.')
+    setDestinationReady(true)
   }
 
   const approvePendingTx = async (tx: PendingTx) => {
@@ -379,12 +397,22 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       }))
     } catch { /* ignore transient network errors */ }
   }
+  const refreshDestinationStatus = async () => {
+    if (!sessionToken || !mscaState.walletAddress) return
+    try {
+      const response = await fetch(`${API}/api/session/destination-status?chainKey=base-sepolia&walletAddress=${encodeURIComponent(mscaState.walletAddress)}`, { headers: authHeaders() })
+      if (!response.ok) return
+      const data = await response.json()
+      setDestinationReady(Boolean(data.deployed && data.authorized))
+    } catch { /* ignore transient destination RPC errors */ }
+  }
   useEffect(() => {
     if (!sessionToken) return
     refreshSessionStatus()
-    const poll = setInterval(refreshSessionStatus, 8000)
+    refreshDestinationStatus()
+    const poll = setInterval(() => { refreshSessionStatus(); refreshDestinationStatus() }, 8000)
     return () => clearInterval(poll)
-  }, [sessionToken])
+  }, [sessionToken, mscaState.walletAddress])
 
   // Restore session from localStorage on mount
   useEffect(() => {
@@ -823,6 +851,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'session'} onClick={() => run('session', setupSession)}>
                   🔑 Aktifkan Session Key
                 </button>
+              </div>
+            )}
+            {mscaState.sessionActive && (
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: destinationReady ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)', border: `1px solid ${destinationReady ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)'}` }}>
+                <div style={{ color: destinationReady ? '#4ade80' : '#a5b4fc', fontSize: 11, marginBottom: 7 }}>
+                  {destinationReady ? '✓ Base Sepolia siap untuk receiveMessage via MSCA UserOp' : 'Bridge Arc → Base membutuhkan deployment dan otorisasi delegate di Base Sepolia.'}
+                </div>
+                {!destinationReady && <button className='btn btn-primary' style={{ width: '100%', fontSize: 11 }} disabled={busy === 'destination'} onClick={() => run('destination', prepareBaseSepoliaBridge)}>
+                  🛡️ Deploy + aktifkan Base Sepolia bridge
+                </button>}
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
