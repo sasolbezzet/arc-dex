@@ -13,6 +13,7 @@ import {
   toCircleSmartAccount,
   toWebAuthnCredential,
   WebAuthnMode,
+  recoveryActions,
 } from '@circle-fin/modular-wallets-core'
 import {
   createPublicClient,
@@ -299,6 +300,44 @@ export function getMscaState(): Partial<MscaState> {
 // ── Clear MSCA state (logout) ──
 export function clearMscaState() {
   clearState()
+}
+
+// ── Register delegate EOA as on-chain owner via recovery mechanism ──
+// ONE-TIME: passkey signs UserOp to add delegate as owner. After this,
+// backend can sign all transactions automatically with delegate EOA.
+export async function registerDelegateOwner(delegateAddress: string): Promise<{ success: boolean; userOpHash?: string }> {
+  const state = loadState()
+  if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
+
+  const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+  const smartAccount = await toCircleSmartAccount({
+    address: state.walletAddress as `0x${string}`,
+    client: client as any,
+    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+  })
+
+  // Extend client with recoveryActions to call registerRecoveryAddress
+  const { createBundlerClient } = await import('viem/account-abstraction')
+  const bundlerClient = createBundlerClient({
+    account: smartAccount as any,
+    client: client as any,
+    transport: modularTransport() as any,
+  }).extend(recoveryActions)
+
+  try {
+    const userOpHash = await bundlerClient.registerRecoveryAddress({
+      account: smartAccount as any,
+      recoveryAddress: delegateAddress as `0x${string}`,
+      paymaster: true,
+    })
+    return { success: true, userOpHash }
+  } catch (e: any) {
+    // Address mapping may already exist — that's OK
+    if (e?.message?.includes('already exists') || e?.message?.includes('ALREADY_KNOWN')) {
+      return { success: true }
+    }
+    throw e
+  }
 }
 
 // ── Sign a pending tx with passkey and submit to backend relay ──

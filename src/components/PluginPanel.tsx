@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx, registerDelegateOwner } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -154,6 +154,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!alreadyDeployed) {
       await deploySmartAccount(result.delegateAddress)
     }
+    // Register delegate as on-chain owner via recovery mechanism (ONE-TIME)
+    // After this, backend can sign all transactions automatically
+    await registerDelegateOwner(result.delegateAddress)
     setMscaState(prev => ({
       ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: true,
     }))
@@ -338,6 +341,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!getMscaState().deployed) {
       const result = await setupSessionKey(data.token, undefined)
       await deploySmartAccount(result.delegateAddress)
+      await registerDelegateOwner(result.delegateAddress)
     }
   }
 
