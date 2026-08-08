@@ -257,7 +257,10 @@ export async function findConnectedWalletProvider(expectedAddress?: string | nul
       }
     } catch {}
   }
-  return getWalletProvider()
+  // OAuth approval must never fall back to an unrelated injected wallet.
+  // A signature from another account cannot complete this authorization and
+  // silently prompting it is confusing and unsafe.
+  return expected ? null : getWalletProvider()
 }
 
 if (typeof window !== 'undefined') {

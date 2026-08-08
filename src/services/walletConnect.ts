@@ -106,9 +106,7 @@ export async function getWalletConnectProvider(): Promise<any | null> {
 
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && wcProvider?.signer?.client) {
-          try { wcProvider.signer.client.core.relayer.transportOpen() } catch {}
-        }
+        if (document.visibilityState === 'visible') resumeWalletConnect()
       })
     }
 
@@ -229,6 +227,17 @@ function hideQRModal() {
  * to be sent through the relay — the user needs to be in the wallet app
  * to approve it.
  */
+export function resumeWalletConnect() {
+  try {
+    const client = wcProvider?.signer?.client
+    if (!client) return false
+    client.core.relayer.transportOpen()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function redirectToWalletForSign() {
   if (!isMobile() || !wcProvider?.session) return
 

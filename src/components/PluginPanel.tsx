@@ -3,7 +3,7 @@ import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
-import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
+import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
@@ -17,6 +17,20 @@ const API = ''
 const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
 const SERVER_URL = 'https://arcoxdex.vercel.app'
 const AUTH_URL = `${SERVER_URL}/api/auth/authorize`
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 const Section = ({ title, children, badge }: { title: string; children: React.ReactNode; badge?: React.ReactNode }) => (
   <div className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14 }}>
@@ -81,6 +95,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [oauthStatus, setOauthStatus] = useState<'idle' | 'signing' | 'approving' | 'done' | 'error'>('idle')
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
+  const oauthAttempt = useRef(0)
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
@@ -498,37 +513,61 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // ── OAuth approve flow: sign SIWE → get auth code → redirect back to ChatGPT ──
   const approveOAuth = async () => {
     if (!address || !oauthParams) return
+    const attempt = ++oauthAttempt.current
     setOauthStatus('signing')
+    setError(null)
     try {
-      // 1. Get SIWE challenge from MCP server
-      const msgResp = await fetch(`${API}/api/auth/siwe-message?address=${address}&client_id=${oauthParams.client_id}`, { headers: authHeaders() })
-      const msgData = await msgResp.json()
+      // 1. Get SIWE challenge from MCP server. Every network/provider step is
+      // bounded so a suspended mobile tab cannot leave the button stuck forever.
+      const msgResp = await withTimeout(
+        fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}`, { headers: authHeaders() }),
+        20_000,
+        'Challenge timeout. Periksa koneksi lalu tekan Coba Lagi.',
+      )
+      if (!msgResp.ok) throw new Error(`Gagal mendapat challenge (${msgResp.status})`)
+      const msgData = await withTimeout(msgResp.json(), 10_000, 'Respons challenge tidak selesai. Tekan Coba Lagi.')
       if (!msgData.message) throw new Error('Gagal mendapat challenge')
 
       // 2. Sign with the already-connected wallet provider.
       // Do not use window.ethereum: on mobile it can trigger an unintended app switch.
-      const provider = await findConnectedWalletProvider(address)
-      if (!provider) {
-        throw new Error('Wallet utama tidak terdeteksi. Hubungkan wallet di halaman ARCOX terlebih dahulu.')
+      const provider = await withTimeout(
+        findConnectedWalletProvider(address),
+        20_000,
+        'Wallet provider timeout. Hubungkan kembali wallet lalu tekan Coba Lagi.',
+      )
+      if (!provider) throw new Error('Wallet utama tidak terdeteksi. Hubungkan wallet di halaman ARCOX terlebih dahulu.')
+      const from = address
+      const messageHex = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
+      // Re-open the relay before creating the request. Do not navigate the
+      // current page to a wallet deep-link: that unloads Plugin and destroys
+      // the pending WalletConnect promise. WalletConnect/AppKit handles the
+      // wallet notification; the user can switch apps and return here.
+      if (isMobile()) resumeWalletConnect()
+      const signPromise = provider.request({ method: 'personal_sign', params: [messageHex, from] }) as Promise<string>
+      let timeoutId: ReturnType<typeof setTimeout> | null = null
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Wallet signature timeout. Kembali ke browser setelah approve, lalu tekan Coba Lagi.')), 90_000)
+      })
+      let signature: string
+      try {
+        signature = await Promise.race([signPromise, timeoutPromise])
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId)
       }
-      const accounts = await provider.request({ method: 'eth_accounts' })
-      const from = accounts?.[0]
-      if (!from || from.toLowerCase() !== address.toLowerCase()) {
-        throw new Error('Wallet terhubung berbeda dari wallet utama ARCOX.')
-      }
-      const signature = await provider.request({ method: 'personal_sign', params: [msgData.message, from] })
+      if (attempt !== oauthAttempt.current) return
       setOauthStatus('approving')
 
       // 3. Verify → get auth code → redirect
-      const codeResp = await fetch(`${API}/api/auth/siwe-verify`, {
+      const codeResp = await withTimeout(fetch(`${API}/api/auth/siwe-verify`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           address: from, message: msgData.message, signature,
           clientId: oauthParams.client_id, redirectUri: oauthParams.redirect_uri,
           state: oauthParams.state, codeChallenge: oauthParams.code_challenge,
-        })
-      })
-      const codeData = await codeResp.json()
+        }),
+      }), 20_000, 'Verifikasi timeout. Tekan Coba Lagi.')
+      const codeData = await withTimeout(codeResp.json(), 10_000, 'Respons verifikasi tidak selesai. Tekan Coba Lagi.')
+      if (attempt !== oauthAttempt.current) return
       if (codeData.redirect) {
         setOauthStatus('done')
         window.location.href = codeData.redirect
@@ -536,8 +575,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       }
       throw new Error(codeData.error || 'Gagal mendapat kode otorisasi')
     } catch (e: any) {
+      if (attempt !== oauthAttempt.current) return
+      // A timed-out WalletConnect request can remain pending inside the relay.
+      // Reset only the WC transport so the next retry starts cleanly; injected
+      // desktop providers are left untouched.
+      if (isMobile() && getWalletConnectProviderSync()) {
+        await disconnectWalletConnect().catch(() => {})
+      }
       setOauthStatus('error')
-      setError(e?.message || 'OAuth approval gagal')
+      setError(e?.message || 'OAuth approval gagal. Tekan Coba Lagi.')
     }
   }
 
@@ -579,7 +625,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             color: '#fff', fontSize: 14, fontWeight: 700, cursor: oauthStatus === 'idle' ? 'pointer' : 'wait',
             opacity: oauthStatus === 'done' ? 0.5 : 1,
           }}>
-            {oauthStatus === 'signing' ? '⏳ Menunggu tanda tangan MetaMask...' :
+            {             oauthStatus === 'signing' ? '⏳ Menunggu persetujuan wallet app...' :
              oauthStatus === 'approving' ? '⏳ Memverifikasi...' :
              oauthStatus === 'done' ? '✅ Terhubung! Mengalihkan...' :
              oauthStatus === 'error' ? '❌ Gagal — Coba lagi' :
