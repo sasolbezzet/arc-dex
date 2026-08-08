@@ -259,3 +259,41 @@ export function getMscaState(): Partial<MscaState> {
 export function clearMscaState() {
   clearState()
 }
+
+// ── Sign a pending tx with passkey and submit to backend relay ──
+export async function signPendingTx(txId: string, calls: Array<{ to: string; data: string; value: string }>, chainKey: string): Promise<{ txHash?: string; explorerUrl?: string; error?: string }> {
+  const state = loadState()
+  if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
+
+  const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+  const smartAccount = await toCircleSmartAccount({
+    address: state.walletAddress as `0x${string}`,
+    client: client as any,
+    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+  })
+
+  // Normalize calls — value can be string "0x0" or bigint
+  const normalizedCalls = calls.map(c => ({
+    to: c.to as `0x${string}`,
+    data: c.data as `0x${string}`,
+    value: typeof c.value === 'string' ? BigInt(c.value) : c.value,
+  }))
+
+  // Build and sign UserOp
+  const { signUserOperation } = await import('viem/account-abstraction')
+  const signedUserOp = await signUserOperation(client as any, {
+    account: smartAccount as any,
+    calls: normalizedCalls,
+  })
+
+  // Submit signed UserOp to backend relay
+  const token = localStorage.getItem('arx_vault_token')
+  const res = await fetch(`${API}/api/pending-txs/${txId}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ signedUserOp }),
+  })
+  const data = await res.json()
+  if (!data.success) throw new Error(data.error || 'Submit gagal')
+  return { txHash: data.txHash, explorerUrl: data.explorerUrl }
+}

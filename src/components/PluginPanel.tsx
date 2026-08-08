@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deploySmartAccount, setupSessionKey, revokeSessionKey, getMscaState, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -11,6 +11,7 @@ type Approval = { id: string; agent: string; action: string; amount: string; tok
 type Limits = { maxPerTx: number; dailyLimit: number; autoApprove: boolean; whitelist: string[] }
 type Activity = { id: string; type: string; data: any; ts: number }
 type McpSession = { clientId: string; agent: string; connectedAt: number; lastActivity: number; active: boolean }
+type PendingTx = { txId: string; walletAddress: string; calls: Array<{ to: string; data: string; value: string }>; chainKey: string; paymaster: boolean; status: string; createdAt: number }
 
 const API = ''
 const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
@@ -97,6 +98,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [limits, setLimits] = useState<Limits>({ maxPerTx: 100, dailyLimit: 500, autoApprove: true, whitelist: [] })
   const [activity, setActivity] = useState<Activity[]>([])
   const [mcpSessions, setMcpSessions] = useState<McpSession[]>([])
+  const [pendingTxs, setPendingTxs] = useState<PendingTx[]>([])
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [authLoading, setAuthLoading] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -199,6 +201,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
   }
 
+  const approvePendingTx = async (tx: PendingTx) => {
+    const result = await signPendingTx(tx.txId, tx.calls, tx.chainKey)
+    // Remove from pending list immediately
+    setPendingTxs(prev => prev.filter(t => t.txId !== tx.txId))
+    if (result.error) throw new Error(result.error)
+    return result
+  }
+
   // Clear a stale/invalid session so the deep-link auto-login can re-fire (or the
   // Sign-In wall appears). Backend session tokens are in-memory and die on every
   // backend restart, leaving localStorage holding a token the server rejects (401).
@@ -238,7 +248,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setLoading(false)
   }
 
-  // Auto-poll MCP sessions + approvals every 8s for live status.
+  // Auto-poll MCP sessions + approvals + pending txs every 8s for live status.
   // Approvals must be polled: an agent (ChatGPT/Claude) can create a pending
   // approval while the user is looking at the page — without polling it never
   // appears until a manual reload.
@@ -246,14 +256,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!sessionToken) return
     const poll = setInterval(async () => {
       try {
-        const [s, appr, act] = await Promise.all([
+        const [s, appr, act, txs] = await Promise.all([
           vaultFetch('/api/vault/sessions'),
           vaultFetch('/api/vault/approvals'),
           vaultFetch('/api/vault/activity?limit=20'),
+          vaultFetch('/api/pending-txs').catch(() => ({ txs: [] })),
         ])
         setMcpSessions(s.sessions || [])
         setApprovals(appr.approvals || [])
         setActivity(act.activity || [])
+        setPendingTxs((txs.txs || []).filter((t: PendingTx) => t.status === 'pending'))
       } catch {}
     }, 8000)
     return () => clearInterval(poll)
@@ -795,6 +807,40 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       {mscaState.walletAddress && (
         <Section title='💰 Agent Wallet Balances'>
           <MultiChainBalances walletAddress={mscaState.walletAddress} />
+        </Section>
+      )}
+
+      {/* Pending Transactions (passkey approval) */}
+      {pendingTxs.length > 0 && (
+        <Section title='⏳ Transaksi Menunggu Persetujuan' badge={<span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{pendingTxs.length}</span>}>
+          {pendingTxs.map(tx => (
+            <div key={tx.txId} style={{ padding: '8px 0', borderBottom: '1px solid #1e1e2e' }}>
+              <div style={{ fontSize: 12, color: '#e2e8f0', marginBottom: 4 }}>
+                <span style={{ color: '#f59e0b' }}>Agent minta transaksi</span>
+                <span style={{ color: '#64748b', marginLeft: 8 }}>{fmtTime(tx.createdAt)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', marginBottom: 6 }}>
+                {tx.calls.length} call · {tx.chainKey}
+              </div>
+              <button
+                className='btn btn-primary'
+                style={{ width: '100%', fontSize: 12 }}
+                disabled={busy === `pending-${tx.txId}`}
+                onClick={async () => {
+                  try {
+                    setBusy(`pending-${tx.txId}`)
+                    setError(null)
+                    const result = await approvePendingTx(tx)
+                    if (result.txHash) alert(`Transaksi berhasil!\n${result.explorerUrl}`)
+                  } catch (e: any) {
+                    setError(e?.message || 'Gagal menandatangani')
+                  } finally { setBusy(null) }
+                }}
+              >
+                {busy === `pending-${tx.txId}` ? 'Menandatangani...' : '🔐 Approve dengan Passkey'}
+              </button>
+            </div>
+          ))}
         </Section>
       )}
 
