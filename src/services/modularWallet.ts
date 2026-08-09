@@ -15,7 +15,7 @@ import {
   WebAuthnMode,
   recoveryActions,
 } from '@circle-fin/modular-wallets-core'
-import { createPublicClient, defineChain } from 'viem'
+import { createPublicClient, defineChain, http } from 'viem'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
@@ -103,6 +103,24 @@ function modularTransport(chainKey = 'arc-testnet') {
 // Public clients read chain state and construct the deterministic account.
 // Bundler clients submit ERC-4337 UserOperations and attach Circle Gas Station
 // paymaster data when the Console policy permits the operation.
+// Circle's Arbitrum paymaster can occasionally return a fee cap below the
+// live L2 fee during testnet bursts. Keep gas limits SDK-estimated, but provide
+// a buffered fee envelope so estimation/submission does not use an unusable cap.
+async function userOpFeeOverrides(chainKey: string): Promise<Record<string, bigint>> {
+  if (chainKey !== 'arbitrum-sepolia') return {}
+  const chain = EVM_CHAIN_CONFIG['arbitrum-sepolia'].chain
+  const feeClient = createPublicClient({ chain, transport: http(chain.rpcUrls.default.http[0]) })
+  const [gasPrice, block] = await Promise.all([
+    feeClient.getGasPrice(),
+    feeClient.getBlock({ blockTag: 'latest' }),
+  ])
+  const baseFee = block.baseFeePerGas || gasPrice
+  const maxPriorityFeePerGas = 100_000n
+  const maxFeePerGas = [gasPrice * 2n, baseFee * 2n + maxPriorityFeePerGas]
+    .reduce((max, value) => value > max ? value : max, 0n)
+  return { maxFeePerGas, maxPriorityFeePerGas }
+}
+
 function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
   return createBundlerClient({
     account,
@@ -171,6 +189,8 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   // because the MSCA storage isn't fully initialized yet.
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
+    // Keep call/verification gas SDK-estimated; only override Arbitrum's fee cap.
+    ...await userOpFeeOverrides('arc-testnet'),
   })
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
@@ -199,7 +219,7 @@ export async function deployAllSmartAccounts(): Promise<{ walletAddress: string;
       const result: DeploymentStatus = { status: 'deployed', ...(loadState().deploymentStatus?.[chainKey] || {}), updatedAt: Date.now() }
       results[chainKey] = result; saveDeploymentStatus(chainKey, result)
     } catch (error: any) {
-      const result: DeploymentStatus = { status: 'failed', error: error?.message || `MSCA deployment failed on ${chainKey}`, updatedAt: Date.now() }
+      const result: DeploymentStatus = { status: 'failed', error: `${chainKey}: deployment failed: ${error?.message || 'unknown error'}`, updatedAt: Date.now() }
       results[chainKey] = result; saveDeploymentStatus(chainKey, result)
     }
   }
@@ -209,6 +229,20 @@ export async function deployAllSmartAccounts(): Promise<{ walletAddress: string;
 }
 
 export function getDeploymentStatus(): Record<string, DeploymentStatus> { return loadState().deploymentStatus || {} }
+
+export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddress?: string): Promise<boolean> {
+  const state = loadState()
+  const address = walletAddress || state.walletAddress
+  if (!address || !state.credential) throw new Error('Login Passkey diperlukan untuk verifikasi deployment.')
+  const config = chainConfig(chainKey)
+  const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
+  const smartAccount = await toCircleSmartAccount({
+    address: address as `0x${string}`,
+    client: client as any,
+    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+  })
+  return smartAccount.isDeployed()
+}
 
 // Deploy the same deterministic MSCA on a destination EVM chain using the
 // original passkey credential. This must run in the browser because only the
@@ -230,6 +264,8 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
   }
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
+    // Keep call/verification gas SDK-estimated; only override Arbitrum's fee cap.
+    ...await userOpFeeOverrides(chainKey),
   })
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
@@ -385,17 +421,19 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   }).extend(recoveryActions)
 
   try {
+    const feeOverrides = await userOpFeeOverrides(chainKey)
     const userOpHash = await bundlerClient.registerRecoveryAddress({
       account: smartAccount as any,
       recoveryAddress: delegateAddress as `0x${string}`,
-      // Gas Station is configured on the bundler client above.
+      // Gas Station remains enabled; only Arbitrum's live fee cap is overridden.
+      // SDK still estimates callGasLimit/verificationGasLimit/preVerificationGas.
+      ...feeOverrides,
     })
     return { success: true, userOpHash }
   } catch (e: any) {
-    // Address mapping may already exist — that's OK
-    if (e?.message?.includes('already exists') || e?.message?.includes('ALREADY_KNOWN')) {
-      return { success: true }
-    }
+    // Circle's SDK handles an existing address mapping internally. Any error
+    // that reaches here means addOwners was not verified; do not report success
+    // without a UserOperation hash that the backend can audit.
     throw e
   }
 }

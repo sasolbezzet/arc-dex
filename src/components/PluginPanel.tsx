@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, signPendingTx } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -166,15 +166,22 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
   const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string) => {
     const deployment = getDeploymentStatus()[chainKey]
-    if (deployment?.status !== 'deployed') throw new Error(`${chainKey}: MSCA belum deployed`)
-    const authorization = await registerDelegateOwner(delegateAddress, chainKey)
+    if (deployment?.status !== 'deployed') throw new Error(`${chainKey}: MSCA belum deployed (deployment status gagal atau belum diverifikasi)`)
+    let authorization
+    try {
+      const deployedOnChain = await isSmartAccountDeployedOnChain(chainKey, walletAddress)
+      if (!deployedOnChain) throw new Error('MSCA belum deployed on-chain; authorization dibatalkan')
+      authorization = await registerDelegateOwner(delegateAddress, chainKey)
+    } catch (error: any) {
+      throw new Error(`${chainKey}: authorization UserOp gagal: ${error?.message || 'unknown error'}`)
+    }
     if (!authorization.success || !authorization.userOpHash) throw new Error(`${chainKey}: authorization UserOp tidak tersedia`)
     const response = await fetch(`${API}/api/session/authorize-chain`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ walletAddress, delegateAddress, chainKey, authorizationUserOpHash: authorization.userOpHash }),
     })
     const data = await response.json()
-    if (!response.ok || !data.success) throw new Error(data.error || `${chainKey}: verifikasi authorization gagal`)
+    if (!response.ok || !data.success) throw new Error(`${chainKey}: ${data.error || 'verifikasi authorization gagal'}`)
     return data
   }
 
@@ -193,8 +200,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     const result = await setupSessionKey(token, eoaAddress)
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
-    const destinationErrors: string[] = []
+    const destinationErrors: string[] = Object.entries(deployment.results)
+      .filter(([chainKey, result]) => chainKey !== 'arc-testnet' && result.status === 'failed')
+      .map(([, result]) => result.error || 'deployment chain gagal')
     for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+      if (deployment.results[chainKey]?.status !== 'deployed') continue
       try {
         await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token)
         chainAuthorizationStatus[chainKey] = 'authorized'
@@ -264,12 +274,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const errors: string[] = []
     if (walletAddress && delegateAddress && token) {
       for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+        // Deployment must be confirmed before authorization; do not turn a
+        // deployment failure into a misleading addOwners error.
+        if (deployment.results[chainKey]?.status !== 'deployed') {
+          errors.push(deployment.results[chainKey]?.error || `${chainKey}: deployment belum berhasil`)
+          continue
+        }
         try { await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token); chainAuthorizationStatus[chainKey] = 'authorized' }
         catch (error: any) { chainAuthorizationStatus[chainKey] = 'failed'; errors.push(error?.message || `${chainKey}: authorization gagal`) }
       }
     }
     setMscaState(prev => ({ ...prev, deployed: true, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
-    if (errors.length) setError(`Deployment berhasil sebagian; authorization belum lengkap: ${errors.join('; ')}`)
+    if (errors.length) setError(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
   }
 
   const prepareBaseSepoliaBridge = async () => {
@@ -880,7 +896,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 const status = mscaState.deploymentStatus?.[key]
                 const color = status?.status === 'deployed' ? '#10b981' : status?.status === 'unsupported' ? '#f59e0b' : status?.status === 'failed' ? '#f87171' : '#64748b'
                 const text = status?.status === 'deployed' ? 'deployed' : status?.status === 'unsupported' ? 'MSCA unsupported' : status?.status === 'failed' ? 'failed' : 'not checked'
-                return <div key={key} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(18,18,26,0.6)', border: `1px solid ${color}33`, fontSize: 10 }}><div style={{ color: '#cbd5e1' }}>{label}</div><div style={{ color }}>{text}</div></div>
+                const authorizationFailed = mscaState.chainAuthorizationStatus?.[key] === 'failed'
+                return <div key={key} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(18,18,26,0.6)', border: `1px solid ${color}33`, fontSize: 10 }}><div style={{ color: '#cbd5e1' }}>{label}</div><div style={{ color }}>{text}</div>{authorizationFailed && <div style={{ color: '#f87171', marginTop: 2 }}>authorization belum selesai</div>}{status?.error && <div title={status.error} style={{ color: '#94a3b8', marginTop: 2, lineHeight: 1.2 }}>{status.error.slice(0, 180)}</div>}</div>
               })}
             </div>
             {Object.values(mscaState.deploymentStatus || {}).some(status => status.status === 'failed') && <button className='btn' style={{ width: '100%', marginBottom: 8, fontSize: 11 }} disabled={busy === 'deployments'} onClick={() => run('deployments', retryMscaDeployments)}>↻ Ulangi deployment chain gagal</button>}
