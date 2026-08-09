@@ -15,7 +15,7 @@ import {
   WebAuthnMode,
   recoveryActions,
 } from '@circle-fin/modular-wallets-core'
-import { createPublicClient, defineChain, http } from 'viem'
+import { createPublicClient, defineChain } from 'viem'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
@@ -88,9 +88,15 @@ const EVM_CHAIN_CONFIG = {
   'arbitrum-sepolia': { slug: 'arbitrumSepolia', chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia-rollup.arbitrum.io/rpc'] } } }) },
 } as const
 
+// Gas Station supports Ethereum Sepolia, but Circle Modular MSCA does not.
+// Keep it in the status matrix so the UI explains the limitation without
+// submitting an invalid UserOperation.
 export const MSCA_DEPLOYMENT_CHAINS = ['arc-testnet', 'ethereum-sepolia', 'base-sepolia', 'arbitrum-sepolia'] as const
 
 function chainConfig(chainKey = 'arc-testnet') {
+  if (chainKey === 'ethereum-sepolia') {
+    throw new Error('MSCA unsupported on Ethereum Sepolia. Circle Gas Station support does not add Modular MSCA support.')
+  }
   const config = EVM_CHAIN_CONFIG[chainKey as keyof typeof EVM_CHAIN_CONFIG]
   if (!config) throw new Error(`Unsupported MSCA chain: ${chainKey}`)
   return config
@@ -103,23 +109,11 @@ function modularTransport(chainKey = 'arc-testnet') {
 // Public clients read chain state and construct the deterministic account.
 // Bundler clients submit ERC-4337 UserOperations and attach Circle Gas Station
 // paymaster data when the Console policy permits the operation.
-// Circle's Arbitrum paymaster can occasionally return a fee cap below the
-// live L2 fee during testnet bursts. Keep gas limits SDK-estimated, but provide
-// a buffered fee envelope so estimation/submission does not use an unusable cap.
-async function userOpFeeOverrides(chainKey: string): Promise<Record<string, bigint>> {
-  if (chainKey !== 'arbitrum-sepolia') return {}
-  const chain = EVM_CHAIN_CONFIG['arbitrum-sepolia'].chain
-  const feeClient = createPublicClient({ chain, transport: http(chain.rpcUrls.default.http[0]) })
-  const [gasPrice, block] = await Promise.all([
-    feeClient.getGasPrice(),
-    feeClient.getBlock({ blockTag: 'latest' }),
-  ])
-  const baseFee = block.baseFeePerGas || gasPrice
-  const maxPriorityFeePerGas = 100_000n
-  const maxFeePerGas = [gasPrice * 2n, baseFee * 2n + maxPriorityFeePerGas]
-    .reduce((max, value) => value > max ? value : max, 0n)
-  return { maxFeePerGas, maxPriorityFeePerGas }
-}
+//
+// Do not inject maxFeePerGas/maxPriorityFeePerGas here. With a sponsored
+// UserOperation, the bundler/paymaster must estimate and sign the complete fee
+// envelope. A client-side fee cap can be stale by the time the paymaster signs
+// and causes Arbitrum precheck failures even when the policy is active.
 
 function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
   return createBundlerClient({
@@ -189,8 +183,7 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   // because the MSCA storage isn't fully initialized yet.
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    // Keep call/verification gas SDK-estimated; only override Arbitrum's fee cap.
-    ...await userOpFeeOverrides('arc-testnet'),
+    // Gas Station/paymaster owns the complete fee envelope.
   })
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
@@ -234,6 +227,9 @@ export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddr
   const state = loadState()
   const address = walletAddress || state.walletAddress
   if (!address || !state.credential) throw new Error('Login Passkey diperlukan untuk verifikasi deployment.')
+  if (chainKey === 'ethereum-sepolia') {
+    throw new Error('MSCA unsupported on Ethereum Sepolia. Use Circle SCA/EOA wallet flow for this network.')
+  }
   const config = chainConfig(chainKey)
   const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
   const smartAccount = await toCircleSmartAccount({
@@ -250,6 +246,9 @@ export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddr
 export async function deploySmartAccountOnChain(chainKey: string): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
   const state = loadState()
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum deploy destination MSCA.')
+  if (chainKey === 'ethereum-sepolia') {
+    throw new Error('MSCA unsupported on Ethereum Sepolia. Use Circle SCA/EOA wallet flow for this network.')
+  }
   const config = chainConfig(chainKey)
   const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
   const smartAccount = await toCircleSmartAccount({
@@ -264,8 +263,7 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
   }
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    // Keep call/verification gas SDK-estimated; only override Arbitrum's fee cap.
-    ...await userOpFeeOverrides(chainKey),
+    // Gas Station/paymaster owns the complete fee envelope.
   })
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
@@ -420,22 +418,12 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     paymaster: true,
   }).extend(recoveryActions)
 
-  try {
-    const feeOverrides = await userOpFeeOverrides(chainKey)
-    const userOpHash = await bundlerClient.registerRecoveryAddress({
-      account: smartAccount as any,
-      recoveryAddress: delegateAddress as `0x${string}`,
-      // Gas Station remains enabled; only Arbitrum's live fee cap is overridden.
-      // SDK still estimates callGasLimit/verificationGasLimit/preVerificationGas.
-      ...feeOverrides,
-    })
-    return { success: true, userOpHash }
-  } catch (e: any) {
-    // Circle's SDK handles an existing address mapping internally. Any error
-    // that reaches here means addOwners was not verified; do not report success
-    // without a UserOperation hash that the backend can audit.
-    throw e
-  }
+  const userOpHash = await bundlerClient.registerRecoveryAddress({
+    account: smartAccount as any,
+    recoveryAddress: delegateAddress as `0x${string}`,
+    // Gas Station/paymaster estimates and signs the complete fee envelope.
+  })
+  return { success: true, userOpHash }
 }
 
 // ── Sign a pending tx with passkey and submit to backend relay ──
@@ -443,7 +431,11 @@ export async function signPendingTx(txId: string, calls: Array<{ to: string; dat
   const state = loadState()
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
 
-  const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+  if (chainKey === 'ethereum-sepolia') {
+    throw new Error('MSCA unsupported on Ethereum Sepolia. Use Circle SCA/EOA wallet flow for this network.')
+  }
+  const config = chainConfig(chainKey)
+  const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
   const smartAccount = await toCircleSmartAccount({
     address: state.walletAddress as `0x${string}`,
     client: client as any,
@@ -457,9 +449,12 @@ export async function signPendingTx(txId: string, calls: Array<{ to: string; dat
     value: typeof c.value === 'string' ? BigInt(c.value) : c.value,
   }))
 
-  // Build and sign UserOp
+  // Build and sign the UserOp through the paymaster-aware bundler client.
+  // Using a plain public client here omits Circle Gas Station paymaster data,
+  // which makes the relayed Arbitrum UserOp fall back to native ETH funding.
+  const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
   const { signUserOperation } = await import('viem/account-abstraction')
-  const signedUserOp = await signUserOperation(client as any, {
+  const signedUserOp = await signUserOperation(bundlerClient as any, {
     account: smartAccount as any,
     calls: normalizedCalls,
   })
