@@ -420,7 +420,18 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
 
   const walletAddress = smartAccount.address as string
 
-  saveState({ walletAddress, credential, sessionActive: state.sessionActive || false })
+  // Preserve locally known deployment/delegate metadata across passkey login.
+  // Dropping it here makes a valid existing MSCA appear inactive until a full
+  // setup flow runs again, and can incorrectly make deployment look missing.
+  saveState({
+    ...state,
+    walletAddress,
+    credential,
+    sessionActive: state.sessionActive || false,
+    deployed: state.deployed,
+    delegateAddress: state.delegateAddress,
+    deploymentStatus: state.deploymentStatus,
+  })
 
   return { walletAddress, credential }
 }
@@ -447,6 +458,9 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string)
   })
   const reserved = await reserveRes.json()
   if (!reserveRes.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
+  if (reserved.hashless) {
+    throw new Error('Authorization sebelumnya belum memiliki hash UserOperation. Rekonsiliasi Circle/on-chain secara manual sebelum mencoba lagi; addOwners tidak diulang otomatis.')
+  }
   const delegateAddress = reserved.delegateAddress
 
   // The passkey authorizes exactly this reserved address on-chain.
@@ -542,12 +556,21 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
 
   const saved = loadState().deploymentStatus?.[chainKey]
   const sameDelegate = saved?.authorizationDelegateAddress?.toLowerCase() === delegateAddress.toLowerCase()
-  if (sameDelegate && saved?.authorizationStatus === 'pending' && !saved.authorizationUserOpHash) {
-    throw new Error(`${chainKey}: authorization sudah dimulai tetapi hash UserOperation hilang; retry diblokir untuk mencegah duplicate addOwners.`)
-  }
+  // Never reuse a prior delegate's UserOperation as proof for a new delegate.
+  // The persisted attempt is relevant only when its delegate is an exact match.
+  const savedForDelegate = sameDelegate ? saved : undefined
   if (sameDelegate && saved?.authorizationUserOpHash) {
     const outcome = await userOpOutcome(client, saved.authorizationUserOpHash, saved.updatedAt)
-    if (outcome === 'success') return { success: true, userOpHash: saved.authorizationUserOpHash }
+    if (outcome === 'success') {
+      // A successful on-chain addOwners is authoritative. Do not require a
+      // second Circle mapping read to recognize an already completed owner
+      // authorization.
+      const current = loadState().deploymentStatus?.[chainKey]
+      if (current?.authorizationStatus !== 'authorized') {
+        saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'authorized', authorizationError: undefined, updatedAt: Date.now() })
+      }
+      return { success: true, userOpHash: saved.authorizationUserOpHash }
+    }
     if (outcome === 'pending') throw new Error(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`)
   }
   const feeOverrides = await gasStationFeeOverrides(client, chainKey)
@@ -563,18 +586,25 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     // read. A transient/unknown RPC error is not proof that addOwners is safe.
   }
 
-  const savedOutcome = saved?.authorizationUserOpHash ? await userOpOutcome(client, saved.authorizationUserOpHash, saved.updatedAt) : 'unknown'
-  if (saved?.authorizationUserOpHash && savedOutcome === 'unknown') {
+  const savedOutcome = savedForDelegate?.authorizationUserOpHash ? await userOpOutcome(client, savedForDelegate.authorizationUserOpHash, savedForDelegate.updatedAt) : 'unknown'
+  if (savedForDelegate?.authorizationUserOpHash && savedOutcome === 'unknown') {
     throw new Error(`${chainKey}: authorization UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak mengulang addOwners.`)
+  }
+  // A hashless marker is recoverable only when Circle now authoritatively says
+  // this delegate has no mapping. If the mapping exists or the read is still
+  // unavailable, the earlier request remains ambiguous and we fail closed.
+  const hashlessAuthorizationMarker = Boolean(savedForDelegate?.authorizationStatus && ['pending', 'authorized', 'failed'].includes(savedForDelegate.authorizationStatus) && !savedForDelegate.authorizationUserOpHash)
+  if (hashlessAuthorizationMarker) {
+    throw new Error(`${chainKey}: status authorization tersimpan tanpa hash UserOperation; lakukan login passkey ulang untuk membuat attempt baru dengan binding yang jelas.`)
   }
   const retryDecision = authorizationRetryDecision({
     mappingKnown,
     mappingExists,
     previousOutcome: savedOutcome,
-    previousAttempt: Boolean(saved?.authorizationUserOpHash),
+    previousAttempt: Boolean(savedForDelegate?.authorizationUserOpHash),
   })
-  if (retryDecision === 'unavailable') throw new Error(`${chainKey}: Circle mapping state tidak dapat diverifikasi; authorization dibatalkan agar tidak mengulang addOwners yang mungkin sudah berhasil.`)
-  if (retryDecision === 'already_authorized') return { success: true, userOpHash: saved!.authorizationUserOpHash }
+  if (retryDecision === 'unavailable') throw new Error(`${chainKey}: Circle mapping state tidak dapat diverifikasi untuk authorization yang sudah pernah dimulai; retry diblokir agar tidak mengulang addOwners.`)
+  if (retryDecision === 'already_authorized') return { success: true, userOpHash: savedForDelegate!.authorizationUserOpHash }
   if (retryDecision === 'pending') throw new Error(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`)
   if (retryDecision === 'unreconciled') throw new Error(`${chainKey}: delegate mapping sudah ada tetapi owner state belum dapat direkonsiliasi; authorization retry diblokir untuk mencegah duplicate addOwners.`)
 

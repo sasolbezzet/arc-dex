@@ -54,9 +54,12 @@ export async function requestPaymasterWithFees<T extends Record<string, any>>(
 }
 
 /**
- * Circle mapping only proves mapping initialization; it does not prove that
- * addOwners completed. Retry an existing mapping only after an explicit failed
- * prior UserOperation, never after an unknown result.
+ * Circle mapping proves mapping initialization, but it is a separate API read
+ * from the on-chain addOwners UserOperation. The SDK's registerRecoveryAddress
+ * path is itself idempotent: it creates the mapping and treats ALREADY_KNOWN as
+ * success before submitting addOwners. Therefore a fresh authorization may use
+ * that SDK path even when the optional mapping read is temporarily unavailable.
+ * Once an authorization attempt exists, an unknown result must remain blocked.
  */
 export function authorizationRetryDecision({
   mappingKnown,
@@ -69,11 +72,21 @@ export function authorizationRetryDecision({
   previousOutcome: AuthorizationOutcome
   previousAttempt?: boolean
 }): 'submit' | 'already_authorized' | 'pending' | 'unreconciled' | 'unavailable' {
-  if (!mappingKnown) return 'unavailable'
+  // With no prior attempt, let the SDK perform its idempotent
+  // createAddressMapping/registerRecoveryAddress flow. Do not make a missing
+  // read endpoint a reason to strand a brand-new authorization.
+  if (!mappingKnown && !previousAttempt) return 'submit'
   if (previousOutcome === 'success') return 'already_authorized'
   if (previousOutcome === 'pending') return 'pending'
   if (previousAttempt && previousOutcome === 'unknown') return 'unreconciled'
-  if (mappingExists) return previousOutcome === 'failed' ? 'submit' : 'unreconciled'
+  // A failed UserOperation is atomic on-chain; the SDK can safely retry its
+  // idempotent mapping step even if the mapping read is unavailable.
+  if (previousOutcome === 'failed') return 'submit'
+  // With no prior attempt, the SDK owns the idempotent mapping initialization.
+  // A missing optional mapping read must not strand a fresh authorization.
+  if (!mappingKnown && !previousAttempt) return 'submit'
+  if (!mappingKnown) return 'unavailable'
+  if (mappingExists) return 'unreconciled'
   return 'submit'
 }
 

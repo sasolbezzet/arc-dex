@@ -79,8 +79,22 @@ describe('MSCA policy guards', () => {
     expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: false, previousOutcome: 'unknown', previousAttempt: true })).toBe('unreconciled')
   })
 
-  it('fails closed when Circle mapping cannot be read', () => {
-    expect(authorizationRetryDecision({ mappingKnown: false, mappingExists: false, previousOutcome: 'unknown' })).toBe('unavailable')
+  it('allows a fresh SDK authorization when Circle mapping read is temporarily unavailable', () => {
+    expect(authorizationRetryDecision({ mappingKnown: false, mappingExists: false, previousOutcome: 'unknown' })).toBe('submit')
+  })
+
+  it('fails closed when a prior authorization has an unknown result and Circle mapping cannot be read', () => {
+    expect(authorizationRetryDecision({ mappingKnown: false, mappingExists: false, previousOutcome: 'unknown', previousAttempt: true })).toBe('unreconciled')
+  })
+
+  it('allows retry after an explicitly failed UserOperation even when mapping read is unavailable', () => {
+    expect(authorizationRetryDecision({ mappingKnown: false, mappingExists: false, previousOutcome: 'failed', previousAttempt: true })).toBe('submit')
+  })
+
+  it('does not reuse a prior successful operation as a policy decision for a new delegate', () => {
+    // Delegate binding is enforced by registerDelegateOwner before this pure
+    // policy helper is called; this documents the required decision input.
+    expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: false, previousOutcome: 'unknown', previousAttempt: true })).toBe('unreconciled')
   })
 
   it('recognizes a successful prior UserOperation as already authorized', () => {

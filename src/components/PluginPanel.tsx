@@ -255,21 +255,17 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     await autoActivateSession(walletAddress, address ?? undefined)
   }
   const setupSession = async () => {
-    if (!sessionToken) {
-      // Automation setup must authenticate the selected MSCA with passkey;
-      // an EOA SIWE token is not sufficient to authorize a delegate signer.
-      const selectedMsca = getMscaState().walletAddress
-      if (!selectedMsca) throw new Error('Agent Wallet MSCA belum dibuat')
-      const token = await passkeySessionToken(selectedMsca)
-      if (!token) throw new Error('Login vault gagal. Tanda tangan wallet diperlukan.')
-      setSessionToken(token)
-      localStorage.setItem('arx_vault_token', token)
-      const result = await setupSessionKey(token, address)
-      setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: prev.deployed }))
-      return
-    }
-    const result = await setupSessionKey(sessionToken, address)
-    setMscaState(prev => ({ ...prev, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: prev.deployed }))
+    // Always mint a token bound to the selected MSCA. The ordinary SIWE token
+    // belongs to the connected EOA and must never be reused for MSCA setup.
+    const selectedMsca = getMscaState().walletAddress || mscaState.walletAddress
+    if (!selectedMsca) throw new Error('Agent Wallet MSCA belum dibuat')
+    const token = await passkeySessionToken(selectedMsca)
+    if (!token) throw new Error('Login vault gagal. Tanda tangan wallet diperlukan.')
+    const result = await setupSessionKey(token, address)
+    setMscaState(prev => ({ ...prev, walletAddress: selectedMsca, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: prev.deployed }))
+    // Confirm the backend source of truth with the same MSCA-bound token before
+    // leaving the UI in an optimistic active state.
+    await refreshSessionStatus(token)
   }
   const revokeSession = async () => {
     if (!sessionToken) throw new Error('Login vault gagal')
@@ -450,10 +446,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Poll backend session-key status so the indicator reflects the server truth,
   // not just the last local saveState (localStorage can be stale after a failed
   // setup or a backend-side revoke).
-  const refreshSessionStatus = async () => {
-    if (!sessionToken) return
+  const refreshSessionStatus = async (tokenOverride?: string) => {
+    const token = tokenOverride || sessionToken
+    if (!token) return
     try {
-      const r = await fetch(`${API}/api/session/status`, { headers: authHeaders() })
+      const r = await fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${token}` } })
       if (r.status === 401) { clearStaleSession(); return }
       const data = await r.json()
       const info = data?.session || null
@@ -932,6 +929,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                   ? <span style={{ color: '#4ade80' }}>● Aktif — transfer dalam limit</span>
                   : <span style={{ color: '#f59e0b' }}>○ Nonaktif</span>
                 } />
+                {!mscaState.sessionActive && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
+                      Authorization sebelumnya belum selesai. Tekan ulang dengan passkey untuk membuat reservation signer baru yang aman.
+                    </div>
+                    <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'session'} onClick={() => run('session', setupSession)}>
+                      🔑 Aktifkan ulang Session Key
+                    </button>
+                  </div>
+                )}
               </>
             ) : (
               <div style={{ marginTop: 8 }}>
