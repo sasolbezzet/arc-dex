@@ -4,6 +4,10 @@ import {
   authorizationRetryDecision,
   isSuccessfulUserOpReceipt,
   normalizeArbitrumFees,
+  hasCompleteFeeEnvelope,
+  removePaymasterFeeFields,
+  requestPaymasterWithFees,
+  withUserOperationFees,
 } from './mscaPolicy'
 
 describe('MSCA policy guards', () => {
@@ -16,6 +20,45 @@ describe('MSCA policy guards', () => {
   it('preserves a valid Circle quote while enforcing max >= priority', () => {
     const fees = normalizeArbitrumFees(5_000_000n, 10_000_000n)
     expect(fees).toEqual({ maxPriorityFeePerGas: 5_000_000n, maxFeePerGas: 10_000_000n })
+  })
+
+  it('requires a complete non-zero fee envelope', () => {
+    expect(hasCompleteFeeEnvelope({ maxPriorityFeePerGas: 2_000_000n, maxFeePerGas: 42_000_000n })).toBe(true)
+    expect(hasCompleteFeeEnvelope({ maxPriorityFeePerGas: 0n, maxFeePerGas: 42_000_000n })).toBe(false)
+    expect(hasCompleteFeeEnvelope({})).toBe(false)
+  })
+
+  it('passes non-zero fees to Circle before paymaster data is returned', async () => {
+    let observed: any
+    const result = await requestPaymasterWithFees({ sender: '0xabc', maxPriorityFeePerGas: 0n, maxFeePerGas: 0n }, {
+      maxPriorityFeePerGas: 2_000_000n,
+      maxFeePerGas: 42_000_000n,
+    }, async request => {
+      observed = request
+      return { paymaster: '0x1234', paymasterData: '0xab', maxPriorityFeePerGas: 0n, maxFeePerGas: 0n }
+    })
+    expect(observed.maxPriorityFeePerGas).toBe(2_000_000n)
+    expect(observed.maxFeePerGas).toBe(42_000_000n)
+    expect(result).toEqual({ paymaster: '0x1234', paymasterData: '0xab' })
+  })
+
+  it('rejects a paymaster request when the fee envelope is incomplete', async () => {
+    await expect(requestPaymasterWithFees({}, { maxPriorityFeePerGas: 0n }, async () => ({}))).rejects.toThrow('Complete non-zero')
+  })
+
+  it('injects validated fees before the paymaster request', () => {
+    const request = withUserOperationFees({ sender: '0xabc', paymaster: undefined }, {
+      maxPriorityFeePerGas: 2_000_000n,
+      maxFeePerGas: 42_000_000n,
+    })
+    expect(request.maxPriorityFeePerGas).toBe(2_000_000n)
+    expect(request.maxFeePerGas).toBe(42_000_000n)
+    expect(request.sender).toBe('0xabc')
+  })
+
+  it('does not let paymaster response fee fields overwrite the signed request', () => {
+    const response = removePaymasterFeeFields({ paymaster: '0x1234', paymasterData: '0xab', maxPriorityFeePerGas: 0n, maxFeePerGas: 0n })
+    expect(response).toEqual({ paymaster: '0x1234', paymasterData: '0xab' })
   })
 
   it('raises max fee above the live network gas price when the quote is stale', () => {

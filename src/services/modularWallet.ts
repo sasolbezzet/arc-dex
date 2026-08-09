@@ -18,8 +18,8 @@ import {
   modularWalletActions,
 } from '@circle-fin/modular-wallets-core'
 import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
-import { isSuccessfulUserOpReceipt, normalizeArbitrumFees, parseFeeWei, authorizationRetryDecision } from './mscaPolicy'
-import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
+import { hasCompleteFeeEnvelope, isSuccessfulUserOpReceipt, normalizeArbitrumFees, parseFeeWei, requestPaymasterWithFees, authorizationRetryDecision } from './mscaPolicy'
+import { createBundlerClient, getPaymasterData, getPaymasterStubData, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
@@ -183,6 +183,28 @@ function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
   })
 }
 
+// Circle's paymaster response on Arbitrum Sepolia can include a zero tip.
+// Inject the validated fee envelope into the parameters before Circle signs the
+// sponsorship payload. Remove only fee fields from the response so viem keeps
+// the request fees while retaining paymaster/paymasterData validity fields.
+function paymasterWithFeeOverrides(chainKey: string, bundlerClient: any, fees: Partial<{ maxPriorityFeePerGas: bigint; maxFeePerGas: bigint }>) {
+  // Only Arbitrum has exhibited the zero-tip response. Keep Arc/Base on the
+  // official Circle paymaster path and apply the adapter narrowly to Arbitrum.
+  if (chainKey !== 'arbitrum-sepolia' || !hasCompleteFeeEnvelope(fees)) return true
+  return {
+    getPaymasterStubData: (parameters: any) => requestPaymasterWithFees(
+      parameters,
+      fees,
+      request => getPaymasterStubData(bundlerClient as any, request) as Promise<any>,
+    ),
+    getPaymasterData: (parameters: any) => requestPaymasterWithFees(
+      parameters,
+      fees,
+      request => getPaymasterData(bundlerClient as any, request) as Promise<any>,
+    ),
+  }
+}
+
 // ── Register passkey + create MSCA ──
 export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string } }> {
   const pkTransport = passkeyTransport()
@@ -250,7 +272,7 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   const feeOverrides = await gasStationFeeOverrides(client, 'arc-testnet')
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    paymaster: true,
+    paymaster: paymasterWithFeeOverrides('arc-testnet', bundlerClient, feeOverrides),
     ...feeOverrides,
   })
   const previousDeployment = loadState().deploymentStatus?.['arc-testnet']
@@ -359,7 +381,7 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
   const feeOverrides = await gasStationFeeOverrides(client, chainKey)
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    paymaster: true,
+    paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
     ...feeOverrides,
   })
   const previousDeployment = loadState().deploymentStatus?.[chainKey]
@@ -581,12 +603,17 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
       ], outputs: [],
     }] as const
     const callData = encodeFunctionData({ abi: addOwnersAbi, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
-    userOpHash = await sendUserOperation(bundlerClient as any, { account: smartAccount as any, callData, paymaster: true, ...feeOverrides })
+    userOpHash = await sendUserOperation(bundlerClient as any, {
+      account: smartAccount as any,
+      callData,
+      paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
+      ...feeOverrides,
+    })
   } else {
     userOpHash = await bundlerClient.registerRecoveryAddress({
       account: smartAccount as any,
       recoveryAddress: delegateAddress as `0x${string}`,
-      paymaster: true,
+      paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
       ...feeOverrides,
     })
   }
@@ -636,10 +663,13 @@ export async function signPendingTx(txId: string, calls: Array<{ to: string; dat
   // Using a plain public client here omits Circle Gas Station paymaster data,
   // which makes the relayed Arbitrum UserOp fall back to native ETH funding.
   const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
+  const feeOverrides = await gasStationFeeOverrides(client, chainKey)
   const { signUserOperation } = await import('viem/account-abstraction')
   const signedUserOp = await signUserOperation(bundlerClient as any, {
     account: smartAccount as any,
     calls: normalizedCalls,
+    paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
+    ...feeOverrides,
   })
 
   // Submit signed UserOp to backend relay
