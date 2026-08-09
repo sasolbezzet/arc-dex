@@ -139,7 +139,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
-  const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean; deployed?: boolean; deploymentStatus?: Record<string, { status: 'deployed' | 'failed' | 'unsupported'; error?: string; userOpHash?: string; updatedAt: number }>; chainAuthorizationStatus?: Record<string, 'authorized' | 'failed'> }>(() => {
+  const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean; deployed?: boolean; deploymentStatus?: Record<string, { status: 'deployed' | 'failed' | 'unsupported'; error?: string; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationError?: string; updatedAt: number }>; chainAuthorizationStatus?: Record<string, 'authorized' | 'failed'> }>(() => {
     const s = getMscaState()
     return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false, deployed: s.deployed, deploymentStatus: s.deploymentStatus, chainAuthorizationStatus: undefined }
   })

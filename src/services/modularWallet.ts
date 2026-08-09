@@ -14,8 +14,11 @@ import {
   toWebAuthnCredential,
   WebAuthnMode,
   recoveryActions,
+  getUserOperationGasPrice,
+  modularWalletActions,
 } from '@circle-fin/modular-wallets-core'
-import { createPublicClient, defineChain } from 'viem'
+import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
+import { isSuccessfulUserOpReceipt, normalizeArbitrumFees, parseFeeWei, authorizationRetryDecision } from './mscaPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
@@ -51,7 +54,7 @@ declare global { interface Window { __circleProxyInstalled?: boolean } }
 // ── Persisted state ──
 const STORAGE_KEY = 'arx_msca_state'
 
-type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; error?: string; updatedAt: number }
+type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationError?: string; error?: string; updatedAt: number }
 
 interface MscaState {
   walletAddress: string
@@ -110,10 +113,65 @@ function modularTransport(chainKey = 'arc-testnet') {
 // Bundler clients submit ERC-4337 UserOperations and attach Circle Gas Station
 // paymaster data when the Console policy permits the operation.
 //
-// Do not inject maxFeePerGas/maxPriorityFeePerGas here. With a sponsored
-// UserOperation, the bundler/paymaster must estimate and sign the complete fee
-// envelope. A client-side fee cap can be stale by the time the paymaster signs
-// and causes Arbitrum precheck failures even when the policy is active.
+// Circle's fee endpoint is the source of truth for sponsored UserOperations.
+// Some Arbitrum Sepolia responses contain a zero priority fee, which the
+// bundler rejects at precheck even though the paymaster policy is enabled.
+async function gasStationFeeOverrides(client: any, chainKey = 'arc-testnet') {
+  try {
+    const prices = await getUserOperationGasPrice(client as any) as any
+    const level = prices?.high || prices?.medium || prices?.low || {}
+    const priority = parseFeeWei(level.maxPriorityFeePerGas)
+    const max = parseFeeWei(level.maxFeePerGas)
+    if (chainKey !== 'arbitrum-sepolia') {
+      // Let Circle's estimator own the envelope on chains without the observed
+      // Arbitrum zero-tip precheck. Only forward a complete non-zero pair.
+      return priority > 0n && max >= priority
+        ? { maxPriorityFeePerGas: priority, maxFeePerGas: max }
+        : {}
+    }
+    let networkGasPrice = 0n
+    try {
+      networkGasPrice = parseFeeWei(await client.request({ method: 'eth_gasPrice' }))
+    } catch { /* Circle quote remains usable if public gasPrice is unavailable. */ }
+    return normalizeArbitrumFees(priority, max, networkGasPrice)
+  } catch {
+    if (chainKey !== 'arbitrum-sepolia') return {}
+    let networkGasPrice = 0n
+    try { networkGasPrice = parseFeeWei(await client.request({ method: 'eth_gasPrice' })) } catch { /* use safe floor */ }
+    return normalizeArbitrumFees(0n, 0n, networkGasPrice)
+  }
+}
+
+async function userOpOutcome(client: any, userOpHash?: string, submittedAt?: number) {
+  if (!userOpHash) return 'unknown' as const
+  try {
+    const receipt = await client.request({ method: 'eth_getUserOperationReceipt', params: [userOpHash] })
+    if (!receipt) {
+      // A stale null response must not block retries forever. We still fail
+      // closed while the bounded reconciliation window is open.
+      return submittedAt && Date.now() - submittedAt > 2 * 60 * 1000 ? 'unknown' as const : 'pending' as const
+    }
+    return isSuccessfulUserOpReceipt(receipt) ? 'success' as const : 'failed' as const
+  } catch {
+    return 'unknown' as const
+  }
+}
+
+function mergeAuthorizationStatus(chainKey: string, userOpHash: string, delegateAddress: string) {
+  const state = loadState()
+  const previous = state.deploymentStatus?.[chainKey]
+  // Authorization state must never downgrade a confirmed deployment to failed.
+  // Keep the two concerns distinguishable in the same backward-compatible
+  // per-chain record used by the existing UI.
+  saveDeploymentStatus(chainKey, {
+    ...(previous || { status: 'deployed' }),
+    authorizationUserOpHash: userOpHash,
+    authorizationDelegateAddress: delegateAddress,
+    authorizationStatus: 'pending',
+    authorizationError: undefined,
+    updatedAt: Date.now(),
+  })
+}
 
 function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
   return createBundlerClient({
@@ -171,9 +229,17 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   })
   const bundlerClient = bundlerClientFor('arc-testnet', smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
-    saveDeploymentStatus('arc-testnet', { status: 'deployed', updatedAt: Date.now() })
-    saveState({ ...state, deployed: true })
+    const previous = loadState().deploymentStatus?.['arc-testnet']
+    saveDeploymentStatus('arc-testnet', { ...(previous || {}), status: 'deployed', updatedAt: Date.now() })
+    saveState({ ...loadState(), deployed: true })
     return { walletAddress: state.walletAddress, deployed: true }
+  }
+
+  const previousStatus = loadState().deploymentStatus?.['arc-testnet']
+  const previousHash = previousStatus?.userOpHash
+  const previousOutcome = await userOpOutcome(client, previousHash, previousStatus?.updatedAt)
+  if (previousHash && (previousOutcome === 'pending' || previousOutcome === 'unknown')) {
+    throw new Error('arc-testnet: deployment UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak memakai nonce yang sama.')
   }
 
   // Deployment is the first UserOperation. It requires an intentional passkey
@@ -181,21 +247,33 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   // NOTE: addOwners must be a SEPARATE UserOp after deployment (registerDelegateOwner).
   // Calling addOwners in the same UserOp as deploy causes "execution reverted"
   // because the MSCA storage isn't fully initialized yet.
+  const feeOverrides = await gasStationFeeOverrides(client, 'arc-testnet')
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    // Gas Station/paymaster owns the complete fee envelope.
+    paymaster: true,
+    ...feeOverrides,
   })
+  const previousDeployment = loadState().deploymentStatus?.['arc-testnet']
+  saveDeploymentStatus('arc-testnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() })
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
-  if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
+  if (!isSuccessfulUserOpReceipt(receipt) || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
 
-  saveDeploymentStatus('arc-testnet', { status: 'deployed', userOpHash, updatedAt: Date.now() })
+  const latestDeployment = loadState().deploymentStatus?.['arc-testnet']
+  saveDeploymentStatus('arc-testnet', { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() })
   saveState({ ...loadState(), deployed: true })
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
 
 function saveDeploymentStatus(chainKey: string, status: DeploymentStatus) {
   const state = loadState()
-  saveState({ ...state, deploymentStatus: { ...(state.deploymentStatus || {}), [chainKey]: status } })
+  const previous = state.deploymentStatus?.[chainKey]
+  saveState({
+    ...state,
+    deploymentStatus: {
+      ...(state.deploymentStatus || {}),
+      [chainKey]: { ...(previous || {}), ...status },
+    },
+  })
 }
 
 export async function deployAllSmartAccounts(): Promise<{ walletAddress: string; results: Record<string, DeploymentStatus> }> {
@@ -212,7 +290,13 @@ export async function deployAllSmartAccounts(): Promise<{ walletAddress: string;
       const result: DeploymentStatus = { status: 'deployed', ...(loadState().deploymentStatus?.[chainKey] || {}), updatedAt: Date.now() }
       results[chainKey] = result; saveDeploymentStatus(chainKey, result)
     } catch (error: any) {
-      const result: DeploymentStatus = { status: 'failed', error: `${chainKey}: deployment failed: ${error?.message || 'unknown error'}`, updatedAt: Date.now() }
+      const previous = loadState().deploymentStatus?.[chainKey]
+      const result: DeploymentStatus = {
+        ...(previous || {}),
+        status: 'failed',
+        error: `${chainKey}: deployment failed: ${error?.message || 'unknown error'}`,
+        updatedAt: Date.now(),
+      }
       results[chainKey] = result; saveDeploymentStatus(chainKey, result)
     }
   }
@@ -258,16 +342,32 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
   })
   const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
-    saveDeploymentStatus(chainKey, { status: 'deployed', updatedAt: Date.now() })
+    const previous = loadState().deploymentStatus?.[chainKey]
+    saveDeploymentStatus(chainKey, { ...(previous || {}), status: 'deployed', updatedAt: Date.now() })
     return { walletAddress: state.walletAddress, deployed: true }
   }
+  const previousStatus = loadState().deploymentStatus?.[chainKey]
+  const previousHash = previousStatus?.userOpHash
+  const previousOutcome = await userOpOutcome(client, previousHash, previousStatus?.updatedAt)
+  if (previousHash && (previousOutcome === 'pending' || previousOutcome === 'unknown')) {
+    throw new Error(`${chainKey}: deployment UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak memakai nonce yang sama.`)
+  }
+  if (previousOutcome === 'success' && await smartAccount.isDeployed()) {
+    saveDeploymentStatus(chainKey, { ...(previousStatus as DeploymentStatus), status: 'deployed', userOpHash: previousHash, updatedAt: Date.now() })
+    return { walletAddress: state.walletAddress, deployed: true, userOpHash: previousHash }
+  }
+  const feeOverrides = await gasStationFeeOverrides(client, chainKey)
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    // Gas Station/paymaster owns the complete fee envelope.
+    paymaster: true,
+    ...feeOverrides,
   })
+  const previousDeployment = loadState().deploymentStatus?.[chainKey]
+  saveDeploymentStatus(chainKey, { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() })
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
-  if (!receipt.success || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
-  saveDeploymentStatus(chainKey, { status: 'deployed', userOpHash, updatedAt: Date.now() })
+  if (!isSuccessfulUserOpReceipt(receipt) || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
+  const latestDeployment = loadState().deploymentStatus?.[chainKey]
+  saveDeploymentStatus(chainKey, { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() })
   const latest = loadState()
   saveState({ ...latest, deployed: latest.deployed ?? true })
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
@@ -418,12 +518,95 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     paymaster: true,
   }).extend(recoveryActions)
 
-  const userOpHash = await bundlerClient.registerRecoveryAddress({
-    account: smartAccount as any,
-    recoveryAddress: delegateAddress as `0x${string}`,
-    // Gas Station/paymaster estimates and signs the complete fee envelope.
+  const saved = loadState().deploymentStatus?.[chainKey]
+  const sameDelegate = saved?.authorizationDelegateAddress?.toLowerCase() === delegateAddress.toLowerCase()
+  if (sameDelegate && saved?.authorizationStatus === 'pending' && !saved.authorizationUserOpHash) {
+    throw new Error(`${chainKey}: authorization sudah dimulai tetapi hash UserOperation hilang; retry diblokir untuk mencegah duplicate addOwners.`)
+  }
+  if (sameDelegate && saved?.authorizationUserOpHash) {
+    const outcome = await userOpOutcome(client, saved.authorizationUserOpHash, saved.updatedAt)
+    if (outcome === 'success') return { success: true, userOpHash: saved.authorizationUserOpHash }
+    if (outcome === 'pending') throw new Error(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`)
+  }
+  const feeOverrides = await gasStationFeeOverrides(client, chainKey)
+  const mappingClient = client.extend(modularWalletActions as any) as any
+  let mappingKnown = false
+  let mappingExists = false
+  try {
+    const mappings = await mappingClient.getAddressMapping({ owner: { type: 'EOAOWNER', identifier: { address: delegateAddress } } })
+    mappingKnown = true
+    mappingExists = (Array.isArray(mappings) ? mappings : []).some((mapping: any) => String(mapping.walletAddress || '').toLowerCase() === state.walletAddress!.toLowerCase())
+  } catch {
+    // Do not submit an owner mutation when Circle cannot answer the mapping
+    // read. A transient/unknown RPC error is not proof that addOwners is safe.
+  }
+
+  const savedOutcome = saved?.authorizationUserOpHash ? await userOpOutcome(client, saved.authorizationUserOpHash, saved.updatedAt) : 'unknown'
+  if (saved?.authorizationUserOpHash && savedOutcome === 'unknown') {
+    throw new Error(`${chainKey}: authorization UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak mengulang addOwners.`)
+  }
+  const retryDecision = authorizationRetryDecision({
+    mappingKnown,
+    mappingExists,
+    previousOutcome: savedOutcome,
+    previousAttempt: Boolean(saved?.authorizationUserOpHash),
   })
-  return { success: true, userOpHash }
+  if (retryDecision === 'unavailable') throw new Error(`${chainKey}: Circle mapping state tidak dapat diverifikasi; authorization dibatalkan agar tidak mengulang addOwners yang mungkin sudah berhasil.`)
+  if (retryDecision === 'already_authorized') return { success: true, userOpHash: saved!.authorizationUserOpHash }
+  if (retryDecision === 'pending') throw new Error(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`)
+  if (retryDecision === 'unreconciled') throw new Error(`${chainKey}: delegate mapping sudah ada tetapi owner state belum dapat direkonsiliasi; authorization retry diblokir untuk mencegah duplicate addOwners.`)
+
+  // Circle mapping has been read successfully and the retry decision is safe.
+  // Persist the attempt marker immediately before mutation so a browser close
+  // after this point fails closed instead of submitting duplicate addOwners.
+  saveDeploymentStatus(chainKey, {
+    ...(loadState().deploymentStatus?.[chainKey] || { status: 'deployed' }),
+    authorizationDelegateAddress: delegateAddress,
+    authorizationStatus: 'pending',
+    updatedAt: Date.now(),
+  })
+
+  let userOpHash: string
+  if (mappingExists) {
+    // The SDK action calls circle_createAddressMapping before addOwners. When
+    // the mapping already exists, bypass that mutation and submit only the
+    // exact addOwners call; this avoids the Base retry revert caused by replaying
+    // the mapping step while retaining the same Circle paymaster flow.
+    const addOwnersAbi = [{
+      type: 'function', name: 'addOwners', stateMutability: 'nonpayable',
+      inputs: [
+        { name: 'ownersToAdd', type: 'address[]' }, { name: 'weightsToAdd', type: 'uint256[]' },
+        { name: 'publicKeyOwnersToAdd', type: 'tuple[]', components: [{ name: 'x', type: 'uint256' }, { name: 'y', type: 'uint256' }] },
+        { name: 'publicKeyWeightsToAdd', type: 'uint256[]' }, { name: 'newThresholdWeight', type: 'uint256' },
+      ], outputs: [],
+    }] as const
+    const callData = encodeFunctionData({ abi: addOwnersAbi, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
+    userOpHash = await sendUserOperation(bundlerClient as any, { account: smartAccount as any, callData, paymaster: true, ...feeOverrides })
+  } else {
+    userOpHash = await bundlerClient.registerRecoveryAddress({
+      account: smartAccount as any,
+      recoveryAddress: delegateAddress as `0x${string}`,
+      paymaster: true,
+      ...feeOverrides,
+    })
+  }
+  // Persist before waiting so a browser close cannot cause a duplicate nonce
+  // on the next retry. The backend will only activate the delegate after it
+  // independently verifies a successful receipt and exact addOwners calldata.
+  mergeAuthorizationStatus(chainKey, userOpHash, delegateAddress)
+  try {
+    const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
+    if (!isSuccessfulUserOpReceipt(receipt)) {
+      throw new Error(`${chainKey}: delegate authorization UserOperation reverted`)
+    }
+    const current = loadState().deploymentStatus?.[chainKey]
+    if (current) saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'authorized', authorizationError: undefined, updatedAt: Date.now() })
+    return { success: true, userOpHash }
+  } catch (error: any) {
+    const current = loadState().deploymentStatus?.[chainKey]
+    if (current) saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'failed', authorizationError: error?.message || 'authorization failed', updatedAt: Date.now() })
+    throw error
+  }
 }
 
 // ── Sign a pending tx with passkey and submit to backend relay ──
