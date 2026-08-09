@@ -394,12 +394,17 @@ export async function connectWalletConnect(): Promise<string | null> {
 }
 
 export async function disconnectWalletConnect(): Promise<void> {
-  try {
-    if (wcProvider) {
-      await wcProvider.disconnect()
-    }
-  } catch { /* ignore */ }
+  // Clear the singleton before awaiting the SDK. A dead relay can leave
+  // disconnect() pending; retries must still receive a fresh provider rather
+  // than reusing that broken instance.
+  const provider = wcProvider
   resetProvider()
+  try {
+    await Promise.race([
+      Promise.resolve(provider?.disconnect?.()),
+      new Promise(resolve => setTimeout(resolve, 2_000)),
+    ])
+  } catch { /* ignore */ }
 }
 
 export function getWalletConnectProviderSync(): any | null {

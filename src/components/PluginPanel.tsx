@@ -32,6 +32,18 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
+// WalletConnect disconnect can itself wait on a dead relay. Never await that
+// cleanup before updating the UI: otherwise a completed/expired signature can
+// leave the OAuth card forever on "Menunggu persetujuan wallet".
+function cleanupWalletConnectInBackground() {
+  if (!isMobile() || !getWalletConnectProviderSync()) return
+  void withTimeout(
+    disconnectWalletConnect(),
+    4_000,
+    'WalletConnect cleanup timeout',
+  ).catch(() => {})
+}
+
 const Section = ({ title, children, badge }: { title: string; children: React.ReactNode; badge?: React.ReactNode }) => (
   <div className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -91,7 +103,7 @@ async function siweLogin(address: string): Promise<string | null> {
 
 export function PluginPanel({ address, circleWallet, solanaAddress }: { address: string | null; circleWallet: { id: string; address: string } | null; solanaAddress: string | null }) {
   // ── OAuth callback params (from ChatGPT/Claude redirect) ──
-  const [oauthParams, setOauthParams] = useState<{ client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
+  const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
   const [oauthStatus, setOauthStatus] = useState<'idle' | 'signing' | 'approving' | 'done' | 'error'>('idle')
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
@@ -99,8 +111,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
-    if (p.get('auth') === 'mcp' && p.get('client_id') && p.get('redirect_uri')) {
+    if (p.get('auth') === 'mcp' && p.get('request_id') && p.get('client_id') && p.get('redirect_uri')) {
       setOauthParams({
+        request_id: p.get('request_id') || '',
         client_id: p.get('client_id') || '',
         redirect_uri: p.get('redirect_uri') || '',
         state: p.get('state') || '',
@@ -606,7 +619,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // 1. Get SIWE challenge from MCP server. Every network/provider step is
       // bounded so a suspended mobile tab cannot leave the button stuck forever.
       const msgResp = await withTimeout(
-        fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}`, { headers: authHeaders() }),
+        fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}&request_id=${encodeURIComponent(oauthParams.request_id)}`, { headers: authHeaders() }),
         20_000,
         'Challenge timeout. Periksa koneksi lalu tekan Coba Lagi.',
       )
@@ -630,9 +643,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // wallet notification; the user can switch apps and return here.
       if (isMobile()) resumeWalletConnect()
       const signPromise = provider.request({ method: 'personal_sign', params: [messageHex, from] }) as Promise<string>
+      // Attach a rejection handler immediately. If the relay dies after the
+      // wallet has displayed/approved the request, the underlying provider
+      // promise may settle later than our timeout; it must not create an
+      // unhandled rejection or keep the UI in a stale signing state.
+      signPromise.catch(() => {})
       let timeoutId: ReturnType<typeof setTimeout> | null = null
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Wallet signature timeout. Kembali ke browser setelah approve, lalu tekan Coba Lagi.')), 90_000)
+        timeoutId = setTimeout(() => reject(new Error('Wallet signature response timeout. Jika sudah menekan Approve di app, kembali ke browser; koneksi WalletConnect akan dipulihkan saat mencoba lagi.')), 90_000)
       })
       let signature: string
       try {
@@ -648,7 +666,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           address: from, message: msgData.message, signature,
-          clientId: oauthParams.client_id, redirectUri: oauthParams.redirect_uri,
+          requestId: oauthParams.request_id, clientId: oauthParams.client_id, redirectUri: oauthParams.redirect_uri,
           state: oauthParams.state, codeChallenge: oauthParams.code_challenge,
         }),
       }), 20_000, 'Verifikasi timeout. Tekan Coba Lagi.')
@@ -662,14 +680,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error(codeData.error || 'Gagal mendapat kode otorisasi')
     } catch (e: any) {
       if (attempt !== oauthAttempt.current) return
-      // A timed-out WalletConnect request can remain pending inside the relay.
-      // Reset only the WC transport so the next retry starts cleanly; injected
-      // desktop providers are left untouched.
-      if (isMobile() && getWalletConnectProviderSync()) {
-        await disconnectWalletConnect().catch(() => {})
-      }
+      // Update React state before relay cleanup. A dead WalletConnect socket
+      // must never block the error/retry state from rendering.
       setOauthStatus('error')
       setError(e?.message || 'OAuth approval gagal. Tekan Coba Lagi.')
+      // Reset only the WC transport so the next retry starts cleanly; injected
+      // desktop providers are left untouched. Cleanup is deliberately
+      // fire-and-forget and bounded because disconnect() may hang on a dead
+      // relay after the wallet already accepted the signature.
+      cleanupWalletConnectInBackground()
     }
   }
 
@@ -718,7 +737,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
              '🔓 Setujui dengan Wallet'}
           </button>
           {oauthStatus === 'error' && (
-            <button onClick={() => setOauthStatus('idle')} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>Coba Lagi</button>
+            <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>Coba Lagi</button>
           )}
         </div>
       )}
