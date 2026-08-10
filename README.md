@@ -103,10 +103,10 @@ backend. Once the backend `/api/auth/session` endpoint is migrated, set
 [`docs/backend-siwe-verifier.md`](docs/backend-siwe-verifier.md) for the
 backend migration spec.
 
-The frontend can run on Vercel. `vercel.json` builds with `VITE_BASE_PATH=/` and rewrites `/api/*` to the current backend:
+The frontend can run on Vercel. `vercel.json` builds with `VITE_BASE_PATH=/` and exposes `/api/*`, `/v1/*`, and MCP metadata on the public Vercel origin. Vercel forwards those requests to the internal backend upstream:
 
 ```txt
-https://43.134.14.43.nip.io/api/*
+https://arcoxdex.vercel.app/api/*
 ```
 
 Deploy steps:
@@ -118,11 +118,13 @@ vercel
 
 If the backend moves, update `vercel.json` rewrite destination.
 
-ARCOX Pay webhook endpoints are Vercel serverless functions and should remain on the production frontend domain:
+Circle Gateway webhook callback (configure this exact public URL in Circle Console):
 
 ```txt
-https://arcoxdex.vercel.app/api/circle/webhook
+https://arcoxdex.vercel.app/api/webhooks/circle
 ```
+
+The route preserves the raw request body and `X-Circle-Signature` / `X-Circle-Key-Id` headers before the backend verifies the notification. Do not configure the VPS hostname in Circle Console.
 
 Webhook env:
 
@@ -202,7 +204,7 @@ Recommended backend env:
 
 ```bash
 AUTH_SECRET=<random-32-byte-secret>
-ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app,https://43.134.14.43.nip.io
+ALLOWED_ORIGINS=https://arcoxdex.vercel.app
 CIRCLE_API_KEY=...
 CIRCLE_ENTITY_SECRET=...
 KIT_KEY=...

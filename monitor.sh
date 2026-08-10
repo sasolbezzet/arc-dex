@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -o pipefail
 
-URL="https://43.134.14.43.nip.io/health"
+# Public health check; Vercel is the only user-facing origin.
+URL="https://arcoxdex.vercel.app/health"
 LOG_DIR="/home/ubuntu/arc-dex-api/logs"
 LOG_FILE="$LOG_DIR/monitor.log"
 ALERT_FILE="$LOG_DIR/monitor.alert"

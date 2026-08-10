@@ -3,7 +3,7 @@ import { methodNotAllowed, readRawBody, parseJsonSafe } from './_webhook-utils.m
 // Minimal endpoint to accept Content Security Policy violation reports.
 // Vercel's filesystem API routes take precedence over the /api/* rewrite,
 // so this function handles the report locally instead of proxying to the
-// backend at 43.134.14.43.nip.io.
+// backend (the frontend's public origin remains arcoxdex.vercel.app).
 
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*')

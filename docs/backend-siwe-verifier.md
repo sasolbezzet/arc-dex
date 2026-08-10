@@ -105,11 +105,11 @@ Set via environment variables:
 
 ```bash
 # Comma-separated list of allowed SIWE domains (host only, no protocol)
-SIWE_ALLOWED_DOMAINS=localhost,localhost:5173,localhost:4173,arcoxdex.vercel.app,43.134.14.43.nip.io
+SIWE_ALLOWED_DOMAINS=localhost,localhost:5173,localhost:4173,arcoxdex.vercel.app
 
 # Origins are reused from the existing CORS allowlist.
 # Paths are stripped automatically, so the following are equivalent:
-ALLOWED_ORIGINS=https://arcoxdex.vercel.app,https://43.134.14.43.nip.io,http://localhost:5173
+ALLOWED_ORIGINS=https://arcoxdex.vercel.app,http://localhost:5173
 ```
 
 ### 3.3 In-memory nonce store

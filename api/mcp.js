@@ -3,6 +3,7 @@
 import http from 'node:http'
 import https from 'node:https'
 
+// MCP's public endpoint is Vercel. Set MCP_BACKEND_URL only for an intentional private-upstream override.
 const BACKEND = process.env.MCP_BACKEND_URL || 'https://43.134.14.43.nip.io'
 
 function collectBody(req) {
