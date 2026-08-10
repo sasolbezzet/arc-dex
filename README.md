@@ -106,7 +106,7 @@ backend migration spec.
 The frontend can run on Vercel. `vercel.json` builds with `VITE_BASE_PATH=/` and rewrites `/api/*` to the current backend:
 
 ```txt
-https://43.163.98.128.nip.io/api/*
+https://43.134.14.43.nip.io/api/*
 ```
 
 Deploy steps:
@@ -202,7 +202,7 @@ Recommended backend env:
 
 ```bash
 AUTH_SECRET=<random-32-byte-secret>
-ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app,https://43.163.98.128.nip.io
+ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app,https://43.134.14.43.nip.io
 CIRCLE_API_KEY=...
 CIRCLE_ENTITY_SECRET=...
 KIT_KEY=...

@@ -9,7 +9,7 @@ export class HttpError extends Error {
   }
 }
 
-export async function safePost(baseUrl: string, path: string, body: object): Promise<any> {
+export async function safePost(baseUrl: string, path: string, body: object, signal?: AbortSignal): Promise<any> {
   const token = localStorage.getItem('arc-dex-auth')
   let authToken = ''
   try { authToken = token ? JSON.parse(token)?.token || '' : '' } catch {}
@@ -20,6 +20,7 @@ export async function safePost(baseUrl: string, path: string, body: object): Pro
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     },
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   })
   const text = await resp.text()
   if (!resp.ok) {

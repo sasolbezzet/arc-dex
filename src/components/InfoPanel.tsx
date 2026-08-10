@@ -7,6 +7,7 @@ import { useI18n } from '../i18n'
 import { ChainLogo, TokenLogo } from './CompactPickers'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 import { rpcUint } from '../utils/rpcQuantity'
+import { acquireMintLock, releaseMintLock } from '../services/autoMintWorker'
 const EXPLORER = 'https://testnet.arcscan.app'
 const SOLANA_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 const INITIAL_FEE_MULTIPLIER = 3n
@@ -135,8 +136,16 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
         functionName: 'receiveMessage',
         args: [att.message, att.attestation],
       })
-      const mintTx = await sendEvmTxBuffered({ from, to: att.messageTransmitter, data })
-      await waitEvmTx(mintTx)
+      if (!acquireMintLock(rec.burnTx)) throw new Error('Penerimaan untuk burn ini sedang diproses di tab lain atau oleh worker foreground.')
+      let mintTx: string
+      try {
+        mintTx = await sendEvmTxBuffered({ from, to: att.messageTransmitter, data })
+        await waitEvmTx(mintTx)
+      } catch (error) {
+        releaseMintLock(rec.burnTx)
+        throw error
+      }
+      releaseMintLock(rec.burnTx)
       const chain = findChain(rec.to)
       const explorerUrl = chain?.explorer ? `${chain.explorer}/tx/${mintTx}` : undefined
       txHistory.update(rec.id, {
