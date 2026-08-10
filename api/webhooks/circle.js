@@ -34,6 +34,7 @@ export default async function handler(req, res) {
   if (req.method === 'HEAD') {
     res.statusCode = 200
     res.setHeader('Cache-Control', 'no-store')
+    res.setHeader('Content-Length', '0')
     res.end()
     return
   }
