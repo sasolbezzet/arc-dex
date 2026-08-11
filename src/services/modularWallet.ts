@@ -496,10 +496,25 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string)
   })
   const reserved = await reserveRes.json()
   if (!reserveRes.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
-  if (reserved.hashless) {
-    throw new Error('Authorization sebelumnya belum memiliki hash UserOperation. Rekonsiliasi Circle/on-chain secara manual sebelum mencoba lagi; addOwners tidak diulang otomatis.')
-  }
   const delegateAddress = reserved.delegateAddress
+  // If the previous browser attempt received a hash but failed to record it
+  // server-side, recover that exact hash before refusing a retry. Never submit
+  // another addOwners UserOperation for the same reserved delegate.
+  if (reserved.hashless) {
+    const localAttempt = getDeploymentStatus()['arc-testnet']
+    const localHash = localAttempt?.authorizationUserOpHash
+    const localDelegate = localAttempt?.authorizationDelegateAddress?.toLowerCase()
+    if (!localHash || localDelegate !== delegateAddress.toLowerCase()) {
+      throw new Error('Authorization sebelumnya belum memiliki hash UserOperation. Rekonsiliasi Circle/on-chain secara manual sebelum mencoba lagi; addOwners tidak diulang otomatis.')
+    }
+    const token = vaultToken
+    const record = await fetch(`${API}/api/session/authorization-attempt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ walletAddress: state.walletAddress, delegateAddress, authorizationUserOpHash: localHash, chainKey: 'arc-testnet' }),
+    })
+    if (!record.ok) throw new Error('Authorization hash lokal gagal direkonsiliasi ke backend; jangan kirim addOwners kedua.')
+  }
 
   // The passkey authorizes exactly this reserved address on-chain.
   const authorization = await registerDelegateOwner(delegateAddress)
@@ -709,10 +724,26 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     }
     throw error
   }
-  // Persist before waiting so a browser close cannot cause a duplicate nonce
-  // on the next retry. The backend will only activate the delegate after it
-  // independently verifies a successful receipt and exact addOwners calldata.
+  // Persist locally and server-side before waiting. The backend records the
+  // exact hash but does not activate the delegate until it independently
+  // verifies a successful receipt and exact addOwners calldata.
   mergeAuthorizationStatus(chainKey, userOpHash, delegateAddress)
+  try {
+    const token = localStorage.getItem('arx_vault_token')
+    if (token) {
+      const response = await fetch(`${API}/api/session/authorization-attempt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ walletAddress: state.walletAddress, delegateAddress, authorizationUserOpHash: userOpHash, chainKey }),
+      })
+      if (!response.ok) throw new Error(`authorization attempt record failed (${response.status})`)
+    }
+  } catch (error: any) {
+    // Do not submit a second UserOperation if recording fails. The local hash
+    // remains available for manual reconciliation, and the backend stays
+    // fail-closed rather than activating an unverified signer.
+    throw new Error(`${chainKey}: authorization hash belum tersimpan di backend; jangan retry addOwners sebelum rekonsiliasi. ${error?.message || ''}`)
+  }
   try {
     const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
     if (!isSuccessfulUserOpReceipt(receipt)) {
