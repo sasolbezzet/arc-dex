@@ -33,6 +33,16 @@ const WALLET_LINKS: Record<string, { native: string; universal: string }> = {
 
 let pendingUri: string | null = null
 let uriResolve: ((uri: string) => void) | null = null
+let visibilityHandler: (() => void) | null = null
+let relayOpenPromise: Promise<boolean> | null = null
+
+function removeVisibilityHandler() {
+  if (visibilityHandler && typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', visibilityHandler)
+  }
+  visibilityHandler = null
+  relayOpenPromise = null
+}
 
 export const isMobile = () => /Android|iPhone|iPad/i.test(navigator.userAgent || '')
 
@@ -42,6 +52,7 @@ export const isMobile = () => /Android|iPhone|iPad/i.test(navigator.userAgent ||
  * session leaves wcProvider in a half-connected state.
  */
 function resetProvider() {
+  removeVisibilityHandler()
   if (wcProvider) {
     try { wcProvider.removeAllListeners?.() } catch { /* ignore */ }
   }
@@ -105,9 +116,15 @@ export async function getWalletConnectProvider(): Promise<any | null> {
     wcProvider.on('chainChanged', (c: string) => console.log('[WC] chainChanged:', c))
 
     if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') resumeWalletConnect()
-      })
+      removeVisibilityHandler()
+      // Mobile wallets background the browser while the signing request is
+      // open. Re-open the relay *and await it* when the tab returns so the
+      // original personal_sign request can receive its response without a
+      // disconnect/reconnect cycle.
+      visibilityHandler = () => {
+        if (document.visibilityState === 'visible') void resumeWalletConnect()
+      }
+      document.addEventListener('visibilitychange', visibilityHandler)
     }
 
     return wcProvider
@@ -227,15 +244,28 @@ function hideQRModal() {
  * to be sent through the relay — the user needs to be in the wallet app
  * to approve it.
  */
-export function resumeWalletConnect() {
-  try {
-    const client = wcProvider?.signer?.client
-    if (!client) return false
-    client.core.relayer.transportOpen()
-    return true
-  } catch {
-    return false
-  }
+export async function resumeWalletConnect(): Promise<boolean> {
+  if (relayOpenPromise) return relayOpenPromise
+  relayOpenPromise = (async () => {
+    try {
+      const client = wcProvider?.signer?.client
+      const relayer = client?.core?.relayer
+      if (!relayer || typeof relayer.transportOpen !== 'function') return false
+      // A visibility callback must never reserve the shared resume promise
+      // forever when the relay is unreachable. The next approval attempt can
+      // then make a fresh bounded resume without a reconnect or page refresh.
+      await Promise.race([
+        Promise.resolve(relayer.transportOpen()),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('WalletConnect relay open timeout')), 8_000)),
+      ])
+      return true
+    } catch {
+      return false
+    } finally {
+      relayOpenPromise = null
+    }
+  })()
+  return relayOpenPromise
 }
 
 export function redirectToWalletForSign() {

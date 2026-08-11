@@ -640,7 +640,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // current page to a wallet deep-link: that unloads Plugin and destroys
       // the pending WalletConnect promise. WalletConnect/AppKit handles the
       // wallet notification; the user can switch apps and return here.
-      if (isMobile()) resumeWalletConnect()
+      const walletConnectProvider = getWalletConnectProviderSync()
+      const usingWalletConnect = Boolean(walletConnectProvider && provider === walletConnectProvider)
+      if (isMobile() && usingWalletConnect) {
+        // Opening the relay is asynchronous. Starting personal_sign before it
+        // is open creates a request that can be delivered to the wallet but
+        // whose response has no live transport to return through, leaving this
+        // card on "Menunggu persetujuan wallet app" after the user approved.
+        const relayReady = await withTimeout(
+          resumeWalletConnect(),
+          8_000,
+          'Relay WalletConnect belum siap. Kembali ke halaman ini lalu tekan Coba Lagi.',
+        )
+        if (!relayReady) throw new Error('Relay WalletConnect tidak siap. Kembali ke halaman ini lalu tekan Coba Lagi.')
+      }
       const signPromise = provider.request({ method: 'personal_sign', params: [messageHex, from] }) as Promise<string>
       // Attach a rejection handler immediately. If the relay dies after the
       // wallet has displayed/approved the request, the underlying provider
