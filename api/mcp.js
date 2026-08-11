@@ -2,6 +2,9 @@
 // Vercel rewrites DO NOT stream SSE; API routes DO.
 import http from 'node:http'
 import https from 'node:https'
+import { mcpProxyResponseHeaders } from '../src/mcpProxyHeaders.js'
+
+export { mcpProxyResponseHeaders }
 
 // MCP's public endpoint is Vercel. Set MCP_BACKEND_URL only for an intentional private-upstream override.
 const BACKEND = process.env.MCP_BACKEND_URL || 'https://43.134.14.43.nip.io'
@@ -14,6 +17,10 @@ function collectBody(req) {
     req.on('error', reject)
   })
 }
+
+// Preserve protocol-critical response headers. Claude discovers OAuth from
+// WWW-Authenticate after the MCP resource returns 401, while Streamable HTTP
+// clients need mcp-session-id on initialize and subsequent requests.
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -44,9 +51,7 @@ export default async function handler(req, res) {
       proxyReq.end()
     })
 
-    const resHeaders = { 'Content-Type': proxyRes.headers['content-type'] || 'application/json' }
-    if (proxyRes.headers['mcp-session-id']) resHeaders['mcp-session-id'] = proxyRes.headers['mcp-session-id']
-    res.writeHead(proxyRes.statusCode, resHeaders)
+    res.writeHead(proxyRes.statusCode, mcpProxyResponseHeaders(proxyRes.headers))
     proxyRes.pipe(res)
   } catch (e) {
     res.writeHead(502, { 'Content-Type': 'application/json' })
