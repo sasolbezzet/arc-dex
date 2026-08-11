@@ -497,23 +497,25 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string)
   const reserved = await reserveRes.json()
   if (!reserveRes.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
   const delegateAddress = reserved.delegateAddress
-  // If the previous browser attempt received a hash but failed to record it
-  // server-side, recover that exact hash before refusing a retry. Never submit
-  // another addOwners UserOperation for the same reserved delegate.
+  // If a previous browser attempt received a hash but failed to record it
+  // server-side, recover that exact hash before considering any new mutation.
+  // A hashless reservation is different: no UserOperation hash was ever
+  // persisted, so this function must continue into registerDelegateOwner().
+  // That function performs Circle mapping reconciliation and only submits the
+  // exact addOwners operation when its own retry policy says it is safe. The
+  // old early throw stranded these reservations permanently as inactive.
   if (reserved.hashless) {
     const localAttempt = getDeploymentStatus()['arc-testnet']
     const localHash = localAttempt?.authorizationUserOpHash
     const localDelegate = localAttempt?.authorizationDelegateAddress?.toLowerCase()
-    if (!localHash || localDelegate !== delegateAddress.toLowerCase()) {
-      throw new Error('Authorization sebelumnya belum memiliki hash UserOperation. Rekonsiliasi Circle/on-chain secara manual sebelum mencoba lagi; addOwners tidak diulang otomatis.')
+    if (localHash && localDelegate === delegateAddress.toLowerCase()) {
+      const record = await fetch(`${API}/api/session/authorization-attempt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${vaultToken}` },
+        body: JSON.stringify({ walletAddress: state.walletAddress, delegateAddress, authorizationUserOpHash: localHash, chainKey: 'arc-testnet' }),
+      })
+      if (!record.ok) throw new Error('Authorization hash lokal gagal direkonsiliasi ke backend; jangan kirim addOwners kedua.')
     }
-    const token = vaultToken
-    const record = await fetch(`${API}/api/session/authorization-attempt`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ walletAddress: state.walletAddress, delegateAddress, authorizationUserOpHash: localHash, chainKey: 'arc-testnet' }),
-    })
-    if (!record.ok) throw new Error('Authorization hash lokal gagal direkonsiliasi ke backend; jangan kirim addOwners kedua.')
   }
 
   // The passkey authorizes exactly this reserved address on-chain.
@@ -643,9 +645,11 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   if (savedForDelegate?.authorizationUserOpHash && savedOutcome === 'unknown') {
     throw new Error(`${chainKey}: authorization UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak mengulang addOwners.`)
   }
-  // A hashless marker is recoverable only when Circle now authoritatively says
-  // this delegate has no mapping. If the mapping exists or the read is still
-  // unavailable, the earlier request remains ambiguous and we fail closed.
+  // A hashless marker is never enough to prove that a previous operation was
+  // rejected. If the browser persisted pending/authorized before losing the
+  // response, a known-empty mapping may still be stale. Only an explicit
+  // pre-submission failure marker is retryable; all other hashless markers stay
+  // fail-closed to prevent duplicate addOwners.
   const hashlessAuthorizationMarker = Boolean(savedForDelegate?.authorizationStatus && (
     ['pending', 'authorized'].includes(savedForDelegate.authorizationStatus)
       || (savedForDelegate.authorizationStatus === 'failed' && savedForDelegate.authorizationPrecheckFailed !== true)
