@@ -4,6 +4,22 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/webhooks/circle",
+      "destination": "/api/webhooks/circle.js"
+    },
+    {
+      "source": "/api/webhooks/circle/",
+      "destination": "/api/webhooks/circle.js"
+    },
+    {
+      "source": "/api/webhooks/circle-wallet",
+      "destination": "/api/webhooks/circle-wallet.js"
+    },
+    {
+      "source": "/api/webhooks/circle-wallet/",
+      "destination": "/api/webhooks/circle-wallet.js"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://43.134.14.43.nip.io/api/:path*"
     },

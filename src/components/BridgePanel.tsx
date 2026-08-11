@@ -186,6 +186,21 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     return normalizeWalletProvider(provider).request(request)
   }
 
+  const switchEvmChain = async (chainInfo: any) => {
+    if (!chainInfo) return
+    try {
+      await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:chainInfo.chainId}] })
+      await new Promise(r=>setTimeout(r,1500))
+    } catch(e:any) {
+      if ((e?.code===4902||e?.code===-32603) && chainInfo.addParams) {
+        await evmRequest({ method:'wallet_addEthereumChain', params:[chainInfo.addParams] })
+        await new Promise(r=>setTimeout(r,3000))
+        return
+      }
+      throw e
+    }
+  }
+
   const circleB = parseFloat(balances[token]||'0')
   const eoaB = parseFloat(eoaBalances[token]||'0')
   const totalB = circleB + eoaB
@@ -424,17 +439,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     localSteps[localSteps.length-1].state='success'
 
     const toInfo = EVM_CHAINS.find(c=>c.id===destinationChain)
-    if (toInfo) {
-      try {
-        await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:toInfo.chainId}] })
-        await new Promise(r=>setTimeout(r,1500))
-      } catch(e:any) {
-        if ((e.code===4902||e.code===-32603) && toInfo.addParams) {
-          await evmRequest({ method:'wallet_addEthereumChain', params:[toInfo.addParams] })
-          await new Promise(r=>setTimeout(r,3000))
-        }
-      }
-    }
+    if (toInfo) await switchEvmChain(toInfo)
 
     const callData = buildReceiveMessageCalldata(attData.message, attData.attestation)
     localSteps.push({ name:'mint', state:'pending' })
@@ -606,30 +611,41 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       throw new Error(`Saldo ${token} Circle Wallet tidak cukup.`)
     }
 
-    // Step 0: Circle → EOA dalam satu flow jika sumber Circle dipilih.
+    // Circle Wallet is executed entirely by the backend Circle adapter.
+    // Never transfer to MetaMask and then enter the EOA switch/signing path.
     if (source === 'circle' && fromChain === 'Arc_Testnet') {
-      setStep('Transfer dari Circle Wallet ke MetaMask...')
-      setStatus({ type:'info', msg:`⏳ Mentransfer ${token} dari Circle Wallet ke MetaMask...` })
-      const d = await safePost(API, '/api/prepare-bridge', {metamaskAddress:address,amount,token})
+      setStep('Circle Wallet: bridge...')
+      setStatus({ type:'info', msg:`⏳ Circle Wallet: bridge ${amount} ${token} ke ${toChain}...`, steps:[...localSteps] })
+      const d = await safePost(API, '/api/bridge', { metamaskAddress:address, amount, token, fromChain, toChain, source:'circle' })
       if (d.error) throw new Error(d.error)
-      localSteps.push({ name:'circle-transfer', state:'success', txHash:d.txHash, explorerUrl:d.explorerUrl })
-      setStatus({ type:'info', msg:`✓ ${token} di MetaMask!\n⏳ Siapkan approve...`, steps:[...localSteps] })
-      await new Promise(r=>setTimeout(r,5000))
+      const circleTx = d.mintTxHash || d.burnTxHash || d.txHash
+      const circleSuccess = d.success === true && (!d.state || d.state === 'success')
+      if (!circleSuccess) {
+        if (!circleTx) throw new Error('Circle bridge belum selesai: ' + (d.state || 'unknown'))
+        if (d.burnTxHash || d.txHash) localSteps.push({ name:'burn', state:'pending', txHash:circleTx, explorerUrl:d.explorerUrl || explorerFor(fromChain, circleTx) })
+        if (d.mintTxHash) localSteps.push({ name:'mint', state:'pending', txHash:d.mintTxHash, explorerUrl:explorerFor(toChain, d.mintTxHash) })
+        const pendingHistoryId = `bridge-${Date.now()}-${circleTx.slice(-6)}`
+        txHistory.add({ id:pendingHistoryId, ts:Date.now(), action:'bridge', source:'web-ui', walletSource:'circle', from:fromChain, to:toChain, amount, token, status:'pending', burnTx:d.burnTxHash, mintTx:d.mintTxHash, tx:circleTx, explorer:d.explorerUrl, note:'Circle bridge requires reconciliation; no success claimed.' })
+        setStatus({ type:'warning', msg:`⚠ Circle bridge belum selesai (${d.state || 'pending'}).
+Hash ${circleTx.slice(0,12)}... disimpan untuk rekonsiliasi; jangan retry.`, steps:[...localSteps] })
+        return
+      }
+      if (d.burnTxHash) localSteps.push({ name:'burn', state:'success', txHash:d.burnTxHash, explorerUrl:d.explorerUrl || explorerFor(fromChain, d.burnTxHash) })
+      if (d.mintTxHash) localSteps.push({ name:'mint', state:'success', txHash:d.mintTxHash, explorerUrl:explorerFor(toChain, d.mintTxHash) })
+      if (!circleTx) throw new Error('Circle bridge tidak mengembalikan transaction hash')
+      const circleHistoryId = `bridge-${Date.now()}-${circleTx.slice(-6)}`
+      txHistory.add({ id:circleHistoryId, ts:Date.now(), action:'bridge', source:'web-ui', walletSource:'circle', from:fromChain, to:toChain, amount, token, status:'success', burnTx:d.burnTxHash, mintTx:d.mintTxHash, tx:circleTx, explorer:d.explorerUrl, note:'Circle Wallet bridge completed.' })
+      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} → ${toChain}`, steps:[...localSteps] })
+      setAmount('')
+      setTimeout(onRefresh,3000); setTimeout(onRefresh,10000)
+      return
     }
 
     // Switch network
     const fromInfo = EVM_CHAINS.find(c=>c.id===fromChain)
     if (fromInfo) {
       setStep('Switch network...')
-      try {
-        await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:fromInfo.chainId}] })
-        await new Promise(r=>setTimeout(r,2000))
-      } catch(e:any) {
-        if ((e.code===4902||e.code===-32603) && fromInfo.addParams) {
-          await evmRequest({ method:'wallet_addEthereumChain', params:[fromInfo.addParams] })
-          await new Promise(r=>setTimeout(r,3000))
-        }
-      }
+      await switchEvmChain(fromInfo)
     }
 
     if (!srcInfo) throw new Error('Source chain tidak didukung')
@@ -832,19 +848,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
       // Switch ke destination chain
       const toInfo = EVM_CHAINS.find(c=>c.id===toChain)
-      if (toInfo) {
-        try {
-          await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:toInfo.chainId}] })
-          await new Promise(r=>setTimeout(r,1500))
-        } catch(e:any) {
-          if ((e.code===4902||e.code===-32603) && toInfo.addParams) {
-            await evmRequest({ method:'wallet_addEthereumChain', params:[toInfo.addParams] })
-            await new Promise(r=>setTimeout(r,3000))
-          }
-        }
-      }
+      if (toInfo) await switchEvmChain(toInfo)
 
-      // Manual ABI-encode receiveMessage(bytes,bytes)      const recvMsg = attData.message
+      // Manual ABI-encode receiveMessage(bytes,bytes)
+      const recvMsg = attData.message
       const recvAtt = attData.attestation
       const msgHex = recvMsg.startsWith('0x') ? recvMsg.slice(2) : recvMsg
       const attHex = recvAtt.startsWith('0x') ? recvAtt.slice(2) : recvAtt
@@ -951,17 +958,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       localSteps[localSteps.length-1].state='success'
 
       const arcInfo = EVM_CHAINS.find(c=>c.id==='Arc_Testnet')
-      if (arcInfo) {
-        try {
-          await evmRequest({ method:'wallet_switchEthereumChain', params:[{chainId:arcInfo.chainId}] })
-          await new Promise(r=>setTimeout(r,1500))
-        } catch(e:any) {
-          if ((e.code===4902||e.code===-32603) && arcInfo.addParams) {
-            await evmRequest({ method:'wallet_addEthereumChain', params:[arcInfo.addParams] })
-            await new Promise(r=>setTimeout(r,3000))
-          }
-        }
-      }
+      if (arcInfo) await switchEvmChain(arcInfo)
       const recvMsg = attData.message
       const recvAtt = attData.attestation
       if (!recvMsg || !recvAtt || !attData.messageTransmitter) {

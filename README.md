@@ -124,7 +124,13 @@ Circle Gateway webhook callback (configure this exact public URL in Circle Conso
 https://arcoxdex.vercel.app/api/webhooks/circle
 ```
 
-The route preserves the raw request body and `X-Circle-Signature` / `X-Circle-Key-Id` headers before the backend verifies the notification. Do not configure the VPS hostname in Circle Console.
+Circle Wallets v2 webhook callback (separate subscription):
+
+```txt
+https://arcoxdex.vercel.app/api/webhooks/circle-wallet
+```
+
+Both routes preserve the raw request body and `X-Circle-Signature` / `X-Circle-Key-Id` headers before the backend verifies the notification. Do not configure the VPS hostname in Circle Console.
 
 Webhook env:
 

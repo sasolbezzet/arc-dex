@@ -1,10 +1,5 @@
-// Circle v2 webhook endpoint on the public Vercel origin.
-//
-// Circle sends HEAD while creating/updating a subscription. Do not proxy that
-// probe to the backend: an upstream/rewrite can keep a HEAD connection open
-// even after returning its headers, which makes Circle report the endpoint as
-// unreachable. Actual POST notifications are forwarded with their raw body
-// and signature headers unchanged.
+// Circle Wallets v2 webhook endpoint on the public Vercel origin.
+// This is deliberately separate from the Gateway webhook route.
 
 const BACKEND = String(
   process.env.CIRCLE_WEBHOOK_BACKEND_URL ||
@@ -14,11 +9,8 @@ const BACKEND = String(
 async function readRawBody(req) {
   if (Buffer.isBuffer(req.body)) return req.body
   if (typeof req.body === 'string') return Buffer.from(req.body)
-
   const chunks = []
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  }
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
   return Buffer.concat(chunks)
 }
 
@@ -29,7 +21,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
-function isUnsignedConnectionTest(body) {
+function isWalletsTestNotification(body) {
   if (!body || body.length === 0) return false
   try {
     const payload = JSON.parse(body.toString('utf8'))
@@ -40,7 +32,6 @@ function isUnsignedConnectionTest(body) {
 }
 
 export default async function handler(req, res) {
-  // Circle's v2 subscription validation requires a fast successful HEAD.
   if (req.method === 'HEAD') {
     res.statusCode = 200
     res.setHeader('Cache-Control', 'no-store')
@@ -50,13 +41,12 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
-    json(res, 200, {
+    return json(res, 200, {
       ok: true,
       provider: 'circle',
-      product: 'gateway',
-      message: 'Circle webhook endpoint is alive. Use POST for callbacks.',
+      product: 'wallets',
+      message: 'Circle Wallets webhook endpoint is alive. Use POST for callbacks.',
     })
-    return
   }
 
   if (req.method === 'OPTIONS') {
@@ -69,47 +59,38 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'HEAD, GET, POST, OPTIONS')
-    json(res, 405, { ok: false, error: 'Method not allowed' })
-    return
+    return json(res, 405, { ok: false, error: 'Method not allowed' })
   }
 
   try {
     const body = await readRawBody(req)
-    const headers = {
-      'Content-Type': req.headers['content-type'] || 'application/json',
-      Accept: req.headers.accept || 'application/json',
-    }
-
-    // Circle's connection probe can be an empty POST. It is not a notification
-    // and has no state-changing data, so acknowledge it at the public edge.
-    // This avoids forwarding an empty request through nginx (which can return
-    // 502) while keeping every non-empty POST behind signature verification.
-    if (body.length === 0 || isUnsignedConnectionTest(body)) {
-      json(res, 200, {
+    // Circle's connection/test notification is not a wallet event. It is safe
+    // to acknowledge only this exact v2 test shape without signature.
+    if (body.length === 0 || isWalletsTestNotification(body)) {
+      return json(res, 200, {
         ok: true,
         provider: 'circle',
-        product: 'gateway',
+        product: 'wallets',
         probe: true,
         ...(body.length > 0 ? { notificationType: 'webhooks.test' } : {}),
-        message: 'Connection probe accepted. Signed POST notifications are required.',
+        message: 'Connection probe accepted. Signed Wallets notifications are required.',
       })
-      return
     }
 
-    // For non-empty notifications, fetch forwards these exact raw bytes and the
-    // backend verifies the same bytes. Never forward the Vercel Host.
-    headers['Content-Length'] = String(body.length)
-
-    // Forward only webhook-relevant headers. Never forward the Vercel Host.
+    const headers = {
+      'Content-Type': req.headers['content-type'] || 'application/json',
+      'Content-Length': String(body.length),
+      Accept: req.headers.accept || 'application/json',
+    }
     for (const name of ['x-circle-signature', 'x-circle-key-id', 'x-circle-timestamp']) {
       const value = req.headers[name]
       if (value) headers[name] = Array.isArray(value) ? value[0] : value
     }
 
-    const upstream = await fetch(`${BACKEND}/api/webhooks/circle`, {
+    const upstream = await fetch(`${BACKEND}/api/webhooks/circle-wallet`, {
       method: 'POST',
       headers,
-      ...(body.length > 0 ? { body } : {}),
+      body,
       signal: AbortSignal.timeout(15_000),
     })
     const responseBody = await upstream.arrayBuffer()
@@ -117,12 +98,8 @@ export default async function handler(req, res) {
     res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json')
     res.setHeader('Cache-Control', 'no-store')
     res.end(Buffer.from(responseBody))
-  } catch (error) {
-    json(res, 502, {
-      ok: false,
-      provider: 'circle',
-      error: 'Webhook upstream unavailable',
-    })
+  } catch {
+    json(res, 502, { ok: false, provider: 'circle', product: 'wallets', error: 'Webhook upstream unavailable' })
   }
 }
 

@@ -1,4 +1,4 @@
-import { getWalletProvider } from '../walletProvider'
+import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 
 export const ARC_TESTNET_CHAIN_ID = '0x4cef52'
 
@@ -23,9 +23,10 @@ declare global {
   }
 }
 
-export async function switchToArcTestnet() {
-  const provider = getWalletProvider()
-  if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
+export async function switchToArcTestnet(expectedAddress?: string | null) {
+  const rawProvider = await findConnectedWalletProvider(expectedAddress)
+  if (!rawProvider) throw new Error('Wallet EVM tidak terdeteksi.')
+  const provider = normalizeWalletProvider(rawProvider)
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
