@@ -597,7 +597,11 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     let bridgeTokenLabel = token
     let burnToken = srcInfo?.usdc || ''
     let routerAddr = !isFromSolana ? ARCOX_ROUTER[fromChain] : ''
-    if (!isFromSolana && !routerAddr) {
+
+    // Circle Wallet uses the backend Circle Bridge Kit forwarder path; it does
+    // not call the browser ArcoxRouter. The router guard therefore applies only
+    // to EOA/CCTP transactions below, not to Circle Wallet's Arc source path.
+    if (source !== 'circle' && !isFromSolana && !routerAddr) {
       throw new Error(`ArcoxRouter belum tersedia untuk source ${fromChain}; bridge USDC direct ditolak agar platform fee tidak terlewati.`)
     }
 
@@ -607,9 +611,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     if (source === 'eoa' && fromChain === 'Arc_Testnet' && eoaB < amtNum) {
       throw new Error(`Saldo ${token} EOA tidak cukup. Pilih Circle Wallet atau isi saldo MetaMask.`)
     }
-    if (source === 'circle' && circleB < amtNum) {
-      throw new Error(`Saldo ${token} Circle Wallet tidak cukup.`)
-    }
+    // Circle balance data can lag the Circle Wallet API. Do not block the
+    // backend bridge on a stale UI balance; Circle remains the authoritative
+    // balance check and returns the exact failure if funds are insufficient.
 
     // Circle Wallet is executed entirely by the backend Circle adapter.
     // Never transfer to MetaMask and then enter the EOA switch/signing path.
@@ -619,15 +623,19 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       const d = await safePost(API, '/api/bridge', { metamaskAddress:address, amount, token, fromChain, toChain, source:'circle' })
       if (d.error) throw new Error(d.error)
       const circleTx = d.mintTxHash || d.burnTxHash || d.txHash
+      const bridgeFailure = d.errorMessage || d.error || d.stepError || d.result?.errorMessage || d.result?.error?.message
       const circleSuccess = d.success === true && (!d.state || d.state === 'success')
       if (!circleSuccess) {
-        if (!circleTx) throw new Error('Circle bridge belum selesai: ' + (d.state || 'unknown'))
+        // A failure without a submitted hash is retryable and should show the
+        // real Circle error. A burn hash means funds may already be in flight;
+        // preserve it as pending instead of inviting a duplicate bridge.
+        if (!circleTx) throw new Error(`Circle bridge gagal: ${bridgeFailure || d.state || 'unknown'}`)
         if (d.burnTxHash || d.txHash) localSteps.push({ name:'burn', state:'pending', txHash:circleTx, explorerUrl:d.explorerUrl || explorerFor(fromChain, circleTx) })
         if (d.mintTxHash) localSteps.push({ name:'mint', state:'pending', txHash:d.mintTxHash, explorerUrl:explorerFor(toChain, d.mintTxHash) })
         const pendingHistoryId = `bridge-${Date.now()}-${circleTx.slice(-6)}`
         txHistory.add({ id:pendingHistoryId, ts:Date.now(), action:'bridge', source:'web-ui', walletSource:'circle', from:fromChain, to:toChain, amount, token, status:'pending', burnTx:d.burnTxHash, mintTx:d.mintTxHash, tx:circleTx, explorer:d.explorerUrl, note:'Circle bridge requires reconciliation; no success claimed.' })
         setStatus({ type:'warning', msg:`⚠ Circle bridge belum selesai (${d.state || 'pending'}).
-Hash ${circleTx.slice(0,12)}... disimpan untuk rekonsiliasi; jangan retry.`, steps:[...localSteps] })
+${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disimpan untuk rekonsiliasi; jangan retry.`, steps:[...localSteps] })
         return
       }
       if (d.burnTxHash) localSteps.push({ name:'burn', state:'success', txHash:d.burnTxHash, explorerUrl:d.explorerUrl || explorerFor(fromChain, d.burnTxHash) })

@@ -154,9 +154,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     try { return await fn() }
     catch (e: any) {
       const msg = e?.message || String(e)
-      // WebAuthn errors need user-friendly hints
-      if (msg.includes('timed out') || msg.includes('not allowed') || msg.includes('NotSupportedError')) {
-        setError('Passkey tidak tersedia. Pastikan Windows Hello / Touch ID / security key sudah aktif di perangkat Anda, lalu coba lagi. Atau gunakan "Sign In with Wallet" sebagai alternatif.')
+      // WebAuthn errors are normalized by modularWallet.ts. Do not classify
+      // every generic RPC/network error as "passkey unavailable"; that hides
+      // the actual Circle error and makes bridge/login debugging impossible.
+      if (/Passkey (hanya|membutuhkan|dibatalkan|tidak dapat|tidak menyediakan)/i.test(msg)) {
+        setError(msg)
       } else if (msg.includes('Cannot find the entity config')) {
         setError('Konfigurasi Circle belum lengkap. Hubungi admin.')
       } else {

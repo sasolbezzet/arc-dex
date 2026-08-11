@@ -81,8 +81,36 @@ function clearState() {
 }
 
 // ── Transports ──
+function ensurePasskeyEnvironment() {
+  if (typeof window === 'undefined') throw new Error('Passkey hanya dapat digunakan di browser.')
+  if (!window.isSecureContext) throw new Error('Passkey membutuhkan HTTPS atau localhost. Buka ARCOX melalui https://arcoxdex.vercel.app.')
+  if (typeof window.PublicKeyCredential !== 'function' || typeof navigator.credentials?.get !== 'function') {
+    throw new Error('Browser ini tidak mendukung WebAuthn passkey. Gunakan Chrome, Edge, Safari, atau Firefox versi terbaru.')
+  }
+}
+
 function passkeyTransport() {
+  ensurePasskeyEnvironment()
   return toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
+}
+
+function passkeyErrorMessage(error: unknown) {
+  // Only DOMException names identify a WebAuthn failure. Do not classify a
+  // generic Circle RPC message containing words such as "timeout" or "cancel"
+  // as missing passkeys; that hides the actual transport problem.
+  const name = String((error as any)?.name || '')
+  const message = String((error as any)?.message || error || '')
+  const isDomException = typeof DOMException !== 'undefined' && error instanceof DOMException
+  if (name === 'NotAllowedError' || (name === 'AbortError' && isDomException)) {
+    return 'Passkey dibatalkan atau tidak ditemukan. Pilih passkey ARCOX yang sudah terdaftar, lalu izinkan Windows Hello, Touch ID, atau security key.'
+  }
+  if (name === 'SecurityError' || name === 'InvalidStateError') {
+    return 'Passkey tidak dapat dipakai pada origin ini. Buka ARCOX dari domain yang sama saat passkey dibuat: https://arcoxdex.vercel.app.'
+  }
+  if (name === 'NotSupportedError') {
+    return 'Perangkat/browser ini tidak menyediakan authenticator WebAuthn. Aktifkan Windows Hello, Touch ID, atau security key, lalu coba dari HTTPS.'
+  }
+  return message || 'Passkey login gagal.'
 }
 
 const EVM_CHAIN_CONFIG = {
@@ -210,32 +238,38 @@ export async function registerPasskey(): Promise<{ walletAddress: string; creden
   const pkTransport = passkeyTransport()
 
   // Step 1: Register passkey credential (browser prompts user for biometric)
-  const credential = await toWebAuthnCredential({
-    transport: pkTransport,
-    mode: WebAuthnMode.Register,
-    username: `arx-user-${Date.now()}`,
-  })
+  try {
+    const credential = await toWebAuthnCredential({
+      transport: pkTransport,
+      mode: WebAuthnMode.Register,
+      username: `arx-user-${Date.now()}`,
+    })
 
-  // Step 2: Create modular transport + public client for Arc Testnet
-  const modTransport = modularTransport()
-  const client = createPublicClient({
-    chain: arcTestnet,
-    transport: modTransport as any,
-  })
+    // Step 2: Create modular transport + public client for Arc Testnet
+    const modTransport = modularTransport()
+    const client = createPublicClient({
+      chain: arcTestnet,
+      transport: modTransport as any,
+    })
 
-  // Step 3: Create smart account from passkey credential
-  const smartAccount = await toCircleSmartAccount({
-    client: client as any,
-    owner: toWebAuthnAccount({ credential }),
-  })
+    // Step 3: Create smart account from passkey credential
+    const smartAccount = await toCircleSmartAccount({
+      client: client as any,
+      owner: toWebAuthnAccount({ credential }),
+    })
 
-  const walletAddress = smartAccount.address as string
+    const walletAddress = smartAccount.address as string
 
-  // Persist
-  saveState({ walletAddress, credential, sessionActive: false })
+    // Persist
+    saveState({ walletAddress, credential, sessionActive: false })
 
-  return { walletAddress, credential }
+    return { walletAddress, credential }
+  } catch (error) {
+    throw new Error(passkeyErrorMessage(error), { cause: error })
+  }
 }
+
+
 
 // ── Deploy MSCA on-chain via passkey UserOp ──
 // After deployment, call registerDelegateOwner to add delegate as owner.
@@ -400,40 +434,44 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
   const state = loadState()
   const pkTransport = passkeyTransport()
 
-  // Step 1: Login passkey (browser prompts user for biometric)
-  const credential = await toWebAuthnCredential({
-    transport: pkTransport,
-    mode: WebAuthnMode.Login,
-  })
+  try {
+    // Step 1: Login passkey (browser prompts user for biometric)
+    const credential = await toWebAuthnCredential({
+      transport: pkTransport,
+      mode: WebAuthnMode.Login,
+    })
 
-  // Step 2: Recreate smart account from credential
-  const modTransport = modularTransport()
-  const client = createPublicClient({
-    chain: arcTestnet,
-    transport: modTransport as any,
-  })
+    // Step 2: Recreate smart account from credential
+    const modTransport = modularTransport()
+    const client = createPublicClient({
+      chain: arcTestnet,
+      transport: modTransport as any,
+    })
 
-  const smartAccount = await toCircleSmartAccount({
-    client: client as any,
-    owner: toWebAuthnAccount({ credential }),
-  })
+    const smartAccount = await toCircleSmartAccount({
+      client: client as any,
+      owner: toWebAuthnAccount({ credential }),
+    })
 
-  const walletAddress = smartAccount.address as string
+    const walletAddress = smartAccount.address as string
 
-  // Preserve locally known deployment/delegate metadata across passkey login.
-  // Dropping it here makes a valid existing MSCA appear inactive until a full
-  // setup flow runs again, and can incorrectly make deployment look missing.
-  saveState({
-    ...state,
-    walletAddress,
-    credential,
-    sessionActive: state.sessionActive || false,
-    deployed: state.deployed,
-    delegateAddress: state.delegateAddress,
-    deploymentStatus: state.deploymentStatus,
-  })
+    // Preserve locally known deployment/delegate metadata across passkey login.
+    // Dropping it here makes a valid existing MSCA appear inactive until a full
+    // setup flow runs again, and can incorrectly make deployment look missing.
+    saveState({
+      ...state,
+      walletAddress,
+      credential,
+      sessionActive: state.sessionActive || false,
+      deployed: state.deployed,
+      delegateAddress: state.delegateAddress,
+      deploymentStatus: state.deploymentStatus,
+    })
 
-  return { walletAddress, credential }
+    return { walletAddress, credential }
+  } catch (error) {
+    throw new Error(passkeyErrorMessage(error), { cause: error })
+  }
 }
 
 // ── Setup session key: authorize delegate on-chain, then store it in vault ──
