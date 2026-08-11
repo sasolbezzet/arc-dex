@@ -86,7 +86,11 @@ export function authorizationRetryDecision({
   // A missing optional mapping read must not strand a fresh authorization.
   if (!mappingKnown && !previousAttempt) return 'submit'
   if (!mappingKnown) return 'unavailable'
-  if (mappingExists) return 'unreconciled'
+  // An existing Circle address mapping is not proof that MSCA addOwners was
+  // executed. For a fresh reservation, continue to the explicit addOwners
+  // UserOperation path; it bypasses the already-known mapping creation step.
+  // Only block when an earlier authorization attempt is ambiguous.
+  if (mappingExists) return previousAttempt ? 'unreconciled' : 'submit'
   return 'submit'
 }
 

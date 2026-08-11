@@ -74,9 +74,13 @@ describe('MSCA policy guards', () => {
   })
 
   it('submits a mapped recovery owner only after a prior operation is explicitly failed', () => {
-    expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: true, previousOutcome: 'failed' })).toBe('submit')
-    expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: true, previousOutcome: 'unknown' })).toBe('unreconciled')
+    expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: true, previousOutcome: 'failed', previousAttempt: true })).toBe('submit')
+    expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: true, previousOutcome: 'unknown', previousAttempt: true })).toBe('unreconciled')
     expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: false, previousOutcome: 'unknown', previousAttempt: true })).toBe('unreconciled')
+  })
+
+  it('allows a fresh authorization to use an existing Circle mapping before addOwners', () => {
+    expect(authorizationRetryDecision({ mappingKnown: true, mappingExists: true, previousOutcome: 'unknown', previousAttempt: false })).toBe('submit')
   })
 
   it('allows a fresh SDK authorization when Circle mapping read is temporarily unavailable', () => {
