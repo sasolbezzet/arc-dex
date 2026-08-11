@@ -18,7 +18,7 @@ import {
   modularWalletActions,
 } from '@circle-fin/modular-wallets-core'
 import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
-import { hasCompleteFeeEnvelope, isSuccessfulUserOpReceipt, normalizeArbitrumFees, parseFeeWei, requestPaymasterWithFees, authorizationRetryDecision } from './mscaPolicy'
+import { hasCompleteFeeEnvelope, isBundlerPrecheckError, isSuccessfulUserOpReceipt, normalizeArbitrumFees, parseFeeWei, requestPaymasterWithFees, authorizationRetryDecision } from './mscaPolicy'
 import { createBundlerClient, getPaymasterData, getPaymasterStubData, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
@@ -54,7 +54,7 @@ declare global { interface Window { __circleProxyInstalled?: boolean } }
 // ── Persisted state ──
 const STORAGE_KEY = 'arx_msca_state'
 
-type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationError?: string; error?: string; updatedAt: number }
+type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationPrecheckFailed?: boolean; authorizationError?: string; error?: string; updatedAt: number }
 
 interface MscaState {
   walletAddress: string
@@ -631,7 +631,10 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   // A hashless marker is recoverable only when Circle now authoritatively says
   // this delegate has no mapping. If the mapping exists or the read is still
   // unavailable, the earlier request remains ambiguous and we fail closed.
-  const hashlessAuthorizationMarker = Boolean(savedForDelegate?.authorizationStatus && ['pending', 'authorized', 'failed'].includes(savedForDelegate.authorizationStatus) && !savedForDelegate.authorizationUserOpHash)
+  const hashlessAuthorizationMarker = Boolean(savedForDelegate?.authorizationStatus && (
+    ['pending', 'authorized'].includes(savedForDelegate.authorizationStatus)
+      || (savedForDelegate.authorizationStatus === 'failed' && savedForDelegate.authorizationPrecheckFailed !== true)
+  ) && !savedForDelegate.authorizationUserOpHash)
   if (hashlessAuthorizationMarker) {
     throw new Error(`${chainKey}: status authorization tersimpan tanpa hash UserOperation; lakukan login passkey ulang untuk membuat attempt baru dengan binding yang jelas.`)
   }
@@ -657,7 +660,8 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   })
 
   let userOpHash: string
-  if (mappingExists) {
+  try {
+    if (mappingExists) {
     // The SDK action calls circle_createAddressMapping before addOwners. When
     // the mapping already exists, bypass that mutation and submit only the
     // exact addOwners call; this avoids the Base retry revert caused by replaying
@@ -670,20 +674,40 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
         { name: 'publicKeyWeightsToAdd', type: 'uint256[]' }, { name: 'newThresholdWeight', type: 'uint256' },
       ], outputs: [],
     }] as const
-    const callData = encodeFunctionData({ abi: addOwnersAbi, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
-    userOpHash = await sendUserOperation(bundlerClient as any, {
-      account: smartAccount as any,
-      callData,
-      paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
-      ...feeOverrides,
-    })
-  } else {
-    userOpHash = await bundlerClient.registerRecoveryAddress({
+    // Match Circle's recoveryActions payload exactly. A zero threshold is
+    // invalid for the weighted owner plugin and reverts during simulation.
+    const callData = encodeFunctionData({ abi: addOwnersAbi, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 1n] })
+      userOpHash = await sendUserOperation(bundlerClient as any, {
+        account: smartAccount as any,
+        callData,
+        paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
+        ...feeOverrides,
+      })
+    } else {
+      userOpHash = await bundlerClient.registerRecoveryAddress({
       account: smartAccount as any,
       recoveryAddress: delegateAddress as `0x${string}`,
       paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
-      ...feeOverrides,
-    })
+        ...feeOverrides,
+      })
+    }
+  } catch (error: any) {
+    // A bundler simulation/precheck revert occurs before a UserOperation hash
+    // exists. Mark that specific local marker retryable; transport failures and
+    // unknown outcomes remain guarded to avoid duplicate addOwners.
+    const message = String(error?.message || error || '')
+    if (isBundlerPrecheckError(error)) {
+      const current = loadState().deploymentStatus?.[chainKey]
+      if (current) saveDeploymentStatus(chainKey, {
+        ...current,
+        authorizationStatus: 'failed',
+        authorizationPrecheckFailed: true,
+        authorizationError: message,
+        authorizationUserOpHash: undefined,
+        updatedAt: Date.now(),
+      })
+    }
+    throw error
   }
   // Persist before waiting so a browser close cannot cause a duplicate nonce
   // on the next retry. The backend will only activate the delegate after it
@@ -695,7 +719,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
       throw new Error(`${chainKey}: delegate authorization UserOperation reverted`)
     }
     const current = loadState().deploymentStatus?.[chainKey]
-    if (current) saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'authorized', authorizationError: undefined, updatedAt: Date.now() })
+    if (current) saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'authorized', authorizationPrecheckFailed: undefined, authorizationError: undefined, updatedAt: Date.now() })
     return { success: true, userOpHash }
   } catch (error: any) {
     const current = loadState().deploymentStatus?.[chainKey]

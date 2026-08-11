@@ -1,5 +1,25 @@
 export type AuthorizationOutcome = 'success' | 'pending' | 'failed' | 'unknown'
 
+/**
+ * A JSON-RPC bundler rejection is safe to retry only when the RPC response
+ * proves the operation was rejected before a UserOperation hash was returned.
+ * Network errors and arbitrary text are deliberately not treated as proof.
+ */
+export function isBundlerPrecheckError(error: unknown): boolean {
+  const seen = new Set<unknown>()
+  let current: any = error
+  for (let depth = 0; current && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current)
+    const name = String(current.name || '')
+    const code = current.code
+    const text = [current.shortMessage, current.message, current.details, current.data?.message].filter(Boolean).join(' ')
+    const hasRpcResponse = (name === 'RpcRequestError' || name === 'RpcError' || typeof code === 'number') && code !== -1
+    if (hasRpcResponse && /execution reverted|simulation|precheck|validation|revert|paymaster|invalid useroperation/i.test(text)) return true
+    current = current.cause
+  }
+  return false
+}
+
 // Circle's Arbitrum Sepolia bundler rejected the SDK response when the tip was
 // zero. Keep the floor in wei (0.002 gwei), comfortably above observed minimums.
 export const ARBITRUM_PRIORITY_FEE_FLOOR = 2_000_000n

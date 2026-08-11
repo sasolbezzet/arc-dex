@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ARBITRUM_PRIORITY_FEE_FLOOR,
+  isBundlerPrecheckError,
   authorizationRetryDecision,
   isSuccessfulUserOpReceipt,
   normalizeArbitrumFees,
@@ -11,6 +12,12 @@ import {
 } from './mscaPolicy'
 
 describe('MSCA policy guards', () => {
+  it('recognizes structured bundler simulation rejection as retryable', () => {
+    expect(isBundlerPrecheckError({ name: 'RpcRequestError', code: -32500, shortMessage: 'execution reverted during simulation' })).toBe(true)
+    expect(isBundlerPrecheckError({ name: 'TypeError', message: 'execution reverted' })).toBe(false)
+    expect(isBundlerPrecheckError({ name: 'RpcRequestError', code: -1, message: 'execution reverted' })).toBe(false)
+  })
+
   it('replaces a zero Arbitrum priority fee with the required floor', () => {
     const fees = normalizeArbitrumFees(0n, 0n)
     expect(fees.maxPriorityFeePerGas).toBe(ARBITRUM_PRIORITY_FEE_FLOOR)
