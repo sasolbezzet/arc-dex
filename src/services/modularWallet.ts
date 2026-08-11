@@ -25,6 +25,15 @@ import { arcTestnet } from 'viem/chains'
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
 const API = ''  // same origin proxy
+// Temporary production diagnostics. When explicitly enabled this records the
+// guard context in the browser console, but it never bypasses an ambiguous
+// UserOperation or submits a second addOwners mutation. Backend activation still
+// requires a successful receipt, exact MSCA sender, and exact addOwners calldata.
+const SESSION_AUTH_DEBUG = String(import.meta.env.VITE_SESSION_AUTH_DEBUG || '').toLowerCase() === 'true'
+function sessionAuthGuard(message: string, context: Record<string, unknown> = {}) {
+  if (SESSION_AUTH_DEBUG) console.warn('[session-auth-debug] authorization blocked', { message, ...context })
+  throw new Error(message)
+}
 
 // ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
 // The SDK validates CLIENT_URL as a real Circle domain (isCircleUrl check), so we
@@ -626,7 +635,9 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
       }
       return { success: true, userOpHash: saved.authorizationUserOpHash }
     }
-    if (outcome === 'pending') throw new Error(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`)
+    if (outcome === 'pending') {
+      sessionAuthGuard(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`, { chainKey, outcome, hasHash: true })
+    }
   }
   const feeOverrides = await gasStationFeeOverrides(client, chainKey)
   const mappingClient = client.extend(modularWalletActions as any) as any
@@ -636,14 +647,32 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     const mappings = await mappingClient.getAddressMapping({ owner: { type: 'EOAOWNER', identifier: { address: delegateAddress } } })
     mappingKnown = true
     mappingExists = (Array.isArray(mappings) ? mappings : []).some((mapping: any) => String(mapping.walletAddress || '').toLowerCase() === state.walletAddress!.toLowerCase())
-  } catch {
+  } catch (error: any) {
     // Do not submit an owner mutation when Circle cannot answer the mapping
     // read. A transient/unknown RPC error is not proof that addOwners is safe.
+    // In explicit diagnostics mode expose only a redacted error summary so the
+    // real Circle failure is visible without leaking addresses or credentials.
+    if (SESSION_AUTH_DEBUG) {
+      const raw = String(error?.shortMessage || error?.message || error || '')
+      const redacted = raw
+        .replace(/0x[0-9a-fA-F]{64}/g, '0xHASH')
+        .replace(/0x[0-9a-fA-F]{40}/g, '0xADDR')
+        .replace(/Bearer\s+\S+/gi, 'Bearer <redacted>')
+        .replace(/https?:\/\/\S+/gi, '<url-redacted>')
+        .replace(/([?&](?:key|token|secret|signature|authorization|api[_-]?key)=)[^&\s]+/gi, '$1<redacted>')
+        .replace(/\b(?:api[_-]?key|client[_-]?key|private[_-]?key|secret|token)\s*[:=]\s*[^\s,;]+/gi, '<redacted>')
+      console.warn('[session-auth-debug] Circle mapping read failed', {
+        chainKey,
+        errorName: String(error?.name || 'Error').slice(0, 80),
+        errorCode: typeof error?.code === 'number' || typeof error?.code === 'string' ? String(error.code).slice(0, 40) : undefined,
+        error: redacted.slice(0, 500),
+      })
+    }
   }
 
   const savedOutcome = savedForDelegate?.authorizationUserOpHash ? await userOpOutcome(client, savedForDelegate.authorizationUserOpHash, savedForDelegate.updatedAt) : 'unknown'
   if (savedForDelegate?.authorizationUserOpHash && savedOutcome === 'unknown') {
-    throw new Error(`${chainKey}: authorization UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak mengulang addOwners.`)
+    sessionAuthGuard(`${chainKey}: authorization UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak mengulang addOwners.`, { chainKey, outcome: savedOutcome, hasHash: true })
   }
   // A hashless marker is never enough to prove that a previous operation was
   // rejected. If the browser persisted pending/authorized before losing the
@@ -655,7 +684,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
       || (savedForDelegate.authorizationStatus === 'failed' && savedForDelegate.authorizationPrecheckFailed !== true)
   ) && !savedForDelegate.authorizationUserOpHash)
   if (hashlessAuthorizationMarker) {
-    throw new Error(`${chainKey}: status authorization tersimpan tanpa hash UserOperation; lakukan login passkey ulang untuk membuat attempt baru dengan binding yang jelas.`)
+    sessionAuthGuard(`${chainKey}: status authorization tersimpan tanpa hash UserOperation; lakukan login passkey ulang untuk membuat attempt baru dengan binding yang jelas.`, { chainKey, outcome: 'hashless_marker', hasHash: false })
   }
   const retryDecision = authorizationRetryDecision({
     mappingKnown,
@@ -663,10 +692,16 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     previousOutcome: savedOutcome,
     previousAttempt: Boolean(savedForDelegate?.authorizationUserOpHash),
   })
-  if (retryDecision === 'unavailable') throw new Error(`${chainKey}: Circle mapping state tidak dapat diverifikasi untuk authorization yang sudah pernah dimulai; retry diblokir agar tidak mengulang addOwners.`)
+  if (retryDecision === 'unavailable') {
+    sessionAuthGuard(`${chainKey}: Circle mapping state tidak dapat diverifikasi untuk authorization yang sudah pernah dimulai; retry diblokir agar tidak mengulang addOwners.`, { chainKey, retryDecision, mappingKnown, mappingExists })
+  }
   if (retryDecision === 'already_authorized') return { success: true, userOpHash: savedForDelegate!.authorizationUserOpHash }
-  if (retryDecision === 'pending') throw new Error(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`)
-  if (retryDecision === 'unreconciled') throw new Error(`${chainKey}: delegate mapping sudah ada tetapi owner state belum dapat direkonsiliasi; authorization retry diblokir untuk mencegah duplicate addOwners.`)
+  if (retryDecision === 'pending') {
+    sessionAuthGuard(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`, { chainKey, retryDecision, mappingKnown, mappingExists })
+  }
+  if (retryDecision === 'unreconciled') {
+    sessionAuthGuard(`${chainKey}: delegate mapping sudah ada tetapi owner state belum dapat direkonsiliasi; authorization retry diblokir untuk mencegah duplicate addOwners.`, { chainKey, retryDecision, mappingKnown, mappingExists })
+  }
 
   // Circle mapping has been read successfully and the retry decision is safe.
   // Persist the attempt marker immediately before mutation so a browser close
