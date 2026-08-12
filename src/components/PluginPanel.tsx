@@ -684,6 +684,67 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setOauthStatus('signing')
     setError(null)
     try {
+      // Claude may open this approval page in a separate browser context from
+      // Plugin, so its localStorage can lack the passkey/MSCA binding. Never
+      // issue an unbound OAuth token in that case: authenticate the selected
+      // Agent Wallet in this context first and verify that its session is active.
+      let oauthMscaWalletAddress = mscaState.walletAddress || ''
+      let oauthMscaSessionToken = localStorage.getItem('arx_passkey_vault_token') || ''
+      let hydratedPasskey = false
+      let sessionData: any = null
+      let sessionVerified = false
+      for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
+        const needsPasskey = passkeyAttempt > 0 || !oauthMscaWalletAddress || !oauthMscaSessionToken
+        if (needsPasskey) {
+          if (passkeyAttempt > 0) {
+            // A stale token/address pair must not block the one allowed retry.
+            localStorage.removeItem('arx_vault_token')
+            localStorage.removeItem('arx_passkey_vault_token')
+            oauthMscaWalletAddress = ''
+            oauthMscaSessionToken = ''
+          }
+          const passkey = await withTimeout(
+            loginPasskey(),
+            60_000,
+            'Login Passkey timeout. Izinkan passkey di halaman OAuth lalu coba lagi.',
+          )
+          oauthMscaWalletAddress = passkey.walletAddress
+          oauthMscaSessionToken = passkey.sessionToken
+          hydratedPasskey = true
+        }
+        // Always verify the exact token/address pair, including when storage was
+        // present. This prevents stale localStorage from producing an OAuth token
+        // bound to an inactive or different MSCA.
+        const sessionResponse = await withTimeout(
+          fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${oauthMscaSessionToken}` } }),
+          20_000,
+          'Verifikasi session passkey timeout. Coba lagi.',
+        )
+        sessionData = await sessionResponse.json().catch(() => ({}))
+        const verifiedWallet = String(sessionData?.session?.walletAddress || '').toLowerCase()
+        sessionVerified = sessionResponse.ok
+          && sessionData?.session?.active === true
+          && Boolean(oauthMscaWalletAddress)
+          && verifiedWallet === oauthMscaWalletAddress.toLowerCase()
+      }
+      if (!sessionVerified) {
+        if (sessionData?.session?.active !== true) {
+          throw new Error('Agent Wallet belum aktif. Aktifkan session key di Plugin page terlebih dahulu.')
+        }
+        throw new Error('Passkey session tidak cocok dengan MSCA yang dipilih. Login ulang Passkey di Plugin page.')
+      }
+      if (hydratedPasskey) {
+        localStorage.setItem('arx_vault_token', oauthMscaSessionToken)
+        localStorage.setItem('arx_passkey_vault_token', oauthMscaSessionToken)
+        setSessionToken(oauthMscaSessionToken)
+        setMscaState(prev => ({
+          ...prev,
+          walletAddress: oauthMscaWalletAddress,
+          delegateAddress: sessionData.session.delegateAddress || prev.delegateAddress,
+          sessionActive: true,
+        }))
+      }
+
       // 1. Get SIWE challenge from MCP server. Every network/provider step is
       // bounded so a suspended mobile tab cannot leave the button stuck forever.
       const msgResp = await withTimeout(
@@ -748,10 +809,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // In particular, do not fall back to the EOA/SIWE token: that would bind
       // an identity without proof of control of the selected Agent Wallet.
       const mscaBinding: Record<string, string> = {}
-      const candidatePasskeyToken = localStorage.getItem('arx_passkey_vault_token') || ''
-      if (candidatePasskeyToken && mscaState.walletAddress) {
-        mscaBinding.mscaWalletAddress = mscaState.walletAddress
-        mscaBinding.mscaSessionToken = candidatePasskeyToken
+      if (oauthMscaSessionToken && oauthMscaWalletAddress) {
+        mscaBinding.mscaWalletAddress = oauthMscaWalletAddress
+        mscaBinding.mscaSessionToken = oauthMscaSessionToken
       }
 
       // 3. Verify → get auth code → redirect
