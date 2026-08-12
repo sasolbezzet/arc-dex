@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, preloadPasskeyOptions, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx, serializeWebAuthnCredential } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -145,8 +145,31 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   })
   const [busy, setBusy] = useState<string | null>(null)
   const [destinationReady, setDestinationReady] = useState(false)
+  const [passkeyOptionsReady, setPasskeyOptionsReady] = useState(false)
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
+
+  // Preload the Circle WebAuthn challenge while the page is idle. The browser
+  // prompt must be initiated from the button event; fetching options first
+  // prevents the SDK's preflight network await from losing transient user
+  // activation and causing NotAllowedError.
+  useEffect(() => {
+    let cancelled = false
+    const preload = async () => {
+      try {
+        await Promise.all([preloadPasskeyOptions('Login'), preloadPasskeyOptions('Register')])
+        if (!cancelled) setPasskeyOptionsReady(true)
+      } catch (error) {
+        if (!cancelled) {
+          setPasskeyOptionsReady(false)
+          console.warn('[passkey] options prefetch unavailable; retry will explain the state', error)
+        }
+      }
+    }
+    preload()
+    const timer = window.setInterval(() => { if (!document.hidden) preload() }, 90_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [])
 
   // ── MSCA / Passkey handlers ──
   const run = async (label: string, fn: () => Promise<any>) => {
@@ -168,10 +191,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     finally { setBusy(null) }
   }
-  const passkeySessionToken = async (walletAddress: string) => {
+  const passkeySessionToken = async (walletAddress: string, credential?: unknown, mode: 'Login' | 'Register' = 'Login') => {
+    if (!credential) throw new Error('Login passkey ulang diperlukan untuk menerbitkan token vault.')
     const res = await fetch(`${API}/api/auth/passkey-login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ walletAddress }),
+      body: JSON.stringify({ walletAddress, credential: serializeWebAuthnCredential(credential), mode }),
     })
     const data = await res.json()
     if (!data.success || !data.token) throw new Error(data?.error || 'Passkey login gagal')
@@ -206,6 +230,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     // apparently-active backend signer that will later revert.
     const token = existingToken || await passkeySessionToken(walletAddress)
     if (!token) throw new Error('Passkey token gagal')
+    const ownerSessionToken = eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined
     const deployment = await deployAllSmartAccounts()
     const arcResult = deployment.results['arc-testnet']
     setMscaState(prev => ({ ...prev, walletAddress, deployed: arcResult?.status === 'deployed', deploymentStatus: getDeploymentStatus() }))
@@ -213,7 +238,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const failed = Object.entries(deployment.results).filter(([, result]) => result.status === 'failed').map(([chain, result]) => `${chain}: ${result.error || 'gagal'}`).join('; ')
       throw new Error(`Deployment MSCA Arc gagal. Session key belum diaktifkan.${failed ? ` ${failed}` : ''}`)
     }
-    const result = await setupSessionKey(token, eoaAddress)
+    const result = await setupSessionKey(token, eoaAddress, ownerSessionToken)
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
     const destinationErrors: string[] = Object.entries(deployment.results)
       .filter(([chainKey, result]) => chainKey !== 'arc-testnet' && result.status === 'failed')
@@ -240,30 +265,37 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // MSCA sudah terkunci — jangan buat baru tanpa konfirmasi eksplisit.
       throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
     }
-    const { walletAddress } = await registerPasskey()
+    const { walletAddress, credential } = await registerPasskey()
     // Flow: setupSessionKey (generate delegate) → deploySmartAccount (deploy + addOwners)
     // Backend generates delegate EOA, then frontend deploys MSCA with delegate as owner.
-    await autoActivateSession(walletAddress, address ?? undefined)
+    const token = await passkeySessionToken(walletAddress, credential, 'Register')
+    await autoActivateSession(walletAddress, address ?? undefined, token)
   }
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
-    const { walletAddress } = await registerPasskey()
-    await autoActivateSession(walletAddress, address ?? undefined)
+    const { walletAddress, credential } = await registerPasskey()
+    const token = await passkeySessionToken(walletAddress, credential, 'Register')
+    await autoActivateSession(walletAddress, address ?? undefined, token)
   }
   const loginMsca = async () => {
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
-    const { walletAddress } = await loginPasskey()
-    await autoActivateSession(walletAddress, address ?? undefined)
+    const { walletAddress, credential } = await loginPasskey()
+    const token = await passkeySessionToken(walletAddress, credential, 'Login')
+    await autoActivateSession(walletAddress, address ?? undefined, token)
   }
   const setupSession = async () => {
     // Always mint a token bound to the selected MSCA. The ordinary SIWE token
     // belongs to the connected EOA and must never be reused for MSCA setup.
     const selectedMsca = getMscaState().walletAddress || mscaState.walletAddress
     if (!selectedMsca) throw new Error('Agent Wallet MSCA belum dibuat')
-    const token = await passkeySessionToken(selectedMsca)
+    let token = sessionToken
+    if (!token) {
+      const fresh = await loginPasskey()
+      token = await passkeySessionToken(selectedMsca, fresh.credential, 'Login')
+    }
     if (!token) throw new Error('Login vault gagal. Tanda tangan wallet diperlukan.')
-    const result = await setupSessionKey(token, address)
+    const result = await setupSessionKey(token, address, localStorage.getItem('arx_eoa_vault_token') || undefined)
     setMscaState(prev => ({ ...prev, walletAddress: selectedMsca, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: prev.deployed }))
     // Confirm the backend source of truth with the same MSCA-bound token before
     // leaving the UI in an optimistic active state.
@@ -280,7 +312,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal. Periksa policy Gas Station dan coba lagi.')
     const walletAddress = mscaState.walletAddress
     const delegateAddress = mscaState.delegateAddress
-    const token = sessionToken || (walletAddress ? await passkeySessionToken(walletAddress) : '')
+    const token = sessionToken || (walletAddress ? await (async () => { const fresh = await loginPasskey(); return passkeySessionToken(walletAddress, fresh.credential, 'Login') })() : '')
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
     const errors: string[] = []
     if (walletAddress && delegateAddress && token) {
@@ -301,7 +333,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const prepareBaseSepoliaBridge = async () => {
     if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error('Aktifkan session key Arc terlebih dahulu.')
-    const token = sessionToken || await passkeySessionToken(mscaState.walletAddress)
+    const fresh = sessionToken ? null : await loginPasskey()
+    const token = sessionToken || await passkeySessionToken(mscaState.walletAddress, fresh!.credential, 'Login')
     if (!token) throw new Error('Passkey token gagal.')
     await deploySmartAccountOnChain('base-sepolia')
     await authorizeDelegateOnChain('base-sepolia', mscaState.walletAddress, mscaState.delegateAddress, token)
@@ -413,6 +446,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       if (token) {
         setSessionToken(token)
         localStorage.setItem('arx_vault_token', token)
+        localStorage.setItem('arx_eoa_vault_token', token)
       }
     }
     setAuthLoading(false)
@@ -421,21 +455,26 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Passkey login — register or login with passkey, then get session token from backend
   const doPasskeyLogin = async () => {
     let walletAddress: string
+    let credential: { id: string; publicKey: string; raw?: unknown }
     const existing = getMscaState()
+    const mode = existing.walletAddress ? 'Login' as const : 'Register' as const
     if (existing.walletAddress) {
       // Already have MSCA — login with existing passkey
       const result = await loginPasskey()
       walletAddress = result.walletAddress
+      credential = result.credential
     } else {
       // First time — register new passkey + create MSCA
       const result = await registerPasskey()
       walletAddress = result.walletAddress
+      credential = result.credential
     }
-    // Get session token from backend (skip SIWE)
+    // Get session token from backend (skip SIWE). The backend independently
+    // verifies this exact WebAuthn assertion before issuing a vault token.
     const res = await fetch(`${API}/api/auth/passkey-login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ walletAddress }),
+      body: JSON.stringify({ walletAddress, credential: serializeWebAuthnCredential(credential), mode }),
     })
     const data = await res.json()
     if (!data.success) throw new Error(data.error || 'Passkey login gagal')
@@ -908,11 +947,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               Buat smart account (MSCA) dengan passkey. Setelah passkey selesai, deployment otomatis dicoba di Arc, Base, dan Arbitrum dengan Circle Gas Station. Ethereum Sepolia ditampilkan unsupported karena Circle belum menyediakan MSCA di chain itu.
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
-                🔐 Login Passkey
+              <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login' || !passkeyOptionsReady} onClick={() => run('login', loginMsca)}>
+                {passkeyOptionsReady ? '🔐 Login Passkey' : '⏳ Menyiapkan Passkey...'}
               </button>
-              <button className='btn' style={{ flex: 1, border: '1px solid #1e1e2e' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
-                ✨ Buat Baru
+              <button className='btn' style={{ flex: 1, border: '1px solid #1e1e2e' }} disabled={busy === 'register' || !passkeyOptionsReady} onClick={() => run('register', registerMsca)}>
+                {passkeyOptionsReady ? '✨ Buat Baru' : '⏳ Menyiapkan Passkey...'}
               </button>
             </div>
           </div>

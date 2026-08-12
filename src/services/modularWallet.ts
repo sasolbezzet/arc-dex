@@ -14,26 +14,26 @@ import {
   toWebAuthnCredential,
   WebAuthnMode,
   recoveryActions,
-  getUserOperationGasPrice,
-  modularWalletActions,
 } from '@circle-fin/modular-wallets-core'
-import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
-import { hasCompleteFeeEnvelope, isBundlerPrecheckError, isSuccessfulUserOpReceipt, normalizeArbitrumFees, parseFeeWei, requestPaymasterWithFees, authorizationRetryDecision } from './mscaPolicy'
-import { createBundlerClient, getPaymasterData, getPaymasterStubData, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
+import { createPublicClient, defineChain } from 'viem'
+import { isSuccessfulUserOpReceipt } from './mscaPolicy'
+import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 
+// Circle's documented Modular Wallet endpoint and credential names.
+// The Client Key must be created in Circle Console and bound to this web origin;
+// it is not interchangeable with the server-side CIRCLE_API_KEY.
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL || 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
 const API = ''  // same origin proxy
-// Temporary production diagnostics. When explicitly enabled this records the
-// guard context in the browser console, but it never bypasses an ambiguous
-// UserOperation or submits a second addOwners mutation. Backend activation still
-// requires a successful receipt, exact MSCA sender, and exact addOwners calldata.
-const SESSION_AUTH_DEBUG = String(import.meta.env.VITE_SESSION_AUTH_DEBUG || '').toLowerCase() === 'true'
-function sessionAuthGuard(message: string, context: Record<string, unknown> = {}) {
-  if (SESSION_AUTH_DEBUG) console.warn('[session-auth-debug] authorization blocked', { message, ...context })
-  throw new Error(message)
-}
+const PASSKEY_ORIGIN = String(import.meta.env.VITE_PASSKEY_ORIGIN || 'https://arcoxdex.vercel.app').replace(/\/$/, '')
+let passkeyOperationInFlight: Promise<unknown> | null = null
+const PASSKEY_OPTIONS_TTL_MS = 120_000
+const PASSKEY_REGISTRATION_USERNAME_KEY = 'arx_passkey_registration_username'
+type PasskeyMode = 'Login' | 'Register'
+type PasskeyOptionCache = { options: any; expiresAt: number; username?: string }
+const passkeyOptionsCache = new Map<PasskeyMode, PasskeyOptionCache>()
+const passkeyPrefetches = new Map<PasskeyMode, Promise<any>>()
 
 // ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
 // The SDK validates CLIENT_URL as a real Circle domain (isCircleUrl check), so we
@@ -85,6 +85,101 @@ function saveState(state: Partial<MscaState>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 }
 
+function bytesToBase64Url(value: unknown) {
+  if (value === null || value === undefined) return null
+  const bytes = value instanceof ArrayBuffer
+    ? new Uint8Array(value)
+    : value instanceof Uint8Array
+      ? value
+      : new Uint8Array((value as any)?.buffer || value as any)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function requireBase64Url(value: unknown, field: string, optional = false) {
+  if (value === null || value === undefined) {
+    if (optional) return undefined
+    throw new Error(`Passkey credential field ${field} tidak tersedia. Login passkey ulang diperlukan.`)
+  }
+  const normalized = typeof value === 'string' ? value : bytesToBase64Url(value)
+  if (!normalized || !/^[A-Za-z0-9_-]+$/.test(normalized)) {
+    throw new Error(`Passkey credential field ${field} tidak valid. Login passkey ulang diperlukan.`)
+  }
+  return normalized
+}
+
+function normalizeSerializedCredential(value: any) {
+  if (!value || typeof value !== 'object' || !value.id || !value.response) {
+    throw new Error('Passkey credential tidak tersedia. Login passkey ulang diperlukan.')
+  }
+  const response = value.response
+  return {
+    id: String(value.id),
+    rawId: requireBase64Url(value.rawId, 'rawId'),
+    type: value.type || 'public-key',
+    response: {
+      clientDataJSON: requireBase64Url(response.clientDataJSON, 'clientDataJSON'),
+      authenticatorData: requireBase64Url(response.authenticatorData, 'authenticatorData'),
+      signature: requireBase64Url(response.signature, 'signature'),
+      ...(response.userHandle !== null && response.userHandle !== undefined ? { userHandle: requireBase64Url(response.userHandle, 'userHandle') } : {}),
+      ...(response.attestationObject !== null && response.attestationObject !== undefined ? { attestationObject: requireBase64Url(response.attestationObject, 'attestationObject') } : {}),
+      ...(typeof response.publicKeyAlgorithm === 'number' ? { publicKeyAlgorithm: response.publicKeyAlgorithm } : {}),
+      ...(Array.isArray(response.transports) ? { transports: response.transports } : {}),
+    },
+  }
+}
+
+function hasWebAuthnResponse(value: any): boolean {
+  return Boolean(value && typeof value === 'object' && value.id && value.response)
+}
+
+function unwrapWebAuthnCredential(credential: any): any {
+  let current = credential
+  const seen = new Set<any>()
+  for (let depth = 0; current && depth < 4 && !seen.has(current); depth++) {
+    if (hasWebAuthnResponse(current)) return current
+    seen.add(current)
+    if (current.raw && typeof current.raw === 'object') current = current.raw
+    else if (current.credential && typeof current.credential === 'object') current = current.credential
+    else break
+  }
+  return current
+}
+
+/** Send the raw browser credential to Circle, not the SDK's derived wrapper. */
+export function serializeWebAuthnCredential(credential: any) {
+  const raw = unwrapWebAuthnCredential(credential)
+  if (!hasWebAuthnResponse(raw)) throw new Error('Passkey credential tidak tersedia. Login passkey ulang diperlukan.')
+
+  // PublicKeyCredential.toJSON() is supported by modern browsers, but older
+  // Safari/WebViews may expose it partially or not at all. Prefer it only when
+  // it contains the complete assertion; otherwise read the ArrayBuffers from
+  // the native response explicitly.
+  if (typeof raw.toJSON === 'function') {
+    try {
+      const serialized = raw.toJSON()
+      if (hasWebAuthnResponse(serialized)) return normalizeSerializedCredential(serialized)
+    } catch { /* use the explicit ArrayBuffer path below */ }
+  }
+
+  const response = raw.response
+  return normalizeSerializedCredential({
+    id: raw.id,
+    rawId: bytesToBase64Url(raw.rawId),
+    type: raw.type || 'public-key',
+    response: {
+      clientDataJSON: bytesToBase64Url(response.clientDataJSON),
+      authenticatorData: bytesToBase64Url(response.authenticatorData),
+      signature: bytesToBase64Url(response.signature),
+      ...(response.userHandle !== null && response.userHandle !== undefined ? { userHandle: bytesToBase64Url(response.userHandle) } : {}),
+      ...(response.attestationObject ? { attestationObject: bytesToBase64Url(response.attestationObject) } : {}),
+      ...(typeof response.publicKeyAlgorithm === 'number' ? { publicKeyAlgorithm: response.publicKeyAlgorithm } : {}),
+      ...(Array.isArray(response.transports) ? { transports: response.transports } : {}),
+    },
+  })
+}
+
 function clearState() {
   localStorage.removeItem(STORAGE_KEY)
 }
@@ -93,9 +188,24 @@ function clearState() {
 function ensurePasskeyEnvironment() {
   if (typeof window === 'undefined') throw new Error('Passkey hanya dapat digunakan di browser.')
   if (!window.isSecureContext) throw new Error('Passkey membutuhkan HTTPS atau localhost. Buka ARCOX melalui https://arcoxdex.vercel.app.')
-  if (typeof window.PublicKeyCredential !== 'function' || typeof navigator.credentials?.get !== 'function') {
+  if (window.location.origin !== PASSKEY_ORIGIN && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    throw new Error(`Passkey terikat ke ${PASSKEY_ORIGIN}. Buka ARCOX dari ${PASSKEY_ORIGIN}, bukan ${window.location.origin}.`)
+  }
+  if (typeof window.PublicKeyCredential !== 'function' || typeof navigator.credentials?.get !== 'function' || typeof navigator.credentials?.create !== 'function') {
     throw new Error('Browser ini tidak mendukung WebAuthn passkey. Gunakan Chrome, Edge, Safari, atau Firefox versi terbaru.')
   }
+}
+
+function runPasskeyOperation<T>(operation: () => Promise<T>): Promise<T> {
+  if (passkeyOperationInFlight) {
+    throw new Error('Permintaan passkey masih berjalan. Selesaikan atau batalkan prompt passkey yang terbuka, lalu coba lagi.')
+  }
+  const request = operation()
+  passkeyOperationInFlight = request
+  request.finally(() => {
+    if (passkeyOperationInFlight === request) passkeyOperationInFlight = null
+  }).catch(() => {})
+  return request
 }
 
 function passkeyTransport() {
@@ -103,23 +213,98 @@ function passkeyTransport() {
   return toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
 }
 
-function passkeyErrorMessage(error: unknown) {
-  // Only DOMException names identify a WebAuthn failure. Do not classify a
-  // generic Circle RPC message containing words such as "timeout" or "cancel"
-  // as missing passkeys; that hides the actual transport problem.
-  const name = String((error as any)?.name || '')
-  const message = String((error as any)?.message || error || '')
-  const isDomException = typeof DOMException !== 'undefined' && error instanceof DOMException
-  if (name === 'NotAllowedError' || (name === 'AbortError' && isDomException)) {
-    return 'Passkey dibatalkan atau tidak ditemukan. Pilih passkey ARCOX yang sudah terdaftar, lalu izinkan Windows Hello, Touch ID, atau security key.'
+function registrationUsername() {
+  try {
+    const saved = localStorage.getItem(PASSKEY_REGISTRATION_USERNAME_KEY)
+    if (saved) return saved
+    const value = `arx-user-${Date.now()}`
+    localStorage.setItem(PASSKEY_REGISTRATION_USERNAME_KEY, value)
+    return value
+  } catch {
+    return `arx-user-${Date.now()}`
   }
-  if (name === 'SecurityError' || name === 'InvalidStateError') {
-    return 'Passkey tidak dapat dipakai pada origin ini. Buka ARCOX dari domain yang sama saat passkey dibuat: https://arcoxdex.vercel.app.'
+}
+
+function passkeyRpcClient() {
+  return createPublicClient({
+    chain: arcTestnet,
+    transport: passkeyTransport() as any,
+  }) as any
+}
+
+/** Load Circle's short-lived WebAuthn challenge before the click. */
+export async function preloadPasskeyOptions(mode: PasskeyMode): Promise<void> {
+  ensurePasskeyEnvironment()
+  const cached = passkeyOptionsCache.get(mode)
+  if (cached && cached.expiresAt > Date.now()) return
+  const existing = passkeyPrefetches.get(mode)
+  if (existing) { await existing; return }
+  const username = mode === 'Register' ? registrationUsername() : undefined
+  const request = (async () => {
+    const client = passkeyRpcClient()
+    const options = await client.request({
+      method: mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions',
+      params: [mode === 'Register' ? username : ''],
+    })
+    if (!options?.challenge) throw new Error(`Circle passkey ${mode.toLowerCase()} options tidak tersedia.`)
+    passkeyOptionsCache.set(mode, { options, expiresAt: Date.now() + PASSKEY_OPTIONS_TTL_MS, username })
+  })()
+  passkeyPrefetches.set(mode, request)
+  try { await request } finally { passkeyPrefetches.delete(mode) }
+}
+
+function cachedPasskeyTransport(mode: PasskeyMode) {
+  const cached = passkeyOptionsCache.get(mode)
+  if (!cached || cached.expiresAt <= Date.now()) {
+    throw new Error('Passkey sedang disiapkan. Tunggu sampai status passkey siap, lalu klik tombol lagi.')
+  }
+  const factory: any = toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
+  return ((config: any) => {
+    const base: any = factory(config)
+    return {
+      ...base,
+      request: async (request: any) => {
+        if (request?.method === (mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions')) return cached.options
+        return base.request(request)
+      },
+    }
+  }) as any
+}
+
+function passkeyErrorMessage(error: unknown) {
+  // Circle wraps the browser DOMException in one or more Error.cause layers.
+  // Inspect the complete chain so NotAllowedError is not shown as an opaque
+  // "Failed to request credential" transport error.
+  const seen = new Set<unknown>()
+  let current: any = error
+  let name = ''
+  let message = ''
+  let domException = false
+  const names: string[] = []
+  const messages: string[] = []
+  for (let depth = 0; current && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current)
+    const currentName = String(current?.name || '')
+    const currentMessage = String(current?.message || '')
+    if (currentName) names.push(currentName)
+    if (currentMessage) messages.push(currentMessage)
+    if (!name && currentName && !['Error', 'Exception'].includes(currentName)) name = currentName
+    if (!message && currentMessage) message = currentMessage
+    domException ||= typeof DOMException !== 'undefined' && current instanceof DOMException
+    current = current?.cause
+  }
+  const errorText = messages.join(' ')
+  if (names.includes('NotAllowedError') || names.includes('AbortError') || /timed out or was not allowed/i.test(errorText)) {
+    return `Passkey tidak selesai. Pastikan prompt authenticator disetujui dalam 90 detik, lalu coba lagi dari ${PASSKEY_ORIGIN}. Jika prompt tidak muncul, batalkan prompt lama dan pastikan passkey dibuat pada origin yang sama.`
+  }
+  if (names.includes('SecurityError') || names.includes('InvalidStateError') || /rp.?id|origin/i.test(errorText)) {
+    return `Passkey tidak cocok dengan origin. Buka ${PASSKEY_ORIGIN} dan gunakan passkey yang dibuat di domain tersebut.`
   }
   if (name === 'NotSupportedError') {
     return 'Perangkat/browser ini tidak menyediakan authenticator WebAuthn. Aktifkan Windows Hello, Touch ID, atau security key, lalu coba dari HTTPS.'
   }
-  return message || 'Passkey login gagal.'
+  if (domException && !message) return 'Browser menolak permintaan passkey. Batalkan prompt yang tertinggal, klik tombol sekali, lalu coba lagi.'
+  return message || String(error || '') || 'Passkey login gagal.'
 }
 
 const EVM_CHAIN_CONFIG = {
@@ -144,39 +329,6 @@ function chainConfig(chainKey = 'arc-testnet') {
 
 function modularTransport(chainKey = 'arc-testnet') {
   return toModularTransport(`${CLIENT_URL}/${chainConfig(chainKey).slug}`, CLIENT_KEY)
-}
-
-// Public clients read chain state and construct the deterministic account.
-// Bundler clients submit ERC-4337 UserOperations and attach Circle Gas Station
-// paymaster data when the Console policy permits the operation.
-//
-// Circle's fee endpoint is the source of truth for sponsored UserOperations.
-// Some Arbitrum Sepolia responses contain a zero priority fee, which the
-// bundler rejects at precheck even though the paymaster policy is enabled.
-async function gasStationFeeOverrides(client: any, chainKey = 'arc-testnet') {
-  try {
-    const prices = await getUserOperationGasPrice(client as any) as any
-    const level = prices?.high || prices?.medium || prices?.low || {}
-    const priority = parseFeeWei(level.maxPriorityFeePerGas)
-    const max = parseFeeWei(level.maxFeePerGas)
-    if (chainKey !== 'arbitrum-sepolia') {
-      // Let Circle's estimator own the envelope on chains without the observed
-      // Arbitrum zero-tip precheck. Only forward a complete non-zero pair.
-      return priority > 0n && max >= priority
-        ? { maxPriorityFeePerGas: priority, maxFeePerGas: max }
-        : {}
-    }
-    let networkGasPrice = 0n
-    try {
-      networkGasPrice = parseFeeWei(await client.request({ method: 'eth_gasPrice' }))
-    } catch { /* Circle quote remains usable if public gasPrice is unavailable. */ }
-    return normalizeArbitrumFees(priority, max, networkGasPrice)
-  } catch {
-    if (chainKey !== 'arbitrum-sepolia') return {}
-    let networkGasPrice = 0n
-    try { networkGasPrice = parseFeeWei(await client.request({ method: 'eth_gasPrice' })) } catch { /* use safe floor */ }
-    return normalizeArbitrumFees(0n, 0n, networkGasPrice)
-  }
 }
 
 async function userOpOutcome(client: any, userOpHash?: string, submittedAt?: number) {
@@ -220,38 +372,22 @@ function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
   })
 }
 
-// Circle's paymaster response on Arbitrum Sepolia can include a zero tip.
-// Inject the validated fee envelope into the parameters before Circle signs the
-// sponsorship payload. Remove only fee fields from the response so viem keeps
-// the request fees while retaining paymaster/paymasterData validity fields.
-function paymasterWithFeeOverrides(chainKey: string, bundlerClient: any, fees: Partial<{ maxPriorityFeePerGas: bigint; maxFeePerGas: bigint }>) {
-  // Only Arbitrum has exhibited the zero-tip response. Keep Arc/Base on the
-  // official Circle paymaster path and apply the adapter narrowly to Arbitrum.
-  if (chainKey !== 'arbitrum-sepolia' || !hasCompleteFeeEnvelope(fees)) return true
-  return {
-    getPaymasterStubData: (parameters: any) => requestPaymasterWithFees(
-      parameters,
-      fees,
-      request => getPaymasterStubData(bundlerClient as any, request) as Promise<any>,
-    ),
-    getPaymasterData: (parameters: any) => requestPaymasterWithFees(
-      parameters,
-      fees,
-      request => getPaymasterData(bundlerClient as any, request) as Promise<any>,
-    ),
-  }
-}
 
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string } }> {
-  const pkTransport = passkeyTransport()
+export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown } }> {
+  ensurePasskeyEnvironment()
+  const pkTransport = cachedPasskeyTransport('Register')
 
+  // Keep one browser credential request at a time. Double clicks, React
+  // retries, or an old prompt settling after timeout can otherwise create
+  // competing navigator.credentials calls and surface NotAllowedError.
+  return runPasskeyOperation(async () => {
   // Step 1: Register passkey credential (browser prompts user for biometric)
   try {
     const credential = await toWebAuthnCredential({
       transport: pkTransport,
       mode: WebAuthnMode.Register,
-      username: `arx-user-${Date.now()}`,
+      username: registrationUsername(),
     })
 
     // Step 2: Create modular transport + public client for Arc Testnet
@@ -276,6 +412,7 @@ export async function registerPasskey(): Promise<{ walletAddress: string; creden
   } catch (error) {
     throw new Error(passkeyErrorMessage(error), { cause: error })
   }
+  })
 }
 
 
@@ -303,20 +440,14 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   const previousStatus = loadState().deploymentStatus?.['arc-testnet']
   const previousHash = previousStatus?.userOpHash
   const previousOutcome = await userOpOutcome(client, previousHash, previousStatus?.updatedAt)
-  if (previousHash && (previousOutcome === 'pending' || previousOutcome === 'unknown')) {
-    throw new Error('arc-testnet: deployment UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak memakai nonce yang sama.')
-  }
-
   // Deployment is the first UserOperation. It requires an intentional passkey
   // approval and must happen in the browser, where the WebAuthn credential lives.
   // NOTE: addOwners must be a SEPARATE UserOp after deployment (registerDelegateOwner).
   // Calling addOwners in the same UserOp as deploy causes "execution reverted"
   // because the MSCA storage isn't fully initialized yet.
-  const feeOverrides = await gasStationFeeOverrides(client, 'arc-testnet')
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    paymaster: paymasterWithFeeOverrides('arc-testnet', bundlerClient, feeOverrides),
-    ...feeOverrides,
+    paymaster: true,
   })
   const previousDeployment = loadState().deploymentStatus?.['arc-testnet']
   saveDeploymentStatus('arc-testnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() })
@@ -414,18 +545,13 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
   const previousStatus = loadState().deploymentStatus?.[chainKey]
   const previousHash = previousStatus?.userOpHash
   const previousOutcome = await userOpOutcome(client, previousHash, previousStatus?.updatedAt)
-  if (previousHash && (previousOutcome === 'pending' || previousOutcome === 'unknown')) {
-    throw new Error(`${chainKey}: deployment UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak memakai nonce yang sama.`)
-  }
   if (previousOutcome === 'success' && await smartAccount.isDeployed()) {
     saveDeploymentStatus(chainKey, { ...(previousStatus as DeploymentStatus), status: 'deployed', userOpHash: previousHash, updatedAt: Date.now() })
     return { walletAddress: state.walletAddress, deployed: true, userOpHash: previousHash }
   }
-  const feeOverrides = await gasStationFeeOverrides(client, chainKey)
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
-    paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
-    ...feeOverrides,
+    paymaster: true,
   })
   const previousDeployment = loadState().deploymentStatus?.[chainKey]
   saveDeploymentStatus(chainKey, { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() })
@@ -439,10 +565,12 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
 }
 
 // ── Login with existing passkey ──
-export async function loginPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string } }> {
+export async function loginPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown } }> {
+  ensurePasskeyEnvironment()
   const state = loadState()
-  const pkTransport = passkeyTransport()
+  const pkTransport = cachedPasskeyTransport('Login')
 
+  return runPasskeyOperation(async () => {
   try {
     // Step 1: Login passkey (browser prompts user for biometric)
     const credential = await toWebAuthnCredential({
@@ -471,7 +599,10 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
       ...state,
       walletAddress,
       credential,
-      sessionActive: state.sessionActive || false,
+      // A passkey login proves control of the credential, not that the
+      // backend delegate session is still active. The UI refreshes the
+      // authoritative backend status after this function returns.
+      sessionActive: false,
       deployed: state.deployed,
       delegateAddress: state.delegateAddress,
       deploymentStatus: state.deploymentStatus,
@@ -481,12 +612,13 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
   } catch (error) {
     throw new Error(passkeyErrorMessage(error), { cause: error })
   }
+  })
 }
 
 // ── Setup session key: authorize delegate on-chain, then store it in vault ──
 // The backend must never activate a signer before the MSCA has accepted it.
 // The delegate is an automation key, not the user's EOA or passkey key.
-export async function setupSessionKey(vaultToken: string, ownerAddress?: string): Promise<{
+export async function setupSessionKey(vaultToken: string, ownerAddress?: string, ownerSessionToken?: string): Promise<{
   walletAddress: string
   delegateAddress: string
   active: boolean
@@ -501,29 +633,48 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string)
   const reserveRes = await fetch(`${API}/api/session/generate-key`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
-    body: JSON.stringify({ walletAddress: state.walletAddress, ownerAddress }),
+    body: JSON.stringify({ walletAddress: state.walletAddress, ownerAddress, ownerSessionToken }),
   })
   const reserved = await reserveRes.json()
   if (!reserveRes.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
   const delegateAddress = reserved.delegateAddress
-  // If a previous browser attempt received a hash but failed to record it
-  // server-side, recover that exact hash before considering any new mutation.
-  // A hashless reservation is different: no UserOperation hash was ever
-  // persisted, so this function must continue into registerDelegateOwner().
-  // That function performs Circle mapping reconciliation and only submits the
-  // exact addOwners operation when its own retry policy says it is safe. The
-  // old early throw stranded these reservations permanently as inactive.
-  if (reserved.hashless) {
-    const localAttempt = getDeploymentStatus()['arc-testnet']
-    const localHash = localAttempt?.authorizationUserOpHash
-    const localDelegate = localAttempt?.authorizationDelegateAddress?.toLowerCase()
-    if (localHash && localDelegate === delegateAddress.toLowerCase()) {
-      const record = await fetch(`${API}/api/session/authorization-attempt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${vaultToken}` },
-        body: JSON.stringify({ walletAddress: state.walletAddress, delegateAddress, authorizationUserOpHash: localHash, chainKey: 'arc-testnet' }),
-      })
-      if (!record.ok) throw new Error('Authorization hash lokal gagal direkonsiliasi ke backend; jangan kirim addOwners kedua.')
+
+  // A passkey login may be restoring an existing on-chain authorization. Ask
+  // the backend for its authoritative status before generating another
+  // addOwners UserOperation. The endpoint reconciles an inactive record only
+  // when it can independently verify the stored receipt and calldata; this
+  // avoids duplicate owner mutations and also repairs the old split-brain
+  // vault/session state after a restart or lost browser response.
+  const existingStatus = await fetch(`${API}/api/session/status`, {
+    headers: { Authorization: `Bearer ${vaultToken}` },
+  }).then(async response => {
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data?.error || `Session status failed (${response.status})`)
+    return data?.session || null
+  })
+  if (existingStatus?.active === true && String(existingStatus.walletAddress || '').toLowerCase() === state.walletAddress.toLowerCase()) {
+    saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, sessionActive: true })
+    return { walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, active: true }
+  }
+
+  // An inactivity sweep can make the authoritative store look inactive even
+  // though the exact addOwners UserOperation already succeeded on-chain.
+  // Reconcile that proof before considering another owner mutation.
+  if (existingStatus?.authorizationUserOpHash) {
+    const reconcileResponse = await fetch(`${API}/api/session/reconcile`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${vaultToken}` },
+    })
+    const reconcileData = await reconcileResponse.json().catch(() => ({}))
+    if (!reconcileResponse.ok) throw new Error(reconcileData?.error || `Session reconciliation failed (${reconcileResponse.status})`)
+    if (reconcileData?.session?.active === true) {
+      const reconciledDelegate = reconcileData.session.delegateAddress || delegateAddress
+      saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, sessionActive: true })
+      return { walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, active: true }
+    }
+    const reason = String(reconcileData?.session?.reason || '')
+    if (reason && reason !== 'authorization_proof_missing') {
+      throw new Error(`Session authorization belum dapat direkonsiliasi: ${reason}`)
     }
   }
 
@@ -573,15 +724,18 @@ export async function getSessionStatus(vaultToken: string): Promise<{
   active: boolean
   walletAddress?: string
   delegateAddress?: string
+  statusReason?: string
+  reconciled?: boolean
 }> {
   try {
     const res = await fetch(`${API}/api/session/status`, {
       headers: { 'Authorization': `Bearer ${vaultToken}` },
     })
-    const data = await res.json()
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.error || `Session status failed (${res.status})`)
     return data.session || { active: false }
   } catch {
-    return { active: false }
+    return { active: false, statusReason: 'status_unavailable' }
   }
 }
 
@@ -635,77 +789,14 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
       }
       return { success: true, userOpHash: saved.authorizationUserOpHash }
     }
-    if (outcome === 'pending') {
-      sessionAuthGuard(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`, { chainKey, outcome, hasHash: true })
-    }
   }
-  const feeOverrides = await gasStationFeeOverrides(client, chainKey)
-  const mappingClient = client.extend(modularWalletActions as any) as any
-  let mappingKnown = false
-  let mappingExists = false
-  try {
-    const mappings = await mappingClient.getAddressMapping({ owner: { type: 'EOAOWNER', identifier: { address: delegateAddress } } })
-    mappingKnown = true
-    mappingExists = (Array.isArray(mappings) ? mappings : []).some((mapping: any) => String(mapping.walletAddress || '').toLowerCase() === state.walletAddress!.toLowerCase())
-  } catch (error: any) {
-    // Do not submit an owner mutation when Circle cannot answer the mapping
-    // read. A transient/unknown RPC error is not proof that addOwners is safe.
-    // In explicit diagnostics mode expose only a redacted error summary so the
-    // real Circle failure is visible without leaking addresses or credentials.
-    if (SESSION_AUTH_DEBUG) {
-      const raw = String(error?.shortMessage || error?.message || error || '')
-      const redacted = raw
-        .replace(/0x[0-9a-fA-F]{64}/g, '0xHASH')
-        .replace(/0x[0-9a-fA-F]{40}/g, '0xADDR')
-        .replace(/Bearer\s+\S+/gi, 'Bearer <redacted>')
-        .replace(/https?:\/\/\S+/gi, '<url-redacted>')
-        .replace(/([?&](?:key|token|secret|signature|authorization|api[_-]?key)=)[^&\s]+/gi, '$1<redacted>')
-        .replace(/\b(?:api[_-]?key|client[_-]?key|private[_-]?key|secret|token)\s*[:=]\s*[^\s,;]+/gi, '<redacted>')
-      console.warn('[session-auth-debug] Circle mapping read failed', {
-        chainKey,
-        errorName: String(error?.name || 'Error').slice(0, 80),
-        errorCode: typeof error?.code === 'number' || typeof error?.code === 'string' ? String(error.code).slice(0, 40) : undefined,
-        error: redacted.slice(0, 500),
-      })
-    }
-  }
+  // Let Circle's recovery action own mapping initialization. It treats an
+  // already-known mapping as idempotent and then submits addOwners with the
+  // exact payload used by Circle's SDK. No local mapping preflight or retry
+  // decision can strand a fresh passkey authorization.
 
-  const savedOutcome = savedForDelegate?.authorizationUserOpHash ? await userOpOutcome(client, savedForDelegate.authorizationUserOpHash, savedForDelegate.updatedAt) : 'unknown'
-  if (savedForDelegate?.authorizationUserOpHash && savedOutcome === 'unknown') {
-    sessionAuthGuard(`${chainKey}: authorization UserOperation belum dapat direkonsiliasi; retry diblokir agar tidak mengulang addOwners.`, { chainKey, outcome: savedOutcome, hasHash: true })
-  }
-  // A hashless marker is never enough to prove that a previous operation was
-  // rejected. If the browser persisted pending/authorized before losing the
-  // response, a known-empty mapping may still be stale. Only an explicit
-  // pre-submission failure marker is retryable; all other hashless markers stay
-  // fail-closed to prevent duplicate addOwners.
-  const hashlessAuthorizationMarker = Boolean(savedForDelegate?.authorizationStatus && (
-    ['pending', 'authorized'].includes(savedForDelegate.authorizationStatus)
-      || (savedForDelegate.authorizationStatus === 'failed' && savedForDelegate.authorizationPrecheckFailed !== true)
-  ) && !savedForDelegate.authorizationUserOpHash)
-  if (hashlessAuthorizationMarker) {
-    sessionAuthGuard(`${chainKey}: status authorization tersimpan tanpa hash UserOperation; lakukan login passkey ulang untuk membuat attempt baru dengan binding yang jelas.`, { chainKey, outcome: 'hashless_marker', hasHash: false })
-  }
-  const retryDecision = authorizationRetryDecision({
-    mappingKnown,
-    mappingExists,
-    previousOutcome: savedOutcome,
-    previousAttempt: Boolean(savedForDelegate?.authorizationUserOpHash),
-  })
-  if (retryDecision === 'unavailable') {
-    sessionAuthGuard(`${chainKey}: Circle mapping state tidak dapat diverifikasi untuk authorization yang sudah pernah dimulai; retry diblokir agar tidak mengulang addOwners.`, { chainKey, retryDecision, mappingKnown, mappingExists })
-  }
-  if (retryDecision === 'already_authorized') return { success: true, userOpHash: savedForDelegate!.authorizationUserOpHash }
-  if (retryDecision === 'pending') {
-    sessionAuthGuard(`${chainKey}: authorization UserOperation masih pending; tunggu receipt sebelum retry.`, { chainKey, retryDecision, mappingKnown, mappingExists })
-  }
-  if (retryDecision === 'unreconciled') {
-    sessionAuthGuard(`${chainKey}: delegate mapping sudah ada tetapi owner state belum dapat direkonsiliasi; authorization retry diblokir untuk mencegah duplicate addOwners.`, { chainKey, retryDecision, mappingKnown, mappingExists })
-  }
-
-  // Circle mapping has been read successfully and the retry decision is safe.
   // Persist the attempt marker immediately before mutation so a browser close
-  // after this point fails closed instead of submitting duplicate addOwners.
+  // after this point can still recover the exact submitted hash.
   saveDeploymentStatus(chainKey, {
     ...(loadState().deploymentStatus?.[chainKey] || { status: 'deployed' }),
     authorizationDelegateAddress: delegateAddress,
@@ -715,52 +806,18 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
 
   let userOpHash: string
   try {
-    if (mappingExists) {
-    // The SDK action calls circle_createAddressMapping before addOwners. When
-    // the mapping already exists, bypass that mutation and submit only the
-    // exact addOwners call; this avoids the Base retry revert caused by replaying
-    // the mapping step while retaining the same Circle paymaster flow.
-    const addOwnersAbi = [{
-      type: 'function', name: 'addOwners', stateMutability: 'nonpayable',
-      inputs: [
-        { name: 'ownersToAdd', type: 'address[]' }, { name: 'weightsToAdd', type: 'uint256[]' },
-        { name: 'publicKeyOwnersToAdd', type: 'tuple[]', components: [{ name: 'x', type: 'uint256' }, { name: 'y', type: 'uint256' }] },
-        { name: 'publicKeyWeightsToAdd', type: 'uint256[]' }, { name: 'newThresholdWeight', type: 'uint256' },
-      ], outputs: [],
-    }] as const
-    // Match Circle's recoveryActions payload exactly. A zero threshold is
-    // invalid for the weighted owner plugin and reverts during simulation.
-    const callData = encodeFunctionData({ abi: addOwnersAbi, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 1n] })
-      userOpHash = await sendUserOperation(bundlerClient as any, {
-        account: smartAccount as any,
-        callData,
-        paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
-        ...feeOverrides,
-      })
-    } else {
-      userOpHash = await bundlerClient.registerRecoveryAddress({
+    // Mirror Circle's recoveryActions implementation exactly. It performs the
+    // idempotent createAddressMapping call (ignoring ALREADY_KNOWN), then sends
+    // addOwners([delegate], [1], [], [], 0). This avoids the local mapping
+    // branch that previously stranded an otherwise valid session activation.
+    userOpHash = await bundlerClient.registerRecoveryAddress({
       account: smartAccount as any,
       recoveryAddress: delegateAddress as `0x${string}`,
-      paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
-        ...feeOverrides,
-      })
-    }
+      paymaster: true,
+    })
   } catch (error: any) {
-    // A bundler simulation/precheck revert occurs before a UserOperation hash
-    // exists. Mark that specific local marker retryable; transport failures and
-    // unknown outcomes remain guarded to avoid duplicate addOwners.
-    const message = String(error?.message || error || '')
-    if (isBundlerPrecheckError(error)) {
-      const current = loadState().deploymentStatus?.[chainKey]
-      if (current) saveDeploymentStatus(chainKey, {
-        ...current,
-        authorizationStatus: 'failed',
-        authorizationPrecheckFailed: true,
-        authorizationError: message,
-        authorizationUserOpHash: undefined,
-        updatedAt: Date.now(),
-      })
-    }
+    // Surface Circle's original error unchanged so its official bundler
+    // response can be debugged and retried by the user.
     throw error
   }
   // Persist locally and server-side before waiting. The backend records the
@@ -825,13 +882,11 @@ export async function signPendingTx(txId: string, calls: Array<{ to: string; dat
   // Using a plain public client here omits Circle Gas Station paymaster data,
   // which makes the relayed Arbitrum UserOp fall back to native ETH funding.
   const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
-  const feeOverrides = await gasStationFeeOverrides(client, chainKey)
   const { signUserOperation } = await import('viem/account-abstraction')
   const signedUserOp = await signUserOperation(bundlerClient as any, {
     account: smartAccount as any,
     calls: normalizedCalls,
-    paymaster: paymasterWithFeeOverrides(chainKey, bundlerClient, feeOverrides),
-    ...feeOverrides,
+    paymaster: true,
   })
 
   // Submit signed UserOp to backend relay
