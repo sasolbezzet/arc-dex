@@ -756,10 +756,14 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
     if (lastReconcileReason === 'authorization_pending') {
       throw new Error('Session authorization masih diproses Circle. Hash yang sama tetap disimpan; tunggu beberapa detik lalu tekan Login Passkey lagi, jangan membuat Agent Wallet baru.')
     }
-    // Any existing authorization hash must be resolved explicitly. Never fall
-    // through to a new addOwners call when reconciliation returned an empty or
-    // missing proof state, because that could create a duplicate owner.
-    throw new Error(`Session authorization belum aktif; rekonsiliasi hash lama berhenti pada: ${lastReconcileReason || 'unknown'}`)
+    // `authorization_proof_missing` means the stored hash is either not
+    // finalized or was pruned by the bundler index and the record was never
+    // activated. In both cases there is no on-chain owner proof yet, so it is
+    // safe to authorize a fresh addOwners UserOperation below. Only an
+    // explicit unresolved hash (e.g. a manual revoke) must block activation.
+    if (lastReconcileReason && lastReconcileReason !== 'authorization_proof_missing') {
+      throw new Error(`Session authorization belum aktif; rekonsiliasi hash lama berhenti pada: ${lastReconcileReason || 'unknown'}`)
+    }
   }
 
   // The passkey authorizes exactly this reserved address.
