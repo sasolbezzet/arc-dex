@@ -175,7 +175,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     try {
       const deployedOnChain = await isSmartAccountDeployedOnChain(chainKey, walletAddress)
       if (!deployedOnChain) throw new Error('MSCA belum deployed on-chain; authorization dibatalkan')
-      authorization = await registerDelegateOwner(delegateAddress, chainKey)
+      authorization = await registerDelegateOwner(delegateAddress, chainKey, token)
     } catch (error: any) {
       throw new Error(`${chainKey}: authorization UserOp gagal: ${error?.message || 'unknown error'}`)
     }

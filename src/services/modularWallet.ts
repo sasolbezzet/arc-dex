@@ -668,7 +668,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   }
 
   // The passkey authorizes exactly this reserved address on-chain.
-  const authorization = await registerDelegateOwner(delegateAddress)
+  const authorization = await registerDelegateOwner(delegateAddress, 'arc-testnet', vaultToken)
   if (!authorization.success || !authorization.userOpHash) throw new Error('Automation signer authorization did not return a UserOperation hash')
 
   // Activate the already-reserved signer only after authorization succeeded.
@@ -741,7 +741,7 @@ export function clearMscaState() {
 // ── Register delegate EOA as on-chain owner via recovery mechanism ──
 // ONE-TIME: passkey signs UserOp to add delegate as owner. After this,
 // backend can sign all transactions automatically with delegate EOA.
-export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-testnet'): Promise<{ success: boolean; userOpHash?: string }> {
+export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-testnet', vaultToken = ''): Promise<{ success: boolean; userOpHash?: string }> {
   const state = loadState()
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
   const config = chainConfig(chainKey)
@@ -814,7 +814,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   // verifies a successful receipt and exact addOwners calldata.
   mergeAuthorizationStatus(chainKey, userOpHash, delegateAddress)
   try {
-    const token = localStorage.getItem('arx_vault_token')
+    const token = vaultToken || localStorage.getItem('arx_vault_token') || ''
     if (token) {
       const response = await fetch(`${API}/api/session/authorization-attempt`, {
         method: 'POST',
