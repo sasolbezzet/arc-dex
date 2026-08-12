@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx, serializeWebAuthnCredential } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -168,18 +168,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     finally { setBusy(null) }
   }
-  const passkeySessionToken = async (walletAddress: string, credential?: unknown, mode: 'Login' | 'Register' = 'Login') => {
-    if (!credential) throw new Error('Login passkey ulang diperlukan untuk menerbitkan token vault.')
-    const res = await fetch(`${API}/api/auth/passkey-login`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ walletAddress, credential: serializeWebAuthnCredential(credential), mode }),
-    })
-    const data = await res.json()
-    if (!data.success || !data.token) throw new Error(data?.error || 'Passkey login gagal')
-    setSessionToken(data.token)
-    localStorage.setItem('arx_vault_token', data.token)
-    return data.token
-  }
   const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string) => {
     const deployment = getDeploymentStatus()[chainKey]
     if (deployment?.status !== 'deployed') throw new Error(`${chainKey}: MSCA belum deployed (deployment status gagal atau belum diverifikasi)`)
@@ -205,7 +193,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     // Deploy first, then register the automation signer on-chain, and only then
     // persist it server-side. A failed owner registration must never leave an
     // apparently-active backend signer that will later revert.
-    const token = existingToken || await passkeySessionToken(walletAddress)
+    const token = existingToken
+
     if (!token) throw new Error('Passkey token gagal')
     const ownerSessionToken = eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined
     const deployment = await deployAllSmartAccounts()
@@ -242,24 +231,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // MSCA sudah terkunci — jangan buat baru tanpa konfirmasi eksplisit.
       throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
     }
-    const { walletAddress, credential } = await registerPasskey()
-    // Flow: setupSessionKey (generate delegate) → deploySmartAccount (deploy + addOwners)
-    // Backend generates delegate EOA, then frontend deploys MSCA with delegate as owner.
-    const token = await passkeySessionToken(walletAddress, credential, 'Register')
-    await autoActivateSession(walletAddress, address ?? undefined, token)
+    const { walletAddress, sessionToken } = await registerPasskey()
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
-    const { walletAddress, credential } = await registerPasskey()
-    const token = await passkeySessionToken(walletAddress, credential, 'Register')
-    await autoActivateSession(walletAddress, address ?? undefined, token)
+    const { walletAddress, sessionToken } = await registerPasskey()
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const loginMsca = async () => {
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
-    const { walletAddress, credential } = await loginPasskey()
-    const token = await passkeySessionToken(walletAddress, credential, 'Login')
-    await autoActivateSession(walletAddress, address ?? undefined, token)
+    const { walletAddress, sessionToken } = await loginPasskey()
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const revokeSession = async () => {
     if (!sessionToken) throw new Error('Login vault gagal')
@@ -272,7 +256,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal. Periksa policy Gas Station dan coba lagi.')
     const walletAddress = mscaState.walletAddress
     const delegateAddress = mscaState.delegateAddress
-    const token = sessionToken || (walletAddress ? await (async () => { const fresh = await loginPasskey(); return passkeySessionToken(walletAddress, fresh.credential, 'Login') })() : '')
+    const token = sessionToken || (walletAddress ? (await loginPasskey()).sessionToken : '')
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
     const errors: string[] = []
     if (walletAddress && delegateAddress && token) {
@@ -294,7 +278,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const prepareBaseSepoliaBridge = async () => {
     if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error('Aktifkan session key Arc terlebih dahulu.')
     const fresh = sessionToken ? null : await loginPasskey()
-    const token = sessionToken || await passkeySessionToken(mscaState.walletAddress, fresh!.credential, 'Login')
+    const token = sessionToken || fresh!.sessionToken
     if (!token) throw new Error('Passkey token gagal.')
     await deploySmartAccountOnChain('base-sepolia')
     await authorizeDelegateOnChain('base-sepolia', mscaState.walletAddress, mscaState.delegateAddress, token)
@@ -414,34 +398,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   // Passkey login — register or login with passkey, then get session token from backend
   const doPasskeyLogin = async () => {
-    let walletAddress: string
-    let credential: { id: string; publicKey: string; raw?: unknown }
     const existing = getMscaState()
-    const mode = existing.walletAddress ? 'Login' as const : 'Register' as const
-    if (existing.walletAddress) {
-      // Already have MSCA — login with existing passkey
-      const result = await loginPasskey()
-      walletAddress = result.walletAddress
-      credential = result.credential
-    } else {
-      // First time — register new passkey + create MSCA
-      const result = await registerPasskey()
-      walletAddress = result.walletAddress
-      credential = result.credential
-    }
-    // Get session token from backend (skip SIWE). The backend independently
-    // verifies this exact WebAuthn assertion before issuing a vault token.
-    const res = await fetch(`${API}/api/auth/passkey-login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ walletAddress, credential: serializeWebAuthnCredential(credential), mode }),
-    })
-    const data = await res.json()
-    if (!data.success) throw new Error(data.error || 'Passkey login gagal')
-    setSessionToken(data.token)
-    localStorage.setItem('arx_vault_token', data.token)
-    // Reuse the same fail-closed multi-chain deployment + delegate authorization flow.
-    await autoActivateSession(walletAddress, address ?? undefined, data.token)
+    const result = existing.walletAddress ? await loginPasskey() : await registerPasskey()
+    setSessionToken(result.sessionToken)
+    localStorage.setItem('arx_vault_token', result.sessionToken)
+    await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
   }
 
   // Poll backend session-key status so the indicator reflects the server truth,

@@ -2,17 +2,14 @@
 // Follows official Circle docs: https://developers.circle.com/wallets/modular/create-a-wallet-and-send-gasless-txn
 //
 // Flow:
-//   1. registerPasskey() → toWebAuthnCredential({ transport, mode: Register }) → credential
+//   1. registerPasskey()/loginPasskey() → browser WebAuthn → one backend Circle verification
 //   2. createSmartAccount() → toCircleSmartAccount → MSCA address
 //   3. setupSessionKey() → generate delegate EOA → createAddressMapping → POST /api/session/setup
 //   4. Agent uses source=session to execute tx via MSCA
 
 import {
-  toPasskeyTransport,
   toModularTransport,
   toCircleSmartAccount,
-  toWebAuthnCredential,
-  WebAuthnMode,
   recoveryActions,
 } from '@circle-fin/modular-wallets-core'
 import { createPublicClient, defineChain } from 'viem'
@@ -58,6 +55,7 @@ declare global { interface Window { __circleProxyInstalled?: boolean } }
 
 // ── Persisted state ──
 const STORAGE_KEY = 'arx_msca_state'
+let livePasskeyCredential: any = null
 
 type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationPrecheckFailed?: boolean; authorizationError?: string; error?: string; updatedAt: number }
 
@@ -73,11 +71,16 @@ interface MscaState {
 function loadState(): Partial<MscaState> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
+    const state = raw ? JSON.parse(raw) : {}
+    if (livePasskeyCredential && state?.credential && !state.credential.raw) {
+      state.credential = { ...state.credential, raw: livePasskeyCredential }
+    }
+    return state
   } catch { return {} }
 }
 
 function saveState(state: Partial<MscaState>) {
+  if (state.credential?.raw) livePasskeyCredential = state.credential.raw
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 }
 
@@ -177,6 +180,7 @@ export function serializeWebAuthnCredential(credential: any) {
 }
 
 function clearState() {
+  livePasskeyCredential = null
   localStorage.removeItem(STORAGE_KEY)
 }
 
@@ -204,11 +208,6 @@ function runPasskeyOperation<T>(operation: () => Promise<T>): Promise<T> {
   return request
 }
 
-function passkeyTransport() {
-  ensurePasskeyEnvironment()
-  return toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
-}
-
 function registrationUsername() {
   try {
     const saved = localStorage.getItem(PASSKEY_REGISTRATION_USERNAME_KEY)
@@ -221,39 +220,65 @@ function registrationUsername() {
   }
 }
 
-function passkeyRpcClient() {
-  return createPublicClient({
-    chain: arcTestnet,
-    transport: passkeyTransport() as any,
-  }) as any
+/**
+ * Fetch a fresh Circle challenge for exactly one browser operation. The
+ * browser assertion is sent to the backend, which performs the one and only
+ * rp_get*Verification call and returns the verified public key.
+ */
+async function freshPasskeyOptions(mode: PasskeyMode) {
+  ensurePasskeyEnvironment()
+  const username = mode === 'Register' ? registrationUsername() : ''
+  const response = await fetch(`${API}/api/auth/passkey-options`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode, username }),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || !data.success || !data.flowId || !data.options?.challenge) {
+    throw new Error(data?.error || `Circle passkey ${mode.toLowerCase()} options tidak tersedia.`)
+  }
+  return { options: data.options, flowId: String(data.flowId) }
 }
 
-/**
- * Fetch a fresh Circle challenge for exactly one browser operation. Circle
- * tracks the challenge in a short-lived server session; prefetching Login and
- * Register options and reusing them later can overwrite or expire that session.
- */
-async function freshPasskeyTransport(mode: PasskeyMode) {
-  ensurePasskeyEnvironment()
-  const client = passkeyRpcClient()
-  const username = mode === 'Register' ? registrationUsername() : undefined
-  const options = await client.request({
-    method: mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions',
-    params: [mode === 'Register' ? username : ''],
-  })
-  if (!options?.challenge) throw new Error(`Circle passkey ${mode.toLowerCase()} options tidak tersedia.`)
+function base64UrlToBytes(value: string): Uint8Array {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+  const binary = atob(padded)
+  return Uint8Array.from(binary, character => character.charCodeAt(0))
+}
 
-  const factory: any = toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
-  return ((config: any) => {
-    const base: any = factory(config)
-    return {
-      ...base,
-      request: async (request: any) => {
-        if (request?.method === (mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions')) return options
-        return base.request(request)
-      },
-    }
-  }) as any
+function loginPublicKeyOptions(options: any) {
+  return {
+    ...options,
+    challenge: base64UrlToBytes(options.challenge),
+    ...(Array.isArray(options.allowCredentials) ? {
+      allowCredentials: options.allowCredentials.map((credential: any) => ({
+        ...credential,
+        id: base64UrlToBytes(credential.id),
+      })),
+    } : {}),
+  }
+}
+
+function registrationPublicKeyOptions(options: any) {
+  return {
+    ...options,
+    challenge: base64UrlToBytes(options.challenge),
+    user: { ...options.user, id: base64UrlToBytes(options.user.id) },
+  }
+}
+
+async function verifyPasskeyWithBackend(rawCredential: any, mode: PasskeyMode, flowId: string) {
+  const response = await fetch(`${API}/api/auth/passkey-login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential: serializeWebAuthnCredential(rawCredential), mode, flowId }),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || !data.success || !data.token || !data.credential?.publicKey || !data.address) {
+    throw new Error(data?.error || 'Passkey verification gagal')
+  }
+  return data
 }
 
 function passkeyErrorMessage(error: unknown) {
@@ -359,44 +384,35 @@ function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
 
 
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown } }> {
+export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown }; sessionToken: string }> {
   ensurePasskeyEnvironment()
-  // Keep one browser credential request at a time. Double clicks, React
-  // retries, or an old prompt settling after timeout can otherwise create
-  // competing navigator.credentials calls and surface NotAllowedError.
+  // Keep one browser credential request at a time. The browser assertion is
+  // verified by Circle exactly once on the backend; the SDK high-level helper
+  // is intentionally not used because it would verify the same session again.
   return runPasskeyOperation(async () => {
-  // Fetch the challenge after the click so Circle's server session is fresh.
-  const pkTransport = await freshPasskeyTransport('Register')
-  // Step 1: Register passkey credential (browser prompts user for biometric)
-  try {
-    const credential = await toWebAuthnCredential({
-      transport: pkTransport,
-      mode: WebAuthnMode.Register,
-      username: registrationUsername(),
-    })
+    try {
+      const { options, flowId } = await freshPasskeyOptions('Register')
+      const rawCredential = await navigator.credentials.create({
+        publicKey: registrationPublicKeyOptions(options),
+      }) as any
+      if (!rawCredential) throw new Error('No credential created.')
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId)
+      const credential = { id: String(rawCredential.id), publicKey: String(verified.credential.publicKey), raw: rawCredential }
 
-    // Step 2: Create modular transport + public client for Arc Testnet
-    const modTransport = modularTransport()
-    const client = createPublicClient({
-      chain: arcTestnet,
-      transport: modTransport as any,
-    })
-
-    // Step 3: Create smart account from passkey credential
-    const smartAccount = await toCircleSmartAccount({
-      client: client as any,
-      owner: toWebAuthnAccount({ credential }),
-    })
-
-    const walletAddress = smartAccount.address as string
-
-    // Persist
-    saveState({ walletAddress, credential, sessionActive: false })
-
-    return { walletAddress, credential }
-  } catch (error) {
-    throw new Error(passkeyErrorMessage(error), { cause: error })
-  }
+      const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+      const smartAccount = await toCircleSmartAccount({
+        client: client as any,
+        owner: toWebAuthnAccount({ credential }),
+      })
+      const walletAddress = String(verified.address)
+      if (String(smartAccount.address).toLowerCase() !== walletAddress.toLowerCase()) {
+        throw new Error('Passkey wallet address mismatch')
+      }
+      saveState({ walletAddress, credential, sessionActive: false })
+      return { walletAddress, credential, sessionToken: String(verified.token) }
+    } catch (error) {
+      throw new Error(passkeyErrorMessage(error), { cause: error })
+    }
   })
 }
 
@@ -550,53 +566,41 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
 }
 
 // ── Login with existing passkey ──
-export async function loginPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown } }> {
+export async function loginPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown }; sessionToken: string }> {
   ensurePasskeyEnvironment()
   const state = loadState()
   return runPasskeyOperation(async () => {
-  // Fetch the challenge after the click so Circle's server session is fresh.
-  const pkTransport = await freshPasskeyTransport('Login')
-  try {
-    // Step 1: Login passkey (browser prompts user for biometric)
-    const credential = await toWebAuthnCredential({
-      transport: pkTransport,
-      mode: WebAuthnMode.Login,
-    })
+    try {
+      const { options, flowId } = await freshPasskeyOptions('Login')
+      const rawCredential = await navigator.credentials.get({
+        publicKey: loginPublicKeyOptions(options),
+      }) as any
+      if (!rawCredential) throw new Error('No credential available.')
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId)
+      const credential = { id: String(rawCredential.id), publicKey: String(verified.credential.publicKey), raw: rawCredential }
 
-    // Step 2: Recreate smart account from credential
-    const modTransport = modularTransport()
-    const client = createPublicClient({
-      chain: arcTestnet,
-      transport: modTransport as any,
-    })
-
-    const smartAccount = await toCircleSmartAccount({
-      client: client as any,
-      owner: toWebAuthnAccount({ credential }),
-    })
-
-    const walletAddress = smartAccount.address as string
-
-    // Preserve locally known deployment/delegate metadata across passkey login.
-    // Dropping it here makes a valid existing MSCA appear inactive until a full
-    // setup flow runs again, and can incorrectly make deployment look missing.
-    saveState({
-      ...state,
-      walletAddress,
-      credential,
-      // A passkey login proves control of the credential, not that the
-      // backend delegate session is still active. The UI refreshes the
-      // authoritative backend status after this function returns.
-      sessionActive: false,
-      deployed: state.deployed,
-      delegateAddress: state.delegateAddress,
-      deploymentStatus: state.deploymentStatus,
-    })
-
-    return { walletAddress, credential }
-  } catch (error) {
-    throw new Error(passkeyErrorMessage(error), { cause: error })
-  }
+      const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+      const smartAccount = await toCircleSmartAccount({
+        client: client as any,
+        owner: toWebAuthnAccount({ credential }),
+      })
+      const walletAddress = String(verified.address)
+      if (String(smartAccount.address).toLowerCase() !== walletAddress.toLowerCase()) {
+        throw new Error('Passkey wallet address mismatch')
+      }
+      saveState({
+        ...state,
+        walletAddress,
+        credential,
+        sessionActive: false,
+        deployed: state.deployed,
+        delegateAddress: state.delegateAddress,
+        deploymentStatus: state.deploymentStatus,
+      })
+      return { walletAddress, credential, sessionToken: String(verified.token) }
+    } catch (error) {
+      throw new Error(passkeyErrorMessage(error), { cause: error })
+    }
   })
 }
 
