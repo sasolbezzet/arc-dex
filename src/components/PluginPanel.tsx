@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx, serializeWebAuthnCredential } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx, serializeWebAuthnCredential } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -260,23 +260,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const { walletAddress, credential } = await loginPasskey()
     const token = await passkeySessionToken(walletAddress, credential, 'Login')
     await autoActivateSession(walletAddress, address ?? undefined, token)
-  }
-  const setupSession = async () => {
-    // Always mint a token bound to the selected MSCA. The ordinary SIWE token
-    // belongs to the connected EOA and must never be reused for MSCA setup.
-    const selectedMsca = getMscaState().walletAddress || mscaState.walletAddress
-    if (!selectedMsca) throw new Error('Agent Wallet MSCA belum dibuat')
-    let token = sessionToken
-    if (!token) {
-      const fresh = await loginPasskey()
-      token = await passkeySessionToken(selectedMsca, fresh.credential, 'Login')
-    }
-    if (!token) throw new Error('Login vault gagal. Tanda tangan wallet diperlukan.')
-    const result = await setupSessionKey(token, address, localStorage.getItem('arx_eoa_vault_token') || undefined)
-    setMscaState(prev => ({ ...prev, walletAddress: selectedMsca, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: prev.deployed }))
-    // Confirm the backend source of truth with the same MSCA-bound token before
-    // leaving the UI in an optimistic active state.
-    await refreshSessionStatus(token)
   }
   const revokeSession = async () => {
     if (!sessionToken) throw new Error('Login vault gagal')
@@ -961,24 +944,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                   : <span style={{ color: '#f59e0b' }}>○ Nonaktif</span>
                 } />
                 {!mscaState.sessionActive && (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
-                      Authorization sebelumnya belum selesai. Tekan ulang dengan passkey untuk membuat reservation signer baru yang aman.
-                    </div>
-                    <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'session'} onClick={() => run('session', setupSession)}>
-                      🔑 Aktifkan ulang Session Key
-                    </button>
+                  <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>
+                    Session key belum aktif. Login Passkey akan mengaktifkannya otomatis setelah authorization on-chain berhasil.
                   </div>
                 )}
               </>
             ) : (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
-                  Aktifkan session key untuk transfer yang diizinkan. Swap session belum tersedia sampai calldata router diverifikasi.
-                </div>
-                <button className='btn btn-primary' style={{ width: '100%' }} disabled={busy === 'session'} onClick={() => run('session', setupSession)}>
-                  🔑 Aktifkan Session Key
-                </button>
+              <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>
+                Login Passkey untuk mengaktifkan session key otomatis. Session key hanya dapat dimatikan melalui Cabut Akses.
               </div>
             )}
             {mscaState.sessionActive && (
