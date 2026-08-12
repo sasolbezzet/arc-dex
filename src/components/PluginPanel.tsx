@@ -136,7 +136,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [activity, setActivity] = useState<Activity[]>([])
   const [mcpSessions, setMcpSessions] = useState<McpSession[]>([])
   const [pendingTxs, setPendingTxs] = useState<PendingTx[]>([])
-  const [sessionToken, setSessionToken] = useState<string | null>(null)
+  const [sessionToken, setSessionTokenState] = useState<string | null>(null)
+  const sessionTokenRef = useRef<string | null>(null)
+  const setSessionToken = (token: string | null) => {
+    sessionTokenRef.current = token
+    setSessionTokenState(token)
+  }
   const [authLoading, setAuthLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -320,20 +325,29 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Clear a stale/invalid session so the deep-link auto-login can re-fire (or the
   // Sign-In wall appears). Backend session tokens are in-memory and die on every
   // backend restart, leaving localStorage holding a token the server rejects (401).
-  const clearStaleSession = () => {
-    // The passkey/MSCA vault token and the optional SIWE EOA proof are
-    // independent credentials. A stale passkey token must not erase the EOA
-    // proof needed for owner binding on the next activation.
+  const clearStaleSession = (staleToken?: string) => {
+    // A request made with the previous EOA token can finish after passkey login
+    // has installed a new MSCA token. Never let that late 401 erase the newer
+    // passkey credential (or the EOA proof needed for OAuth owner binding).
+    const currentToken = localStorage.getItem('arx_vault_token')
+    // The ref changes synchronously with setSessionToken, so an in-flight
+    // request from the previous React render cannot clear the new credential.
+    if (staleToken && sessionTokenRef.current !== staleToken) return
+    if (staleToken && currentToken !== staleToken) return
     localStorage.removeItem('arx_vault_token')
     localStorage.removeItem('arx_passkey_vault_token')
     autoLoginTried.current = false
     setSessionToken(null)
   }
 
-  // Fetch a vault endpoint; on 401 clear the stale session and signal the caller.
+  // Fetch a vault endpoint; on 401 clear only the token that made this request.
   const vaultFetch = async (path: string, init?: RequestInit) => {
-    const r = await fetch(`${API}${path}`, { ...(init || {}), headers: { ...(init?.headers || {}), ...authHeaders() } })
-    if (r.status === 401) { clearStaleSession(); throw new Error('__SESSION_EXPIRED__') }
+    const requestToken = sessionToken
+    const r = await fetch(`${API}${path}`, {
+      ...(init || {}),
+      headers: { ...(init?.headers || {}), ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}) },
+    })
+    if (r.status === 401) { clearStaleSession(requestToken); throw new Error('__SESSION_EXPIRED__') }
     return r.json()
   }
 
@@ -474,7 +488,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (!token) return
     try {
       const r = await fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${token}` } })
-      if (r.status === 401) { clearStaleSession(); return }
+      if (r.status === 401) { clearStaleSession(token); return }
       const data = await r.json()
       const info = data?.session || null
       const active = Boolean(info && info.active)
