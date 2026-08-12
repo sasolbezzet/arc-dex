@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, preloadPasskeyOptions, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx, serializeWebAuthnCredential } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx, serializeWebAuthnCredential } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -145,31 +145,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   })
   const [busy, setBusy] = useState<string | null>(null)
   const [destinationReady, setDestinationReady] = useState(false)
-  const [passkeyOptionsReady, setPasskeyOptionsReady] = useState(false)
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
-
-  // Preload the Circle WebAuthn challenge while the page is idle. The browser
-  // prompt must be initiated from the button event; fetching options first
-  // prevents the SDK's preflight network await from losing transient user
-  // activation and causing NotAllowedError.
-  useEffect(() => {
-    let cancelled = false
-    const preload = async () => {
-      try {
-        await Promise.all([preloadPasskeyOptions('Login'), preloadPasskeyOptions('Register')])
-        if (!cancelled) setPasskeyOptionsReady(true)
-      } catch (error) {
-        if (!cancelled) {
-          setPasskeyOptionsReady(false)
-          console.warn('[passkey] options prefetch unavailable; retry will explain the state', error)
-        }
-      }
-    }
-    preload()
-    const timer = window.setInterval(() => { if (!document.hidden) preload() }, 90_000)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [])
 
   // ── MSCA / Passkey handlers ──
   const run = async (label: string, fn: () => Promise<any>) => {
@@ -947,11 +924,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               Buat smart account (MSCA) dengan passkey. Setelah passkey selesai, deployment otomatis dicoba di Arc, Base, dan Arbitrum dengan Circle Gas Station. Ethereum Sepolia ditampilkan unsupported karena Circle belum menyediakan MSCA di chain itu.
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login' || !passkeyOptionsReady} onClick={() => run('login', loginMsca)}>
-                {passkeyOptionsReady ? '🔐 Login Passkey' : '⏳ Menyiapkan Passkey...'}
+              <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
+                🔐 Login Passkey
               </button>
-              <button className='btn' style={{ flex: 1, border: '1px solid #1e1e2e' }} disabled={busy === 'register' || !passkeyOptionsReady} onClick={() => run('register', registerMsca)}>
-                {passkeyOptionsReady ? '✨ Buat Baru' : '⏳ Menyiapkan Passkey...'}
+              <button className='btn' style={{ flex: 1, border: '1px solid #1e1e2e' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
+                ✨ Buat Baru
               </button>
             </div>
           </div>

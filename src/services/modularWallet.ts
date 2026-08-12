@@ -28,12 +28,8 @@ const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY || ''
 const API = ''  // same origin proxy
 const PASSKEY_ORIGIN = String(import.meta.env.VITE_PASSKEY_ORIGIN || 'https://arcoxdex.vercel.app').replace(/\/$/, '')
 let passkeyOperationInFlight: Promise<unknown> | null = null
-const PASSKEY_OPTIONS_TTL_MS = 120_000
 const PASSKEY_REGISTRATION_USERNAME_KEY = 'arx_passkey_registration_username'
 type PasskeyMode = 'Login' | 'Register'
-type PasskeyOptionCache = { options: any; expiresAt: number; username?: string }
-const passkeyOptionsCache = new Map<PasskeyMode, PasskeyOptionCache>()
-const passkeyPrefetches = new Map<PasskeyMode, Promise<any>>()
 
 // ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
 // The SDK validates CLIENT_URL as a real Circle domain (isCircleUrl check), so we
@@ -232,39 +228,28 @@ function passkeyRpcClient() {
   }) as any
 }
 
-/** Load Circle's short-lived WebAuthn challenge before the click. */
-export async function preloadPasskeyOptions(mode: PasskeyMode): Promise<void> {
+/**
+ * Fetch a fresh Circle challenge for exactly one browser operation. Circle
+ * tracks the challenge in a short-lived server session; prefetching Login and
+ * Register options and reusing them later can overwrite or expire that session.
+ */
+async function freshPasskeyTransport(mode: PasskeyMode) {
   ensurePasskeyEnvironment()
-  const cached = passkeyOptionsCache.get(mode)
-  if (cached && cached.expiresAt > Date.now()) return
-  const existing = passkeyPrefetches.get(mode)
-  if (existing) { await existing; return }
+  const client = passkeyRpcClient()
   const username = mode === 'Register' ? registrationUsername() : undefined
-  const request = (async () => {
-    const client = passkeyRpcClient()
-    const options = await client.request({
-      method: mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions',
-      params: [mode === 'Register' ? username : ''],
-    })
-    if (!options?.challenge) throw new Error(`Circle passkey ${mode.toLowerCase()} options tidak tersedia.`)
-    passkeyOptionsCache.set(mode, { options, expiresAt: Date.now() + PASSKEY_OPTIONS_TTL_MS, username })
-  })()
-  passkeyPrefetches.set(mode, request)
-  try { await request } finally { passkeyPrefetches.delete(mode) }
-}
+  const options = await client.request({
+    method: mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions',
+    params: [mode === 'Register' ? username : ''],
+  })
+  if (!options?.challenge) throw new Error(`Circle passkey ${mode.toLowerCase()} options tidak tersedia.`)
 
-function cachedPasskeyTransport(mode: PasskeyMode) {
-  const cached = passkeyOptionsCache.get(mode)
-  if (!cached || cached.expiresAt <= Date.now()) {
-    throw new Error('Passkey sedang disiapkan. Tunggu sampai status passkey siap, lalu klik tombol lagi.')
-  }
   const factory: any = toPasskeyTransport(CLIENT_URL, CLIENT_KEY)
   return ((config: any) => {
     const base: any = factory(config)
     return {
       ...base,
       request: async (request: any) => {
-        if (request?.method === (mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions')) return cached.options
+        if (request?.method === (mode === 'Register' ? 'rp_getRegistrationOptions' : 'rp_getLoginOptions')) return options
         return base.request(request)
       },
     }
@@ -376,12 +361,12 @@ function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
 // ── Register passkey + create MSCA ──
 export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown } }> {
   ensurePasskeyEnvironment()
-  const pkTransport = cachedPasskeyTransport('Register')
-
   // Keep one browser credential request at a time. Double clicks, React
   // retries, or an old prompt settling after timeout can otherwise create
   // competing navigator.credentials calls and surface NotAllowedError.
   return runPasskeyOperation(async () => {
+  // Fetch the challenge after the click so Circle's server session is fresh.
+  const pkTransport = await freshPasskeyTransport('Register')
   // Step 1: Register passkey credential (browser prompts user for biometric)
   try {
     const credential = await toWebAuthnCredential({
@@ -568,9 +553,9 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
 export async function loginPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown } }> {
   ensurePasskeyEnvironment()
   const state = loadState()
-  const pkTransport = cachedPasskeyTransport('Login')
-
   return runPasskeyOperation(async () => {
+  // Fetch the challenge after the click so Circle's server session is fresh.
+  const pkTransport = await freshPasskeyTransport('Login')
   try {
     // Step 1: Login passkey (browser prompts user for biometric)
     const credential = await toWebAuthnCredential({
