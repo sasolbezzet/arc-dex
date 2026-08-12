@@ -196,7 +196,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const token = existingToken
 
     if (!token) throw new Error('Passkey token gagal')
+    // Binding an EOA is optional. Only send ownerAddress when this browser
+    // has a separate SIWE session that proves ownership of that EOA; the
+    // passkey/MSCA session token must never be used as an EOA proof.
     const ownerSessionToken = eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined
+    const verifiedEoaAddress = ownerSessionToken ? eoaAddress : undefined
     const deployment = await deployAllSmartAccounts()
     const arcResult = deployment.results['arc-testnet']
     setMscaState(prev => ({ ...prev, walletAddress, deployed: arcResult?.status === 'deployed', deploymentStatus: getDeploymentStatus() }))
@@ -204,7 +208,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const failed = Object.entries(deployment.results).filter(([, result]) => result.status === 'failed').map(([chain, result]) => `${chain}: ${result.error || 'gagal'}`).join('; ')
       throw new Error(`Deployment MSCA Arc gagal. Session key belum diaktifkan.${failed ? ` ${failed}` : ''}`)
     }
-    const result = await setupSessionKey(token, eoaAddress, ownerSessionToken)
+    const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken)
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
     const destinationErrors: string[] = Object.entries(deployment.results)
       .filter(([chainKey, result]) => chainKey !== 'arc-testnet' && result.status === 'failed')
@@ -299,6 +303,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // backend restart, leaving localStorage holding a token the server rejects (401).
   const clearStaleSession = () => {
     localStorage.removeItem('arx_vault_token')
+    localStorage.removeItem('arx_eoa_vault_token')
     autoLoginTried.current = false
     setSessionToken(null)
   }
@@ -363,6 +368,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (token) {
       setSessionToken(token)
       localStorage.setItem('arx_vault_token', token)
+      // Keep a separate EOA proof; passkey/MSCA login may replace arx_vault_token.
+      localStorage.setItem('arx_eoa_vault_token', token)
     }
     setAuthLoading(false)
   }
@@ -384,6 +391,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       if (token) {
         setSessionToken(token)
         localStorage.setItem('arx_vault_token', token)
+        localStorage.setItem('arx_eoa_vault_token', token)
       }
     } else {
       const token = await siweLogin(addr)
@@ -721,7 +729,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <StatusDot on={claudeConnected} label="Claude" />
           <StatusDot on={anyConnected} label={anyConnected ? 'Agent aktif' : 'Belum ada agent'} />
         </div>
-        <button onClick={() => { localStorage.removeItem('arx_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>Keluar</button>
+        <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>Keluar</button>
       </div>
 
       {/* Setup MCP */}
