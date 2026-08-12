@@ -111,10 +111,10 @@ Backend:  https://43.134.14.43.nip.io
 API via frontend: https://arcoxdex.vercel.app/api/*
 ```
 
-The MCP Streamable HTTP endpoint is intentionally direct to the backend to preserve streaming:
+The public MCP endpoint is served from the production web origin. Vercel forwards it to the non-Vercel backend, so users and AI clients never need the VPS URL:
 
 ```txt
-https://43.134.14.43.nip.io/mcp
+https://arcoxdex.vercel.app/mcp
 ```
 
 Deploy frontend steps:
@@ -124,7 +124,7 @@ cd /home/ubuntu/arc-dex
 vercel --prod
 ```
 
-If the backend moves, update the external destinations in `vercel.json` and the MCP URL in `src/components/PluginPanel.tsx`.
+If the backend moves, update the external destinations in `vercel.json`; keep the public MCP URL as `https://arcoxdex.vercel.app/mcp`.
 
 Circle Gateway webhook callback (configure this exact backend URL in Circle Console):
 

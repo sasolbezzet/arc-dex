@@ -14,9 +14,9 @@ type McpSession = { clientId: string; agent: string; connectedAt: number; lastAc
 type PendingTx = { txId: string; walletAddress: string; calls: Array<{ to: string; data: string; value: string }>; chainKey: string; paymaster: boolean; status: string; createdAt: number }
 
 const API = ''
-// Streamable HTTP MCP must bypass Vercel's static external rewrite so the
-// long-lived response is not buffered or timed out by the frontend host.
-const MCP_URL = 'https://43.134.14.43.nip.io/mcp'
+// Use the public web origin in the user-facing setup instructions. Vercel
+// forwards this route to the non-Vercel backend without exposing its VPS URL.
+const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
 const SERVER_URL = 'https://arcoxdex.vercel.app'
 const AUTH_URL = `${SERVER_URL}/api/auth/authorize`
 
