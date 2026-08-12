@@ -14,7 +14,9 @@ type McpSession = { clientId: string; agent: string; connectedAt: number; lastAc
 type PendingTx = { txId: string; walletAddress: string; calls: Array<{ to: string; data: string; value: string }>; chainKey: string; paymaster: boolean; status: string; createdAt: number }
 
 const API = ''
-const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
+// Streamable HTTP MCP must bypass Vercel's static external rewrite so the
+// long-lived response is not buffered or timed out by the frontend host.
+const MCP_URL = 'https://43.134.14.43.nip.io/mcp'
 const SERVER_URL = 'https://arcoxdex.vercel.app'
 const AUTH_URL = `${SERVER_URL}/api/auth/authorize`
 
@@ -309,8 +311,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Sign-In wall appears). Backend session tokens are in-memory and die on every
   // backend restart, leaving localStorage holding a token the server rejects (401).
   const clearStaleSession = () => {
+    // The passkey/MSCA vault token and the optional SIWE EOA proof are
+    // independent credentials. A stale passkey token must not erase the EOA
+    // proof needed for owner binding on the next activation.
     localStorage.removeItem('arx_vault_token')
-    localStorage.removeItem('arx_eoa_vault_token')
     autoLoginTried.current = false
     setSessionToken(null)
   }
@@ -420,6 +424,21 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
   }
 
+  // Persist server-confirmed state as well as React state. The backend is the
+  // authority after a browser restart, while localStorage keeps the Plugin UI
+  // from showing stale destination authorization between polls.
+  const persistMscaState = (patch: Record<string, unknown> | ((prev: any) => Record<string, unknown>)) => {
+    setMscaState(prev => {
+      const resolved = typeof patch === 'function' ? patch(prev) : patch
+      const next = { ...prev, ...resolved }
+      try {
+        const stored = JSON.parse(localStorage.getItem('arx_msca_state') || '{}')
+        localStorage.setItem('arx_msca_state', JSON.stringify({ ...stored, ...next }))
+      } catch { /* localStorage is best effort; API remains authoritative */ }
+      return next
+    })
+  }
+
   // Poll backend session-key status so the indicator reflects the server truth,
   // not just the last local saveState (localStorage can be stale after a failed
   // setup or a backend-side revoke).
@@ -432,10 +451,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const data = await r.json()
       const info = data?.session || null
       const active = Boolean(info && info.active)
-      setMscaState(prev => ({
+      persistMscaState(prev => ({
         walletAddress: prev.walletAddress,
         delegateAddress: info?.delegateAddress || prev.delegateAddress || '',
         sessionActive: active,
+        sessionStatusReason: info?.statusReason || (active ? 'active' : 'inactive'),
         deployed: prev.deployed,
         deploymentStatus: prev.deploymentStatus,
         chainAuthorizationStatus: prev.chainAuthorizationStatus,
@@ -445,10 +465,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const refreshDestinationStatus = async () => {
     if (!sessionToken || !mscaState.walletAddress) return
     try {
-      const response = await fetch(`${API}/api/session/destination-status?chainKey=base-sepolia&walletAddress=${encodeURIComponent(mscaState.walletAddress)}`, { headers: authHeaders() })
-      if (!response.ok) return
-      const data = await response.json()
-      setDestinationReady(Boolean(data.deployed && data.authorized))
+      const statuses = await Promise.all(['base-sepolia', 'arbitrum-sepolia'].map(async chainKey => {
+        const response = await fetch(`${API}/api/session/destination-status?chainKey=${chainKey}&walletAddress=${encodeURIComponent(mscaState.walletAddress!)}`, { headers: authHeaders() })
+        if (!response.ok) return [chainKey, 'failed'] as const
+        const data = await response.json()
+        return [chainKey, data.deployed && data.authorized ? 'authorized' : 'failed'] as const
+      }))
+      const chainAuthorizationStatus = Object.fromEntries(statuses)
+      persistMscaState({ chainAuthorizationStatus })
+      setDestinationReady(chainAuthorizationStatus['base-sepolia'] === 'authorized')
     } catch { /* ignore transient destination RPC errors */ }
   }
   useEffect(() => {

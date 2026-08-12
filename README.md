@@ -103,34 +103,42 @@ backend. Once the backend `/api/auth/session` endpoint is migrated, set
 [`docs/backend-siwe-verifier.md`](docs/backend-siwe-verifier.md) for the
 backend migration spec.
 
-The frontend can run on Vercel. `vercel.json` builds with `VITE_BASE_PATH=/` and exposes `/api/*`, `/v1/*`, and MCP metadata on the public Vercel origin. Vercel forwards those requests to the internal backend upstream:
+The frontend is the only Vercel project. `vercel.json` builds with `VITE_BASE_PATH=/` and forwards `/api/*`, `/v1/*`, and `/.well-known/*` to the non-Vercel backend at `https://43.134.14.43.nip.io`. The backend is deployed separately from the API repository through the server's GitHub auto-deploy path; it is not a Vercel function.
 
 ```txt
-https://arcoxdex.vercel.app/api/*
+Frontend: https://arcoxdex.vercel.app
+Backend:  https://43.134.14.43.nip.io
+API via frontend: https://arcoxdex.vercel.app/api/*
 ```
 
-Deploy steps:
+The MCP Streamable HTTP endpoint is intentionally direct to the backend to preserve streaming:
+
+```txt
+https://43.134.14.43.nip.io/mcp
+```
+
+Deploy frontend steps:
 
 ```bash
 cd /home/ubuntu/arc-dex
-vercel
+vercel --prod
 ```
 
-If the backend moves, update `vercel.json` rewrite destination.
+If the backend moves, update the external destinations in `vercel.json` and the MCP URL in `src/components/PluginPanel.tsx`.
 
-Circle Gateway webhook callback (configure this exact public URL in Circle Console):
+Circle Gateway webhook callback (configure this exact backend URL in Circle Console):
 
 ```txt
-https://arcoxdex.vercel.app/api/webhooks/circle
+https://43.134.14.43.nip.io/api/webhooks/circle
 ```
 
 Circle Wallets v2 webhook callback (separate subscription):
 
 ```txt
-https://arcoxdex.vercel.app/api/webhooks/circle-wallet
+https://43.134.14.43.nip.io/api/webhooks/circle-wallet
 ```
 
-Both routes preserve the raw request body and `X-Circle-Signature` / `X-Circle-Key-Id` headers before the backend verifies the notification. Do not configure the VPS hostname in Circle Console.
+The backend owns webhook signature verification and raw-body handling. Do not configure the deleted Vercel API project or its serverless routes.
 
 Webhook env:
 
@@ -195,7 +203,7 @@ Runtime check:
 
 - Header app menampilkan `API online/offline`.
 - Jika halaman terlihat kosong, cek asset JS di DevTools Network. Vercel harus serve `/assets/*.js` sebagai `application/javascript`, bukan fallback `index.html`.
-- Jika API offline, swap/bridge/send tidak akan berjalan walaupun frontend berhasil load.
+- Jika API offline, swap/bridge/send tidak akan berjalan walaupun frontend berhasil load. Periksa juga health backend `https://43.134.14.43.nip.io/health`.
 
 ## Security Notes
 

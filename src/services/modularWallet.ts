@@ -752,8 +752,14 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
         return { walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, active: true }
       }
       lastReconcileReason = String(reconcileData?.session?.reason || '')
+      const retryAllowed = reconcileData?.session?.retryAllowed === true
       if (lastReconcileReason !== 'authorization_pending') {
-        if (lastReconcileReason === 'authorization_proof_missing') break
+        // A finalized failed UserOperation is safe to replace; the backend
+        // re-checks the old hash before accepting the new authorization.
+        if (lastReconcileReason === 'authorization_failed' && retryAllowed) break
+        // Legacy proof-missing records may retry only when the backend did not
+        // explicitly report that owner mapping/index state is unknown.
+        if (lastReconcileReason === 'authorization_proof_missing' && reconcileData?.session?.retryAllowed !== false) break
         if (lastReconcileReason) throw new Error(`Session authorization belum dapat direkonsiliasi: ${lastReconcileReason}`)
       }
       await new Promise(resolve => setTimeout(resolve, 2_000))
@@ -786,8 +792,11 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
       ownerAddress,
     }),
   })
-  const data = await res.json()
-  if (!data.success) throw new Error(data.error || 'Session setup gagal')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.success) {
+    const detail = [data.code, data.retryAllowed === true ? 'retry_allowed' : '', data.receiptStatus ? `receipt=${data.receiptStatus}` : '', data.transactionHash ? `tx=${data.transactionHash}` : ''].filter(Boolean).join(' ')
+    throw new Error(`${data.error || 'Session setup gagal'}${detail ? ` (${detail})` : ''}`)
+  }
 
   // Step 4: Update local state. The single addOwners UserOp already deployed
   // the MSCA (first UserOp carries initCode), so the wallet is on-chain now.
@@ -927,7 +936,9 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
     const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
     if (!isSuccessfulUserOpReceipt(receipt)) {
-      throw new Error(`${chainKey}: delegate authorization UserOperation reverted`)
+      const status = receipt?.receipt?.status ?? 'unknown'
+      const txHash = receipt?.receipt?.transactionHash
+      throw new Error(`${chainKey}: delegate authorization UserOperation reverted (receipt=${status}${txHash ? ` tx=${txHash}` : ''})`)
     }
     const deployed = await smartAccount.isDeployed()
     const current = loadState().deploymentStatus?.[chainKey]
