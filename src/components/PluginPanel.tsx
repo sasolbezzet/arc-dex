@@ -244,6 +244,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
+    localStorage.setItem('arx_passkey_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const forceRegisterMsca = async () => {
@@ -254,6 +255,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
+    localStorage.setItem('arx_passkey_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const loginMsca = async () => {
@@ -263,6 +265,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
+    localStorage.setItem('arx_passkey_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const revokeSession = async () => {
@@ -322,6 +325,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     // independent credentials. A stale passkey token must not erase the EOA
     // proof needed for owner binding on the next activation.
     localStorage.removeItem('arx_vault_token')
+    localStorage.removeItem('arx_passkey_vault_token')
     autoLoginTried.current = false
     setSessionToken(null)
   }
@@ -429,6 +433,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, walletAddress: result.walletAddress, sessionActive: false }))
     setSessionToken(result.sessionToken)
     localStorage.setItem('arx_vault_token', result.sessionToken)
+    localStorage.setItem('arx_passkey_vault_token', result.sessionToken)
     await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
   }
 
@@ -442,9 +447,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       try {
         const stored = JSON.parse(localStorage.getItem('arx_msca_state') || '{}')
         // React state can legitimately lag a just-completed passkey operation.
-        // Never let an undefined field erase a newer persisted value.
+        // Never let an undefined field erase a newer persisted value, and
+        // merge per-chain maps so status polling cannot erase deployment data.
         const definedPatch = Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined))
-        localStorage.setItem('arx_msca_state', JSON.stringify({ ...stored, ...definedPatch }))
+        const merged = {
+          ...stored,
+          ...definedPatch,
+          ...(definedPatch.deploymentStatus || stored.deploymentStatus ? {
+            deploymentStatus: { ...(stored.deploymentStatus || {}), ...(definedPatch.deploymentStatus || {}) },
+          } : {}),
+          ...(definedPatch.chainAuthorizationStatus || stored.chainAuthorizationStatus ? {
+            chainAuthorizationStatus: { ...(stored.chainAuthorizationStatus || {}), ...(definedPatch.chainAuthorizationStatus || {}) },
+          } : {}),
+        }
+        localStorage.setItem('arx_msca_state', JSON.stringify(merged))
       } catch { /* localStorage is best effort; API remains authoritative */ }
       return next
     })
@@ -466,9 +482,26 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         delegateAddress: info?.delegateAddress || prev.delegateAddress || '',
         sessionActive: active,
         sessionStatusReason: info?.statusReason || (active ? 'active' : 'inactive'),
-        deployed: prev.deployed,
-        deploymentStatus: prev.deploymentStatus,
-        chainAuthorizationStatus: prev.chainAuthorizationStatus,
+        deployed: active || prev.deployed,
+        deploymentStatus: {
+          ...(prev.deploymentStatus || {}),
+          'arc-testnet': {
+            ...(prev.deploymentStatus?.['arc-testnet'] || {}),
+            status: active ? 'deployed' : (prev.deploymentStatus?.['arc-testnet']?.status || 'failed'),
+            authorizationStatus: active ? 'authorized' : (prev.deploymentStatus?.['arc-testnet']?.authorizationStatus || 'failed'),
+            updatedAt: Date.now(),
+          },
+          'ethereum-sepolia': {
+            ...(prev.deploymentStatus?.['ethereum-sepolia'] || {}),
+            status: 'unsupported',
+            error: 'Circle saat ini tidak mendukung MSCA di Ethereum Sepolia.',
+            updatedAt: Date.now(),
+          },
+        },
+        chainAuthorizationStatus: {
+          ...(prev.chainAuthorizationStatus || {}),
+          'arc-testnet': active ? 'authorized' : (prev.chainAuthorizationStatus?.['arc-testnet'] || 'failed'),
+        },
       }))
     } catch { /* ignore transient network errors */ }
   }
@@ -477,12 +510,24 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     try {
       const statuses = await Promise.all(['base-sepolia', 'arbitrum-sepolia'].map(async chainKey => {
         const response = await fetch(`${API}/api/session/destination-status?chainKey=${chainKey}&walletAddress=${encodeURIComponent(mscaState.walletAddress!)}`, { headers: authHeaders() })
-        if (!response.ok) return [chainKey, 'failed'] as const
+        if (!response.ok) return { chainKey, deployed: false, authorized: false }
         const data = await response.json()
-        return [chainKey, data.deployed && data.authorized ? 'authorized' : 'failed'] as const
+        return { chainKey, deployed: data.deployed === true, authorized: data.authorized === true }
       }))
-      const chainAuthorizationStatus = Object.fromEntries(statuses)
-      persistMscaState({ chainAuthorizationStatus })
+      const chainAuthorizationStatus = Object.fromEntries(statuses.map(item => [item.chainKey, item.deployed && item.authorized ? 'authorized' : 'failed']))
+      persistMscaState(prev => ({
+        chainAuthorizationStatus,
+        deploymentStatus: {
+          ...(prev.deploymentStatus || {}),
+          ...Object.fromEntries(statuses.map(item => [item.chainKey, {
+            ...(prev.deploymentStatus?.[item.chainKey] || {}),
+            status: item.deployed ? 'deployed' : 'failed',
+            authorizationStatus: item.authorized ? 'authorized' : 'failed',
+            authorizationError: item.authorized ? undefined : 'Backend belum mengonfirmasi authorization chain.',
+            updatedAt: Date.now(),
+          }])),
+        },
+      }))
       setDestinationReady(chainAuthorizationStatus['base-sepolia'] === 'authorized')
     } catch { /* ignore transient destination RPC errors */ }
   }
@@ -683,6 +728,22 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       if (attempt !== oauthAttempt.current) return
       setOauthStatus('approving')
 
+      // Existing browsers may predate arx_passkey_vault_token. Confirm the
+      // candidate token is actually tied to this active MSCA before sending it
+      // to the backend OAuth binding step; an EOA token must never be enough.
+      let mscaBinding: Record<string, string> = {}
+      const candidatePasskeyToken = localStorage.getItem('arx_passkey_vault_token') || sessionToken || ''
+      if (candidatePasskeyToken && mscaState.walletAddress) {
+        try {
+          const sessionCheck = await fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${candidatePasskeyToken}` } })
+          const sessionData = await sessionCheck.json().catch(() => ({}))
+          if (sessionCheck.ok && sessionData?.session?.active === true && String(sessionData.session.walletAddress || '').toLowerCase() === mscaState.walletAddress.toLowerCase()) {
+            mscaBinding = { mscaWalletAddress: mscaState.walletAddress, mscaSessionToken: candidatePasskeyToken }
+            localStorage.setItem('arx_passkey_vault_token', candidatePasskeyToken)
+          }
+        } catch { /* OAuth remains valid; MCP will stay fail-closed without a binding proof */ }
+      }
+
       // 3. Verify → get auth code → redirect
       const codeResp = await withTimeout(fetch(`${API}/api/auth/siwe-verify`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -690,6 +751,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           address: from, message: msgData.message, signature,
           requestId: oauthParams.request_id, clientId: oauthParams.client_id, redirectUri: oauthParams.redirect_uri,
           state: oauthParams.state, codeChallenge: oauthParams.code_challenge,
+          ...mscaBinding,
         }),
       }), 20_000, 'Verifikasi timeout. Tekan Coba Lagi.')
       const codeData = await withTimeout(codeResp.json(), 10_000, 'Respons verifikasi tidak selesai. Tekan Coba Lagi.')
@@ -771,7 +833,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <StatusDot on={claudeConnected} label="Claude" />
           <StatusDot on={anyConnected} label={anyConnected ? 'Agent aktif' : 'Belum ada agent'} />
         </div>
-        <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>Keluar</button>
+        <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>Keluar</button>
       </div>
 
       {/* Setup MCP */}
