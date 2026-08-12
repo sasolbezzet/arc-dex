@@ -118,8 +118,11 @@ function normalizeSerializedCredential(value: any) {
     type: value.type || 'public-key',
     response: {
       clientDataJSON: requireBase64Url(response.clientDataJSON, 'clientDataJSON'),
-      authenticatorData: requireBase64Url(response.authenticatorData, 'authenticatorData'),
-      signature: requireBase64Url(response.signature, 'signature'),
+      // authenticatorData/signature only exist on ASSERTION (login) credentials.
+      // Registration (create) credentials carry attestationObject instead; a
+      // create credential must not be rejected for missing login-only fields.
+      ...(response.authenticatorData != null ? { authenticatorData: requireBase64Url(response.authenticatorData, 'authenticatorData') } : {}),
+      ...(response.signature != null ? { signature: requireBase64Url(response.signature, 'signature') } : {}),
       ...(response.userHandle !== null && response.userHandle !== undefined ? { userHandle: requireBase64Url(response.userHandle, 'userHandle') } : {}),
       ...(response.attestationObject !== null && response.attestationObject !== undefined ? { attestationObject: requireBase64Url(response.attestationObject, 'attestationObject') } : {}),
       ...(typeof response.publicKeyAlgorithm === 'number' ? { publicKeyAlgorithm: response.publicKeyAlgorithm } : {}),
@@ -168,8 +171,10 @@ export function serializeWebAuthnCredential(credential: any) {
     type: raw.type || 'public-key',
     response: {
       clientDataJSON: bytesToBase64Url(response.clientDataJSON),
-      authenticatorData: bytesToBase64Url(response.authenticatorData),
-      signature: bytesToBase64Url(response.signature),
+      // Assertion-only fields are optional here too (registration credentials
+      // carry attestationObject instead of authenticatorData/signature).
+      ...(response.authenticatorData != null ? { authenticatorData: bytesToBase64Url(response.authenticatorData) } : {}),
+      ...(response.signature != null ? { signature: bytesToBase64Url(response.signature) } : {}),
       ...(response.userHandle !== null && response.userHandle !== undefined ? { userHandle: bytesToBase64Url(response.userHandle) } : {}),
       ...(response.attestationObject ? { attestationObject: bytesToBase64Url(response.attestationObject) } : {}),
       ...(typeof response.publicKeyAlgorithm === 'number' ? { publicKeyAlgorithm: response.publicKeyAlgorithm } : {}),
