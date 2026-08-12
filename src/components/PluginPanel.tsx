@@ -169,12 +169,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     finally { setBusy(null) }
   }
   const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string) => {
-    const deployment = getDeploymentStatus()[chainKey]
-    if (deployment?.status !== 'deployed') throw new Error(`${chainKey}: MSCA belum deployed (deployment status gagal atau belum diverifikasi)`)
+    // registerDelegateOwner sends a single addOwners UserOperation that both
+    // deploys the deterministic MSCA (first UserOp carries factory initCode)
+    // and adds the delegate owner, so no separate deployment is required.
     let authorization
     try {
-      const deployedOnChain = await isSmartAccountDeployedOnChain(chainKey, walletAddress)
-      if (!deployedOnChain) throw new Error('MSCA belum deployed on-chain; authorization dibatalkan')
       authorization = await registerDelegateOwner(delegateAddress, chainKey, token)
     } catch (error: any) {
       throw new Error(`${chainKey}: authorization UserOp gagal: ${error?.message || 'unknown error'}`)
@@ -190,9 +189,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const autoActivateSession = async (walletAddress: string, eoaAddress?: string, existingToken?: string) => {
-    // Login activation is intentionally Arc-only. Destination deployment and
-    // authorization belong to the bridge action; doing them here makes a
-    // successful passkey login wait on unrelated chains.
+    // Login activation: one addOwners UserOp on Arc deploys the MSCA and
+    // authorizes the delegate in a single operation, then activates the
+    // session. Base and Arbitrum are prepared immediately afterwards in the
+    // same flow (one UserOp each), so the agent wallet is usable everywhere.
     const token = existingToken
     if (!token) throw new Error('Passkey token gagal')
 
@@ -200,21 +200,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     // a separate SIWE proof; the passkey/MSCA token is never an EOA proof.
     const ownerSessionToken = eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined
     const verifiedEoaAddress = ownerSessionToken ? eoaAddress : undefined
-    const deployment = await deployAllSmartAccounts()
-    const arcResult = deployment.results['arc-testnet']
-    setMscaState(prev => ({
-      ...prev,
-      walletAddress,
-      deployed: arcResult?.status === 'deployed',
-      deploymentStatus: getDeploymentStatus(),
-    }))
-    if (arcResult?.status !== 'deployed') {
-      const error = arcResult?.error || 'Deployment MSCA Arc gagal.'
-      throw new Error(`${error} Session key belum diaktifkan.`)
-    }
 
-    // One Arc addOwners authorization is all that is needed for the session
-    // key used by MCP. Bridge destinations are prepared only when bridging.
+    // Arc: reserve delegate + addOwners (deploy+authorize) + backend setup.
     const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken)
     setMscaState(prev => ({
       ...prev,
@@ -225,6 +212,22 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       deploymentStatus: getDeploymentStatus(),
       chainAuthorizationStatus: { 'arc-testnet': 'authorized' },
     }))
+
+    // Prepare destination chains automatically. Best-effort: a destination
+    // failure must never deactivate the Arc session that MCP relies on.
+    const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
+    const errors: string[] = []
+    for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+      try {
+        await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token)
+        chainAuthorizationStatus[chainKey] = 'authorized'
+      } catch (error: any) {
+        chainAuthorizationStatus[chainKey] = 'failed'
+        errors.push(error?.message || `${chainKey}: authorization gagal`)
+      }
+    }
+    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    if (errors.length) setError(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
     return token
   }
   const registerMsca = async () => {

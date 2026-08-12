@@ -10,9 +10,8 @@
 import {
   toModularTransport,
   toCircleSmartAccount,
-  recoveryActions,
 } from '@circle-fin/modular-wallets-core'
-import { createPublicClient, defineChain } from 'viem'
+import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
 import { isSuccessfulUserOpReceipt } from './mscaPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
@@ -342,6 +341,47 @@ function passkeyErrorMessage(error: unknown) {
   return message || String(error || '') || 'Passkey login gagal.'
 }
 
+// addOwners calldata for the reserved delegate: Circle's recovery action and
+// the backend validator both expect exactly addOwners([delegate],[1],[],[],0).
+const ADD_OWNERS_ABI = [{
+  type: 'function' as const,
+  name: 'addOwners',
+  stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'ownersToAdd', type: 'address[]' },
+    { name: 'weightsToAdd', type: 'uint256[]' },
+    { name: 'publicKeyOwnersToAdd', type: 'tuple[]', components: [{ name: 'x', type: 'uint256' }, { name: 'y', type: 'uint256' }] },
+    { name: 'publicKeyWeightsToAdd', type: 'uint256[]' },
+    { name: 'newThresholdWeight', type: 'uint256' },
+  ],
+  outputs: [],
+}]
+
+// Circle's Arbitrum Sepolia bundler rejects UserOperations with a zero priority
+// fee. Circle publishes authoritative prices via circle_getUserOperationGasPrice
+// (low/medium/high); use the medium level so deployment/authorization does not
+// wait on a second attempt. Other chains leave fee selection to Circle Gas
+// Station exactly as before.
+async function circleGasFees(chainKey: string): Promise<{ maxPriorityFeePerGas?: bigint; maxFeePerGas?: bigint }> {
+  if (chainKey !== 'arbitrum-sepolia') return {}
+  try {
+    const config = chainConfig(chainKey)
+    const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
+    const price = await (client as any).request({ method: 'circle_getUserOperationGasPrice', params: [] }).catch(() => null) as { medium?: { maxPriorityFeePerGas: string; maxFeePerGas: string } } | null
+    const level = price?.medium
+    if (level?.maxPriorityFeePerGas && level?.maxFeePerGas) {
+      const maxPriorityFeePerGas = BigInt(level.maxPriorityFeePerGas)
+      const maxFeePerGas = BigInt(level.maxFeePerGas)
+      if (maxPriorityFeePerGas > 0n && maxFeePerGas >= maxPriorityFeePerGas) {
+        return { maxPriorityFeePerGas, maxFeePerGas }
+      }
+    }
+  } catch { /* fall through to the safe floor */ }
+  // Comfortably above the observed Circle Arbitrum minimums without hardcoding
+  // a chain-wide price. Only used when Circle's price endpoint is unreachable.
+  return { maxPriorityFeePerGas: 1_000_000_000n, maxFeePerGas: 2_000_000_000n }
+}
+
 const EVM_CHAIN_CONFIG = {
   'arc-testnet': { slug: 'arcTestnet', chain: arcTestnet },
   'base-sepolia': { slug: 'baseSepolia', chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia.base.org'] } } }) },
@@ -640,7 +680,10 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   const state = loadState()
   if (!state.walletAddress) throw new Error('MSCA wallet belum dibuat. Register passkey dulu.')
 
-  if (!state.deployed) throw new Error('MSCA harus deployed sebelum mengaktifkan automation signer.')
+  // No separate deployment UserOp is required: the addOwners authorization
+  // below is the first UserOp and carries the factory initCode, which deploys
+  // the deterministic MSCA and adds the delegate owner in a single operation.
+  // (Verified live on Arc, Base Sepolia, and Arbitrum Sepolia.)
 
   // Reserve the automation signer on the backend. The private key never enters
   // the browser; only its public address is returned for passkey authorization.
@@ -737,8 +780,9 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   const data = await res.json()
   if (!data.success) throw new Error(data.error || 'Session setup gagal')
 
-  // Step 4: Update local state
-  saveState({ ...state, delegateAddress, sessionActive: true })
+  // Step 4: Update local state. The single addOwners UserOp already deployed
+  // the MSCA (first UserOp carries initCode), so the wallet is on-chain now.
+  saveState({ ...state, delegateAddress, sessionActive: true, deployed: true })
 
   return {
     walletAddress: state.walletAddress,
@@ -790,9 +834,12 @@ export function clearMscaState() {
   clearState()
 }
 
-// ── Register delegate EOA as on-chain owner via recovery mechanism ──
-// ONE-TIME: passkey signs UserOp to add delegate as owner. After this,
-// backend can sign all transactions automatically with delegate EOA.
+// ── Register delegate EOA as on-chain owner ──
+// ONE-TIME: passkey signs a single addOwners UserOperation that both deploys
+// the deterministic MSCA (first UserOp carries the factory initCode) and adds
+// the delegate as owner. After that the backend can sign transactions with the
+// delegate EOA automatically. Verified live on Arc, Base Sepolia, and Arbitrum
+// Sepolia: one UserOp = deploy + authorize.
 export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-testnet', vaultToken = ''): Promise<{ success: boolean; userOpHash?: string }> {
   const state = loadState()
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
@@ -805,56 +852,42 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
   })
 
-  // Extend client with recoveryActions to call registerRecoveryAddress
-  const bundlerClient = createBundlerClient({
-    account: smartAccount as any,
-    client: client as any,
-    transport: modularTransport(chainKey) as any,
-    paymaster: true,
-  }).extend(recoveryActions)
-
   const saved = loadState().deploymentStatus?.[chainKey]
   const sameDelegate = saved?.authorizationDelegateAddress?.toLowerCase() === delegateAddress.toLowerCase()
   // Never reuse a prior delegate's UserOperation as proof for a new delegate.
   // The persisted attempt is relevant only when its delegate is an exact match.
-  const savedForDelegate = sameDelegate ? saved : undefined
   if (sameDelegate && saved?.authorizationUserOpHash) {
     const outcome = await userOpOutcome(client, saved.authorizationUserOpHash, saved.updatedAt)
     if (outcome === 'success') {
-      // A successful on-chain addOwners is authoritative. Do not require a
-      // second Circle mapping read to recognize an already completed owner
-      // authorization.
+      // A successful on-chain addOwners is authoritative: the MSCA is deployed
+      // and the delegate is already an owner. No second mutation is needed.
       const current = loadState().deploymentStatus?.[chainKey]
       if (current?.authorizationStatus !== 'authorized') {
-        saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'authorized', authorizationError: undefined, updatedAt: Date.now() })
+        saveDeploymentStatus(chainKey, { ...current, status: 'deployed', authorizationStatus: 'authorized', authorizationError: undefined, updatedAt: Date.now() })
       }
       return { success: true, userOpHash: saved.authorizationUserOpHash }
     }
   }
-  // Let Circle's recovery action own mapping initialization. It treats an
-  // already-known mapping as idempotent and then submits addOwners with the
-  // exact payload used by Circle's SDK. No local mapping preflight or retry
-  // decision can strand a fresh passkey authorization.
 
   // Persist the attempt marker immediately before mutation so a browser close
   // after this point can still recover the exact submitted hash.
   saveDeploymentStatus(chainKey, {
-    ...(loadState().deploymentStatus?.[chainKey] || { status: 'deployed' }),
+    ...(loadState().deploymentStatus?.[chainKey] || {}),
     authorizationDelegateAddress: delegateAddress,
     authorizationStatus: 'pending',
     updatedAt: Date.now(),
   })
 
+  const callData = encodeFunctionData({ abi: ADD_OWNERS_ABI, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
+  const fees = await circleGasFees(chainKey)
   let userOpHash: string
   try {
-    // Mirror Circle's recoveryActions implementation exactly. It performs the
-    // idempotent createAddressMapping call (ignoring ALREADY_KNOWN), then sends
-    // addOwners([delegate], [1], [], [], 0). This avoids the local mapping
-    // branch that previously stranded an otherwise valid session activation.
-    userOpHash = await bundlerClient.registerRecoveryAddress({
+    const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
+    userOpHash = await sendUserOperation(bundlerClient as any, {
       account: smartAccount as any,
-      recoveryAddress: delegateAddress as `0x${string}`,
+      callData,
       paymaster: true,
+      ...fees,
     })
   } catch (error: any) {
     // Surface Circle's original error unchanged so its official bundler
@@ -882,12 +915,14 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     throw new Error(`${chainKey}: authorization hash belum tersimpan di backend; jangan retry addOwners sebelum rekonsiliasi. ${error?.message || ''}`)
   }
   try {
+    const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
     const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
     if (!isSuccessfulUserOpReceipt(receipt)) {
       throw new Error(`${chainKey}: delegate authorization UserOperation reverted`)
     }
+    const deployed = await smartAccount.isDeployed()
     const current = loadState().deploymentStatus?.[chainKey]
-    if (current) saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'authorized', authorizationPrecheckFailed: undefined, authorizationError: undefined, updatedAt: Date.now() })
+    if (current) saveDeploymentStatus(chainKey, { ...current, status: deployed ? 'deployed' : current.status, authorizationStatus: 'authorized', authorizationPrecheckFailed: undefined, authorizationError: undefined, updatedAt: Date.now() })
     return { success: true, userOpHash }
   } catch (error: any) {
     const current = loadState().deploymentStatus?.[chainKey]
