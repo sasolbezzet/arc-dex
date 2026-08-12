@@ -742,20 +742,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       if (attempt !== oauthAttempt.current) return
       setOauthStatus('approving')
 
-      // Existing browsers may predate arx_passkey_vault_token. Confirm the
-      // candidate token is actually tied to this active MSCA before sending it
-      // to the backend OAuth binding step; an EOA token must never be enough.
-      let mscaBinding: Record<string, string> = {}
-      const candidatePasskeyToken = localStorage.getItem('arx_passkey_vault_token') || sessionToken || ''
+      // Send only the token issued by passkey registration/login. The backend
+      // re-validates this token against the exact MSCA and active session before
+      // creating the EOA alias, so no client-side status preflight is needed.
+      // In particular, do not fall back to the EOA/SIWE token: that would bind
+      // an identity without proof of control of the selected Agent Wallet.
+      const mscaBinding: Record<string, string> = {}
+      const candidatePasskeyToken = localStorage.getItem('arx_passkey_vault_token') || ''
       if (candidatePasskeyToken && mscaState.walletAddress) {
-        try {
-          const sessionCheck = await fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${candidatePasskeyToken}` } })
-          const sessionData = await sessionCheck.json().catch(() => ({}))
-          if (sessionCheck.ok && sessionData?.session?.active === true && String(sessionData.session.walletAddress || '').toLowerCase() === mscaState.walletAddress.toLowerCase()) {
-            mscaBinding = { mscaWalletAddress: mscaState.walletAddress, mscaSessionToken: candidatePasskeyToken }
-            localStorage.setItem('arx_passkey_vault_token', candidatePasskeyToken)
-          }
-        } catch { /* OAuth remains valid; MCP will stay fail-closed without a binding proof */ }
+        mscaBinding.mscaWalletAddress = mscaState.walletAddress
+        mscaBinding.mscaSessionToken = candidatePasskeyToken
       }
 
       // 3. Verify → get auth code → redirect
