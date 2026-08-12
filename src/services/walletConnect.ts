@@ -12,7 +12,7 @@ const ARC_CHAIN_PARAMS = {
   chainId: ARC_HEX,
   chainName: 'Arc Testnet',
   nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: ['https://rpc.testnet.arc.network'],
+  rpcUrls: ['https://rpc.testnet.arc.io'],
   blockExplorerUrls: ['https://testnet.arcscan.app'],
 }
 
@@ -91,7 +91,7 @@ export async function getWalletConnectProvider(): Promise<any | null> {
       rpcMap: {
         1: 'https://eth.llamarpc.com',
         11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
-        [ARC_CHAIN_ID]: 'https://rpc.testnet.arc.network',
+        [ARC_CHAIN_ID]: 'https://rpc.testnet.arc.io',
       },
       showQrModal: true,
       metadata: {

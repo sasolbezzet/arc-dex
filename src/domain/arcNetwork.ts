@@ -3,7 +3,7 @@ import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletP
 export const ARC_TESTNET_CHAIN_ID = '0x4cef52'
 
 // Public Arc RPC is the primary endpoint. dRPC is used as a fallback.
-export const ARC_TESTNET_PUBLIC_RPC = 'https://rpc.testnet.arc.network'
+export const ARC_TESTNET_PUBLIC_RPC = 'https://rpc.testnet.arc.io'
 export const ARC_TESTNET_DRPC_RPC = 'https://arc-testnet.drpc.org'
 export const ARC_TESTNET_RPC_URLS = [ARC_TESTNET_PUBLIC_RPC, ARC_TESTNET_DRPC_RPC]
 
