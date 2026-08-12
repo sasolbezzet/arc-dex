@@ -239,6 +239,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
     }
     const { walletAddress, sessionToken } = await registerPasskey()
+    // Publish the newly derived MSCA before setting the token. Token polling
+    // starts immediately and must not persist an intermediate empty address.
+    setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
@@ -246,6 +249,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
     const { walletAddress, sessionToken } = await registerPasskey()
+    // Publish the newly derived MSCA before setting the token. Token polling
+    // starts immediately and must not persist an intermediate empty address.
+    setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
@@ -254,6 +260,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
     const { walletAddress, sessionToken } = await loginPasskey()
+    setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
@@ -419,6 +426,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const doPasskeyLogin = async () => {
     const existing = getMscaState()
     const result = existing.walletAddress ? await loginPasskey() : await registerPasskey()
+    setMscaState(prev => ({ ...prev, walletAddress: result.walletAddress, sessionActive: false }))
     setSessionToken(result.sessionToken)
     localStorage.setItem('arx_vault_token', result.sessionToken)
     await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
@@ -433,7 +441,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const next = { ...prev, ...resolved }
       try {
         const stored = JSON.parse(localStorage.getItem('arx_msca_state') || '{}')
-        localStorage.setItem('arx_msca_state', JSON.stringify({ ...stored, ...next }))
+        // React state can legitimately lag a just-completed passkey operation.
+        // Never let an undefined field erase a newer persisted value.
+        const definedPatch = Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined))
+        localStorage.setItem('arx_msca_state', JSON.stringify({ ...stored, ...definedPatch }))
       } catch { /* localStorage is best effort; API remains authoritative */ }
       return next
     })
@@ -452,7 +463,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const info = data?.session || null
       const active = Boolean(info && info.active)
       persistMscaState(prev => ({
-        walletAddress: prev.walletAddress,
         delegateAddress: info?.delegateAddress || prev.delegateAddress || '',
         sessionActive: active,
         sessionStatusReason: info?.statusReason || (active ? 'active' : 'inactive'),
