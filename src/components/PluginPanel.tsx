@@ -242,12 +242,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
     const { walletAddress, sessionToken } = await registerPasskey()
+    setSessionToken(sessionToken)
+    localStorage.setItem('arx_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const loginMsca = async () => {
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
     const { walletAddress, sessionToken } = await loginPasskey()
+    setSessionToken(sessionToken)
+    localStorage.setItem('arx_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const revokeSession = async () => {
