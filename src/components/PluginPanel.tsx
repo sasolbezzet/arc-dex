@@ -190,43 +190,41 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const autoActivateSession = async (walletAddress: string, eoaAddress?: string, existingToken?: string) => {
-    // Deploy first, then register the automation signer on-chain, and only then
-    // persist it server-side. A failed owner registration must never leave an
-    // apparently-active backend signer that will later revert.
+    // Login activation is intentionally Arc-only. Destination deployment and
+    // authorization belong to the bridge action; doing them here makes a
+    // successful passkey login wait on unrelated chains.
     const token = existingToken
-
     if (!token) throw new Error('Passkey token gagal')
-    // Binding an EOA is optional. Only send ownerAddress when this browser
-    // has a separate SIWE session that proves ownership of that EOA; the
-    // passkey/MSCA session token must never be used as an EOA proof.
+
+    // Binding an EOA is optional. Only send ownerAddress when this browser has
+    // a separate SIWE proof; the passkey/MSCA token is never an EOA proof.
     const ownerSessionToken = eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined
     const verifiedEoaAddress = ownerSessionToken ? eoaAddress : undefined
     const deployment = await deployAllSmartAccounts()
     const arcResult = deployment.results['arc-testnet']
-    setMscaState(prev => ({ ...prev, walletAddress, deployed: arcResult?.status === 'deployed', deploymentStatus: getDeploymentStatus() }))
-    if (arcResult?.status !== 'deployed') {
-      const failed = Object.entries(deployment.results).filter(([, result]) => result.status === 'failed').map(([chain, result]) => `${chain}: ${result.error || 'gagal'}`).join('; ')
-      throw new Error(`Deployment MSCA Arc gagal. Session key belum diaktifkan.${failed ? ` ${failed}` : ''}`)
-    }
-    const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken)
-    const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
-    const destinationErrors: string[] = Object.entries(deployment.results)
-      .filter(([chainKey, result]) => chainKey !== 'arc-testnet' && result.status === 'failed')
-      .map(([, result]) => result.error || 'deployment chain gagal')
-    for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
-      if (deployment.results[chainKey]?.status !== 'deployed') continue
-      try {
-        await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token)
-        chainAuthorizationStatus[chainKey] = 'authorized'
-      } catch (error: any) {
-        chainAuthorizationStatus[chainKey] = 'failed'
-        destinationErrors.push(error?.message || `${chainKey}: authorization gagal`)
-      }
-    }
     setMscaState(prev => ({
-      ...prev, walletAddress, delegateAddress: result.delegateAddress, sessionActive: result.active, deployed: deployment.results['arc-testnet']?.status === 'deployed', deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus,
+      ...prev,
+      walletAddress,
+      deployed: arcResult?.status === 'deployed',
+      deploymentStatus: getDeploymentStatus(),
     }))
-    if (destinationErrors.length) setError(`MSCA Arc aktif, tetapi authorization chain belum lengkap: ${destinationErrors.join('; ')}`)
+    if (arcResult?.status !== 'deployed') {
+      const error = arcResult?.error || 'Deployment MSCA Arc gagal.'
+      throw new Error(`${error} Session key belum diaktifkan.`)
+    }
+
+    // One Arc addOwners authorization is all that is needed for the session
+    // key used by MCP. Bridge destinations are prepared only when bridging.
+    const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken)
+    setMscaState(prev => ({
+      ...prev,
+      walletAddress,
+      delegateAddress: result.delegateAddress,
+      sessionActive: result.active,
+      deployed: true,
+      deploymentStatus: getDeploymentStatus(),
+      chainAuthorizationStatus: { 'arc-testnet': 'authorized' },
+    }))
     return token
   }
   const registerMsca = async () => {
