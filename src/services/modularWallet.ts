@@ -662,24 +662,39 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   // though the exact addOwners UserOperation already succeeded on-chain.
   // Reconcile that proof before considering another owner mutation.
   if (existingStatus?.authorizationUserOpHash) {
-    const reconcileResponse = await fetch(`${API}/api/session/reconcile`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${vaultToken}` },
-    })
-    const reconcileData = await reconcileResponse.json().catch(() => ({}))
-    if (!reconcileResponse.ok) throw new Error(reconcileData?.error || `Session reconciliation failed (${reconcileResponse.status})`)
-    if (reconcileData?.session?.active === true) {
-      const reconciledDelegate = reconcileData.session.delegateAddress || delegateAddress
-      saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, sessionActive: true })
-      return { walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, active: true }
+    let lastReconcileReason = ''
+    // The hash already exists, so keep reconciling that exact operation while
+    // Circle's receipt/indexer catches up. Never submit another addOwners while
+    // this path is pending; doing so could create duplicate owners.
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const reconcileResponse = await fetch(`${API}/api/session/reconcile`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${vaultToken}` },
+      })
+      const reconcileData = await reconcileResponse.json().catch(() => ({}))
+      if (!reconcileResponse.ok) throw new Error(reconcileData?.error || `Session reconciliation failed (${reconcileResponse.status})`)
+      if (reconcileData?.session?.active === true) {
+        const reconciledDelegate = reconcileData.session.delegateAddress || delegateAddress
+        saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, sessionActive: true })
+        return { walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, active: true }
+      }
+      lastReconcileReason = String(reconcileData?.session?.reason || '')
+      if (lastReconcileReason !== 'authorization_pending') {
+        if (lastReconcileReason === 'authorization_proof_missing') break
+        if (lastReconcileReason) throw new Error(`Session authorization belum dapat direkonsiliasi: ${lastReconcileReason}`)
+      }
+      await new Promise(resolve => setTimeout(resolve, 2_000))
     }
-    const reason = String(reconcileData?.session?.reason || '')
-    if (reason && reason !== 'authorization_proof_missing') {
-      throw new Error(`Session authorization belum dapat direkonsiliasi: ${reason}`)
+    if (lastReconcileReason === 'authorization_pending') {
+      throw new Error('Session authorization masih diproses Circle. Hash yang sama tetap disimpan; tunggu beberapa detik lalu tekan Login Passkey lagi, jangan membuat Agent Wallet baru.')
     }
+    // Any existing authorization hash must be resolved explicitly. Never fall
+    // through to a new addOwners call when reconciliation returned an empty or
+    // missing proof state, because that could create a duplicate owner.
+    throw new Error(`Session authorization belum aktif; rekonsiliasi hash lama berhenti pada: ${lastReconcileReason || 'unknown'}`)
   }
 
-  // The passkey authorizes exactly this reserved address on-chain.
+  // The passkey authorizes exactly this reserved address.
   const authorization = await registerDelegateOwner(delegateAddress, 'arc-testnet', vaultToken)
   if (!authorization.success || !authorization.userOpHash) throw new Error('Automation signer authorization did not return a UserOperation hash')
 
