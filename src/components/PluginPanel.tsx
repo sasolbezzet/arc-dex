@@ -237,6 +237,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
     }
     const { walletAddress, sessionToken } = await registerPasskey()
+    setSessionToken(sessionToken)
+    localStorage.setItem('arx_vault_token', sessionToken)
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const forceRegisterMsca = async () => {
