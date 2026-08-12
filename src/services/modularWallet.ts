@@ -247,24 +247,46 @@ function base64UrlToBytes(value: string): Uint8Array {
   return Uint8Array.from(binary, character => character.charCodeAt(0))
 }
 
+function normalizeRpId(value: unknown) {
+  const raw = String(value || '').trim()
+  if (!raw) return raw
+  // WebAuthn RP IDs are hostnames, never URLs or paths. Circle normally
+  // returns the hostname already, but normalize provider variants before the
+  // browser hands the request to the OS Credential Manager.
+  return raw.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0]
+}
+
 function loginPublicKeyOptions(options: any) {
-  return {
+  const result: any = {
     ...options,
     challenge: base64UrlToBytes(options.challenge),
-    ...(Array.isArray(options.allowCredentials) ? {
-      allowCredentials: options.allowCredentials.map((credential: any) => ({
-        ...credential,
-        id: base64UrlToBytes(credential.id),
-      })),
-    } : {}),
+    ...(typeof options.rpId === 'string' ? { rpId: normalizeRpId(options.rpId) } : {}),
   }
+  // An empty allowCredentials list is not equivalent across platform
+  // authenticators. Omit it so discoverable passkeys can be selected normally.
+  if (Array.isArray(options.allowCredentials) && options.allowCredentials.length > 0) {
+    result.allowCredentials = options.allowCredentials.map((credential: any) => ({
+      ...credential,
+      id: base64UrlToBytes(credential.id),
+    }))
+  } else {
+    delete result.allowCredentials
+  }
+  return result
 }
 
 function registrationPublicKeyOptions(options: any) {
   return {
     ...options,
     challenge: base64UrlToBytes(options.challenge),
+    ...(options.rp ? { rp: { ...options.rp, id: normalizeRpId(options.rp.id) } } : {}),
     user: { ...options.user, id: base64UrlToBytes(options.user.id) },
+    ...(Array.isArray(options.excludeCredentials) ? {
+      excludeCredentials: options.excludeCredentials.map((credential: any) => ({
+        ...credential,
+        id: base64UrlToBytes(credential.id),
+      })),
+    } : {}),
   }
 }
 
@@ -312,6 +334,9 @@ function passkeyErrorMessage(error: unknown) {
   }
   if (name === 'NotSupportedError') {
     return 'Perangkat/browser ini tidak menyediakan authenticator WebAuthn. Aktifkan Windows Hello, Touch ID, atau security key, lalu coba dari HTTPS.'
+  }
+  if (names.includes('NotReadableError') || /credential manager|credential vault/i.test(errorText)) {
+    return 'Credential Manager perangkat gagal diakses. Tutup prompt passkey yang tertinggal, buka ARCOX dari https://arcoxdex.vercel.app, lalu coba lagi. Jika tetap gagal, pilih Windows Hello/Touch ID atau security key lain.'
   }
   if (domException && !message) return 'Browser menolak permintaan passkey. Batalkan prompt yang tertinggal, klik tombol sekali, lalu coba lagi.'
   return message || String(error || '') || 'Passkey login gagal.'
