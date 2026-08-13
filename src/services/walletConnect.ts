@@ -268,8 +268,8 @@ export async function resumeWalletConnect(): Promise<boolean> {
   return relayOpenPromise
 }
 
-export function redirectToWalletForSign() {
-  if (!isMobile() || !wcProvider?.session) return
+export function redirectToWalletForSign(openedWindow?: Window | null): boolean {
+  if (!isMobile() || !wcProvider?.session) return false
 
   const peer = wcProvider.session?.peer?.metadata
   const redirect = peer?.redirect
@@ -290,21 +290,27 @@ export function redirectToWalletForSign() {
     // No redirect metadata is still valid for wallets that rely on push
     // notifications; do not replace the active approval page in that case.
     console.log('[WC] No redirect available for wallet:', peer?.name)
-    return
+    return false
   }
 
   // Never navigate the OAuth page itself. It owns the pending personal_sign
   // promise and must remain alive to receive the response when the user returns
-  // from the wallet app. Opening the universal link in a new tab lets mobile
-  // Chrome hand the link to the wallet while preserving that page.
-  const opened = window.open(target, '_blank', 'noopener,noreferrer')
-  if (!opened) {
-    const anchor = document.createElement('a')
-    anchor.href = target
-    anchor.target = '_blank'
-    anchor.rel = 'noopener noreferrer'
-    anchor.click()
+  // from the wallet app. A blank tab opened during the original click is reused
+  // when available, which avoids mobile popup blockers after async WebAuthn and
+  // relay work has completed.
+  const opened = openedWindow && !openedWindow.closed
+    ? openedWindow
+    : window.open(target, '_blank', 'noopener,noreferrer')
+  if (opened) {
+    opened.location.href = target
+    return true
   }
+  const anchor = document.createElement('a')
+  anchor.href = target
+  anchor.target = '_blank'
+  anchor.rel = 'noopener noreferrer'
+  anchor.click()
+  return true
 }
 
 // Setelah connect: tambah + pindah ke Arc Testnet (best effort, non-blocking)

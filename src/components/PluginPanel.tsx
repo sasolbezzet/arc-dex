@@ -684,6 +684,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const approveOAuth = async () => {
     if (!address || !oauthParams) return
     const attempt = ++oauthAttempt.current
+    // Reserve a tab during the user click so mobile Chrome does not block the
+    // later wallet universal-link navigation after WebAuthn/network awaits.
+    const walletAppWindow = isMobile() && isWalletConnectAvailable()
+      ? window.open('about:blank', '_blank')
+      : null
+    let walletRedirected = false
     setOauthStatus('checking')
     setError(null)
     try {
@@ -826,7 +832,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // personal_sign. Open the wallet's universal link in a new tab after the
       // request is queued; the approval page remains alive to receive the
       // relay response when the user returns from the wallet app.
-      if (isMobile() && usingWalletConnect) redirectToWalletForSign()
+      if (isMobile() && usingWalletConnect) walletRedirected = redirectToWalletForSign(walletAppWindow)
       let timeoutId: ReturnType<typeof setTimeout> | null = null
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error('Wallet signature response timeout. Jika sudah menekan Approve di app, kembali ke browser; koneksi WalletConnect akan dipulihkan saat mencoba lagi.')), 90_000)
@@ -837,6 +843,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
       }
+      if (walletAppWindow && !walletRedirected && !walletAppWindow.closed) walletAppWindow.close()
       if (attempt !== oauthAttempt.current) return
       setOauthStatus('approving')
 
@@ -875,6 +882,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // must never block the error/retry state from rendering.
       setOauthStatus('error')
       setError(e?.message || 'OAuth approval gagal. Tekan Coba Lagi.')
+      if (walletAppWindow && !walletRedirected && !walletAppWindow.closed) walletAppWindow.close()
       // Reset only the WC transport so the next retry starts cleanly; injected
       // desktop providers are left untouched. Cleanup is deliberately
       // fire-and-forget and bounded because disconnect() may hang on a dead
