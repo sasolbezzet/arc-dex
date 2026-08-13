@@ -703,7 +703,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       let sessionData: any = null
       let sessionVerified = false
       for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
-        const needsPasskey = passkeyAttempt > 0 || !oauthMscaWalletAddress || !oauthMscaSessionToken
+        // Every new MCP authorization must freshly prove control of the Agent
+        // Wallet. Do not trust a persisted MSCA address/token pair here: Claude
+        // may reuse the OAuth page while localStorage still contains an older
+        // session, which previously skipped WebAuthn and jumped straight to
+        // the EOA wallet signature.
+        const needsPasskey = true
         if (needsPasskey) {
           // Render this phase before opening WebAuthn. The previous code used a
           // single `signing` state for both WebAuthn and SIWE, so the page kept
