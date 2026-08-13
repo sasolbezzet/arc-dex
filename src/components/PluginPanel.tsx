@@ -106,7 +106,10 @@ async function siweLogin(address: string): Promise<string | null> {
 export function PluginPanel({ address, circleWallet, solanaAddress }: { address: string | null; circleWallet: { id: string; address: string } | null; solanaAddress: string | null }) {
   // ── OAuth callback params (from ChatGPT/Claude redirect) ──
   const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
-  const [oauthStatus, setOauthStatus] = useState<'idle' | 'signing' | 'approving' | 'done' | 'error'>('idle')
+  // OAuth approval has two deliberate signing steps: the passkey binds the
+  // Agent Wallet, then the connected EOA signs SIWE for the MCP identity. Keep
+  // these phases separate so the UI never says "wallet" while WebAuthn is open.
+  const [oauthStatus, setOauthStatus] = useState<'idle' | 'passkey' | 'checking' | 'wallet' | 'approving' | 'done' | 'error'>('idle')
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const oauthAttempt = useRef(0)
@@ -681,7 +684,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const approveOAuth = async () => {
     if (!address || !oauthParams) return
     const attempt = ++oauthAttempt.current
-    setOauthStatus('signing')
+    setOauthStatus('checking')
     setError(null)
     try {
       // Claude may open this approval page in a separate browser context from
@@ -696,6 +699,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
         const needsPasskey = passkeyAttempt > 0 || !oauthMscaWalletAddress || !oauthMscaSessionToken
         if (needsPasskey) {
+          // Render this phase before opening WebAuthn. The previous code used a
+          // single `signing` state for both WebAuthn and SIWE, so the page kept
+          // displaying "Menunggu persetujuan wallet" while the passkey prompt
+          // was the active request.
+          setOauthStatus('passkey')
           if (passkeyAttempt > 0) {
             // A stale token/address pair must not block the one allowed retry.
             localStorage.removeItem('arx_vault_token')
@@ -711,6 +719,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           oauthMscaWalletAddress = passkey.walletAddress
           oauthMscaSessionToken = passkey.sessionToken
           hydratedPasskey = true
+          // WebAuthn is complete; status lookup is a separate network phase.
+          setOauthStatus('checking')
         }
         // Always verify the exact token/address pair, including when storage was
         // present. This prevents stale localStorage from producing an OAuth token
@@ -756,8 +766,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const msgData = await withTimeout(msgResp.json(), 10_000, 'Respons challenge tidak selesai. Tekan Coba Lagi.')
       if (!msgData.message) throw new Error('Gagal mendapat challenge')
 
-      // 2. Sign with the already-connected wallet provider.
+      // 2. Sign with the already-connected wallet provider. This is a separate
+      // SIWE proof from the passkey step above; it proves control of the EOA
+      // identity used by the MCP OAuth client.
       // Do not use window.ethereum: on mobile it can trigger an unintended app switch.
+      setOauthStatus('wallet')
       const provider = await withTimeout(
         findConnectedWalletProvider(address),
         20_000,
@@ -876,19 +889,21 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Lihat credential vault</div>
           </div>
           <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            ⚠️ Tanda tangan wallet diperlukan sebagai bukti kepemilikan. Kunci private kamu tidak pernah dikirim.
+            ⚠️ Persetujuan memiliki 2 langkah: Passkey mengikat Agent Wallet, lalu wallet utama menandatangani SIWE untuk koneksi MCP. Kunci private tidak pernah dikirim.
           </div>
-          <button onClick={approveOAuth} disabled={oauthStatus === 'signing' || oauthStatus === 'approving' || oauthStatus === 'done'} style={{
+          <button onClick={approveOAuth} disabled={oauthStatus === 'passkey' || oauthStatus === 'checking' || oauthStatus === 'wallet' || oauthStatus === 'approving' || oauthStatus === 'done'} style={{
             width: '100%', padding: 14, borderRadius: 10, border: 'none',
             background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-            color: '#fff', fontSize: 14, fontWeight: 700, cursor: oauthStatus === 'idle' ? 'pointer' : 'wait',
+            color: '#fff', fontSize: 14, fontWeight: 700, cursor: oauthStatus === 'idle' || oauthStatus === 'error' ? 'pointer' : 'wait',
             opacity: oauthStatus === 'done' ? 0.5 : 1,
           }}>
-            {             oauthStatus === 'signing' ? '⏳ Menunggu persetujuan wallet app...' :
-             oauthStatus === 'approving' ? '⏳ Memverifikasi...' :
+            {             oauthStatus === 'passkey' ? '🔐 Menunggu persetujuan Passkey...' :
+             oauthStatus === 'checking' ? '⏳ Memeriksa session Agent Wallet...' :
+             oauthStatus === 'wallet' ? '👛 Menunggu persetujuan wallet...' :
+             oauthStatus === 'approving' ? '⏳ Memverifikasi koneksi MCP...' :
              oauthStatus === 'done' ? '✅ Terhubung! Mengalihkan...' :
              oauthStatus === 'error' ? '❌ Gagal — Coba lagi' :
-             '🔓 Setujui dengan Wallet'}
+             '🔐 Setujui dengan Passkey + Wallet'}
           </button>
           {oauthStatus === 'error' && (
             <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>Coba Lagi</button>
