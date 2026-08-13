@@ -155,7 +155,7 @@ function waitForUri(timeoutMs = 20000): Promise<string> {
   })
 }
 
-function showQRModal(uri: string) {
+export function showQRModal(uri: string) {
   hideQRModal()
 
   const overlay = document.createElement('div')

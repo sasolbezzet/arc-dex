@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
-import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx } from '../services/modularWallet'
+import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
@@ -146,7 +146,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     sessionTokenRef.current = token
     setSessionTokenState(token)
   }
-  const [authLoading, setAuthLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
@@ -403,7 +402,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const doLogin = async () => {
     if (!address) return
-    setAuthLoading(true)
     const token = await siweLogin(address)
     if (token) {
       setSessionToken(token)
@@ -411,48 +409,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // Keep a separate EOA proof; passkey/MSCA login may replace arx_vault_token.
       localStorage.setItem('arx_eoa_vault_token', token)
     }
-    setAuthLoading(false)
-  }
-
-  // WalletConnect login — for Chrome users without MetaMask extension
-  const doWalletConnectLogin = async () => {
-    const addr = await connectWalletConnect()
-    if (!addr) return
-    // Set WC provider as active EIP-1193 provider
-    const wcProvider = getWalletConnectProviderSync()
-    if (wcProvider) {
-      // Inject WC provider into window.ethereum so siweLogin can use it
-      ;(window as any).ethereum = wcProvider
-    }
-    // Now do SIWE login with WC-connected address
-    setAuthLoading(true)
-    if (isMobile()) {
-      const token = await siweLogin(addr)
-      if (token) {
-        setSessionToken(token)
-        localStorage.setItem('arx_vault_token', token)
-        localStorage.setItem('arx_eoa_vault_token', token)
-      }
-    } else {
-      const token = await siweLogin(addr)
-      if (token) {
-        setSessionToken(token)
-        localStorage.setItem('arx_vault_token', token)
-        localStorage.setItem('arx_eoa_vault_token', token)
-      }
-    }
-    setAuthLoading(false)
-  }
-
-  // Passkey login — register or login with passkey, then get session token from backend
-  const doPasskeyLogin = async () => {
-    const existing = getMscaState()
-    const result = existing.walletAddress ? await loginPasskey() : await registerPasskey()
-    setMscaState(prev => ({ ...prev, walletAddress: result.walletAddress, sessionActive: false }))
-    setSessionToken(result.sessionToken)
-    localStorage.setItem('arx_vault_token', result.sessionToken)
-    localStorage.setItem('arx_passkey_vault_token', result.sessionToken)
-    await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
   }
 
   // Persist server-confirmed state as well as React state. The backend is the
@@ -569,6 +525,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const autoLoginTried = useRef(false)
   useEffect(() => {
     if (deepLink && !sessionToken && address && !oauthParams && !autoLoginTried.current) {
+      // This ref intentionally gates one auto-login attempt per deep-link.
+      // eslint-disable-next-line react-hooks/immutability
       autoLoginTried.current = true
       doLogin()
     }
@@ -577,16 +535,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Fetch data when token changes
   useEffect(() => { if (sessionToken) fetchAll() }, [sessionToken])
 
-  // Auto-register wallet credentials after login
-  const hasSynced = useRef(false)
-  useEffect(() => {
-    if (!hasSynced.current && sessionToken && address) {
-      hasSynced.current = true
-      syncWalletCredentials()
-    }
-  }, [sessionToken, address, circleWallet, solanaAddress])
-
-  const syncWalletCredentials = async () => {
+  async function syncWalletCredentials() {
     if (!address || !sessionToken) return
     const existing = credentials.find(c => c.type === 'eoa' && c.label === 'MetaMask EOA')
     if (!existing) {
@@ -602,6 +551,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     fetchAll()
   }
+
+  // Auto-register wallet credentials after login
+  const hasSynced = useRef(false)
+  useEffect(() => {
+    if (!hasSynced.current && sessionToken && address) {
+      hasSynced.current = true
+      syncWalletCredentials()
+    }
+  }, [sessionToken, address, circleWallet, solanaAddress])
 
   const limitsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const updateLimits = async (patch: Partial<Limits>) => {
@@ -637,7 +595,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         bridgeAmount: a.amount, bridgeToken: a.token || 'USDC',
         bridgeSource: a.source || 'eoa', approval: a.id,
       })
-      window.location.href = `/arc-dex/bridge?${params.toString()}`
+      window.location.assign(`/arc-dex/bridge?${params.toString()}`)
       return
     }
 

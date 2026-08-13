@@ -508,9 +508,6 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
     return { walletAddress: state.walletAddress, deployed: true }
   }
 
-  const previousStatus = loadState().deploymentStatus?.['arc-testnet']
-  const previousHash = previousStatus?.userOpHash
-  const previousOutcome = await userOpOutcome(client, previousHash, previousStatus?.updatedAt)
   // Deployment is the first UserOperation. It requires an intentional passkey
   // approval and must happen in the browser, where the WebAuthn credential lives.
   // NOTE: addOwners must be a SEPARATE UserOp after deployment (registerDelegateOwner).
@@ -898,20 +895,15 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
 
   const callData = encodeFunctionData({ abi: ADD_OWNERS_ABI, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
   const fees = await circleGasFees(chainKey)
-  let userOpHash: string
-  try {
-    const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
-    userOpHash = await sendUserOperation(bundlerClient as any, {
-      account: smartAccount as any,
-      callData,
-      paymaster: true,
-      ...fees,
-    })
-  } catch (error: any) {
-    // Surface Circle's original error unchanged so its official bundler
-    // response can be debugged and retried by the user.
-    throw error
-  }
+  const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
+  // Surface Circle's original error unchanged so its official bundler
+  // response can be debugged and retried by the user.
+  const userOpHash = await sendUserOperation(bundlerClient as any, {
+    account: smartAccount as any,
+    callData,
+    paymaster: true,
+    ...fees,
+  })
   // Persist locally and server-side before waiting. The backend records the
   // exact hash but does not activate the delegate until it independently
   // verifies a successful receipt and exact addOwners calldata.
