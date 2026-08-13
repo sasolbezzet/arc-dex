@@ -3,7 +3,7 @@ import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, isSmartAccountDeployedOnChain, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
-import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, resumeWalletConnect } from '../services/walletConnect'
+import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
@@ -771,18 +771,36 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // identity used by the MCP OAuth client.
       // Do not use window.ethereum: on mobile it can trigger an unintended app switch.
       setOauthStatus('wallet')
-      const provider = await withTimeout(
+      let provider = await withTimeout(
         findConnectedWalletProvider(address),
         20_000,
         'Wallet provider timeout. Hubungkan kembali wallet lalu tekan Coba Lagi.',
       )
-      if (!provider) throw new Error('Wallet utama tidak terdeteksi. Hubungkan wallet di halaman ARCOX terlebih dahulu.')
+      // Claude can open OAuth in a separate mobile browser context where the
+      // injected provider from the original Plugin tab is unavailable. Start
+      // a fresh WalletConnect pairing instead of waiting for a request with no
+      // provider transport to deliver it.
+      if (!provider && isMobile() && isWalletConnectAvailable()) {
+        const connectedAddress = await withTimeout(
+          connectWalletConnect(),
+          180_000,
+          'Koneksi wallet timeout. Pilih wallet di WalletConnect, setujui, lalu kembali ke halaman ini.',
+        )
+        if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) {
+          throw new Error('WalletConnect terhubung ke address berbeda dari wallet utama ARCOX.')
+        }
+        const connectedProvider = getWalletConnectProviderSync()
+        if (connectedProvider) {
+          ;(window as any).ethereum = connectedProvider
+          provider = await findConnectedWalletProvider(address)
+        }
+      }
+      if (!provider) throw new Error('Wallet utama tidak terdeteksi. Hubungkan wallet melalui WalletConnect lalu tekan Coba Lagi.')
       const from = address
       const messageHex = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
-      // Re-open the relay before creating the request. Do not navigate the
-      // current page to a wallet deep-link: that unloads Plugin and destroys
-      // the pending WalletConnect promise. WalletConnect/AppKit handles the
-      // wallet notification; the user can switch apps and return here.
+      // Re-open the relay before creating the request. The approval helper
+      // opens the wallet universal link in a separate tab after the request is
+      // queued, keeping this page alive to receive the relay response.
       const walletConnectProvider = getWalletConnectProviderSync()
       const usingWalletConnect = Boolean(walletConnectProvider && provider === walletConnectProvider)
       if (isMobile() && usingWalletConnect) {
@@ -803,6 +821,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // promise may settle later than our timeout; it must not create an
       // unhandled rejection or keep the UI in a stale signing state.
       signPromise.catch(() => {})
+      // WalletConnect sends the request through the relay, but mobile Chrome
+      // does not always foreground the connected wallet app for a later
+      // personal_sign. Open the wallet's universal link in a new tab after the
+      // request is queued; the approval page remains alive to receive the
+      // relay response when the user returns from the wallet app.
+      if (isMobile() && usingWalletConnect) redirectToWalletForSign()
       let timeoutId: ReturnType<typeof setTimeout> | null = null
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error('Wallet signature response timeout. Jika sudah menekan Approve di app, kembali ke browser; koneksi WalletConnect akan dipulihkan saat mencoba lagi.')), 90_000)
@@ -899,7 +923,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           }}>
             {             oauthStatus === 'passkey' ? '🔐 Menunggu persetujuan Passkey...' :
              oauthStatus === 'checking' ? '⏳ Memeriksa session Agent Wallet...' :
-             oauthStatus === 'wallet' ? '👛 Menunggu persetujuan wallet...' :
+             oauthStatus === 'wallet' ? '👛 Membuka wallet — setujui tanda tangan...' :
              oauthStatus === 'approving' ? '⏳ Memverifikasi koneksi MCP...' :
              oauthStatus === 'done' ? '✅ Terhubung! Mengalihkan...' :
              oauthStatus === 'error' ? '❌ Gagal — Coba lagi' :

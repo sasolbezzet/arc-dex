@@ -274,26 +274,37 @@ export function redirectToWalletForSign() {
   const peer = wcProvider.session?.peer?.metadata
   const redirect = peer?.redirect
   const name = (peer?.name || '').toLowerCase()
+  let target = ''
 
   // 1. Try the session peer's own redirect metadata (most reliable)
-  if (redirect?.native) {
-    window.location.href = redirect.native
-    return
-  }
-  if (redirect?.universal) {
-    window.location.href = redirect.universal
-    return
-  }
-
+  if (redirect?.native) target = redirect.native
+  else if (redirect?.universal) target = redirect.universal
   // 2. Fallback: known wallet deep-links by name
-  if (name.includes('metamask')) { window.location.href = 'https://metamask.app.link'; return }
-  if (name.includes('trust')) { window.location.href = 'https://link.trustwallet.com'; return }
-  if (name.includes('okx') || name.includes('okex')) { window.location.href = 'okex://main'; return }
-  if (name.includes('bitget') || name.includes('bitkeep')) { window.location.href = 'https://bkcode.vip'; return }
-  if (name.includes('rainbow')) { window.location.href = 'https://rnbwapp.com'; return }
+  else if (name.includes('metamask')) target = 'https://metamask.app.link'
+  else if (name.includes('trust')) target = 'https://link.trustwallet.com'
+  else if (name.includes('okx') || name.includes('okex')) target = 'okex://main'
+  else if (name.includes('bitget') || name.includes('bitkeep')) target = 'https://bkcode.vip'
+  else if (name.includes('rainbow')) target = 'https://rnbwapp.com'
 
-  // 3. No redirect available — rely on push notification / user awareness
-  console.log('[WC] No redirect available for wallet:', peer?.name)
+  if (!target) {
+    // No redirect metadata is still valid for wallets that rely on push
+    // notifications; do not replace the active approval page in that case.
+    console.log('[WC] No redirect available for wallet:', peer?.name)
+    return
+  }
+
+  // Never navigate the OAuth page itself. It owns the pending personal_sign
+  // promise and must remain alive to receive the response when the user returns
+  // from the wallet app. Opening the universal link in a new tab lets mobile
+  // Chrome hand the link to the wallet while preserving that page.
+  const opened = window.open(target, '_blank', 'noopener,noreferrer')
+  if (!opened) {
+    const anchor = document.createElement('a')
+    anchor.href = target
+    anchor.target = '_blank'
+    anchor.rel = 'noopener noreferrer'
+    anchor.click()
+  }
 }
 
 // Setelah connect: tambah + pindah ke Arc Testnet (best effort, non-blocking)
