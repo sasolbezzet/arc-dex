@@ -110,6 +110,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Agent Wallet, then the connected EOA signs SIWE for the MCP identity. Keep
   // these phases separate so the UI never says "wallet" while WebAuthn is open.
   const [oauthStatus, setOauthStatus] = useState<'idle' | 'passkey' | 'checking' | 'wallet' | 'approving' | 'done' | 'error'>('idle')
+  const [oauthPasskeyMode, setOauthPasskeyMode] = useState<'Login' | 'Register'>('Login')
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const oauthAttempt = useRef(0)
@@ -680,8 +681,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const chatgptConnected = mcpSessions.some(s => s.active && s.agent?.includes('chatgpt'))
   const claudeConnected = mcpSessions.some(s => s.active && s.agent?.includes('claude'))
   const anyConnected = mcpSessions.some(s => s.active)
-  // ── OAuth approve flow: sign SIWE → get auth code → redirect back to ChatGPT ──
-  const approveOAuth = async () => {
+  // ── OAuth approve flow: passkey → sign SIWE → get auth code → redirect ──
+  // The caller chooses Login for an existing user or Register for a new user;
+  // WebAuthn must never guess which browser ceremony the user intended.
+  const approveOAuth = async (passkeyMode: 'Login' | 'Register' = 'Login') => {
+    setOauthPasskeyMode(passkeyMode)
     if (!address || !oauthParams) return
     const attempt = ++oauthAttempt.current
     // Do not open a wallet tab before WebAuthn. On mobile Chrome that new tab
@@ -720,14 +724,21 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             oauthMscaSessionToken = ''
           }
           const passkey = await withTimeout(
-            loginPasskey(),
+            passkeyMode === 'Register' ? registerPasskey() : loginPasskey(),
             60_000,
-            'Login Passkey timeout. Izinkan passkey di halaman OAuth lalu coba lagi.',
+            passkeyMode === 'Register'
+              ? 'Pembuatan Agent Wallet timeout. Izinkan passkey di halaman OAuth lalu coba lagi.'
+              : 'Login Passkey timeout. Izinkan passkey di halaman OAuth lalu coba lagi.',
           )
           oauthMscaWalletAddress = passkey.walletAddress
           oauthMscaSessionToken = passkey.sessionToken
           hydratedPasskey = true
-          // WebAuthn is complete; status lookup is a separate network phase.
+          // A new user has no delegate/session yet. The same explicit passkey
+          // flow can safely initialize it; existing users take the idempotent
+          // active/reconcile path and do not receive a duplicate owner.
+          await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken)
+          // WebAuthn/session setup is complete; status lookup is a separate
+          // network phase before the SIWE wallet signature.
           setOauthStatus('checking')
         }
         // Always verify the exact token/address pair, including when storage was
@@ -921,24 +932,40 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Lihat credential vault</div>
           </div>
           <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            ⚠️ Persetujuan memiliki 2 langkah: Passkey mengikat Agent Wallet, lalu wallet utama menandatangani SIWE untuk koneksi MCP. Kunci private tidak pernah dikirim.
+            ⚠️ User lama memilih Login dengan Passkey. User baru memilih Buat Agent Wallet dengan Passkey. Setelah itu wallet utama menandatangani SIWE untuk koneksi MCP. Kunci private tidak pernah dikirim.
           </div>
-          <button onClick={approveOAuth} disabled={oauthStatus === 'passkey' || oauthStatus === 'checking' || oauthStatus === 'wallet' || oauthStatus === 'approving' || oauthStatus === 'done'} style={{
-            width: '100%', padding: 14, borderRadius: 10, border: 'none',
-            background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-            color: '#fff', fontSize: 14, fontWeight: 700, cursor: oauthStatus === 'idle' || oauthStatus === 'error' ? 'pointer' : 'wait',
-            opacity: oauthStatus === 'done' ? 0.5 : 1,
-          }}>
-            {             oauthStatus === 'passkey' ? '🔐 Menunggu persetujuan Passkey...' :
-             oauthStatus === 'checking' ? '⏳ Memeriksa session Agent Wallet...' :
-             oauthStatus === 'wallet' ? '👛 Membuka wallet — setujui tanda tangan...' :
-             oauthStatus === 'approving' ? '⏳ Memverifikasi koneksi MCP...' :
-             oauthStatus === 'done' ? '✅ Terhubung! Mengalihkan...' :
-             oauthStatus === 'error' ? '❌ Gagal — Coba lagi' :
-             '🔐 Setujui dengan Passkey + Wallet'}
-          </button>
+          {(['passkey', 'checking', 'wallet', 'approving', 'done'].includes(oauthStatus)) ? (
+            <button disabled style={{
+              width: '100%', padding: 14, borderRadius: 10, border: 'none',
+              background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+              color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'wait',
+            }}>
+              {oauthStatus === 'passkey' ? (oauthPasskeyMode === 'Register' ? '✨ Membuat Agent Wallet dengan Passkey...' : '🔐 Menunggu persetujuan Passkey...') :
+               oauthStatus === 'checking' ? '⏳ Memeriksa session Agent Wallet...' :
+               oauthStatus === 'wallet' ? '👛 Membuka wallet — setujui tanda tangan...' :
+               oauthStatus === 'approving' ? '⏳ Memverifikasi koneksi MCP...' :
+               '✅ Terhubung! Mengalihkan...'}
+            </button>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <button onClick={() => approveOAuth('Login')} disabled={oauthStatus === 'done'} style={{
+                width: '100%', padding: 12, borderRadius: 10, border: 'none',
+                background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+                color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              }}>
+                🔐 User lama<br />Login Passkey
+              </button>
+              <button onClick={() => approveOAuth('Register')} disabled={oauthStatus === 'done'} style={{
+                width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(16,185,129,0.4)',
+                background: 'rgba(16,185,129,0.12)',
+                color: '#4ade80', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              }}>
+                ✨ User baru<br />Buat Agent Wallet
+              </button>
+            </div>
+          )}
           {oauthStatus === 'error' && (
-            <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>Coba Lagi</button>
+            <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>Pilih flow lagi</button>
           )}
         </div>
       )}
