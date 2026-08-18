@@ -1,6 +1,6 @@
 import { safePost } from '../api'
 import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
-import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbiParameters, parseSignature } from 'viem'
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbiParameters, parseSignature, parseUnits } from 'viem'
 import { findConnectedWalletProvider, normalizeWalletProvider, type Eip1193Provider } from '../walletProvider'
 import { isEmptyContractCode, isEmptyRpcData, requiredPositiveUint, rpcUint } from '../utils/rpcQuantity'
 
@@ -90,17 +90,24 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
       EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
       cirBTC: { address: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', decimals: 8 },
     }
-    // Single-leg AMM swap (USDCcirBTC)
+    // Single-leg AMM swap (USDC↔cirBTC). The deployed router's swapWithFee
+    // double-pulls from the caller, so execute against its registered pool.
     if (prepared?.source === 'arcox-amm-router') {
       const token = tokenMap[args.tokenIn]
       const outToken = tokenMap[args.tokenOut]
       if (!token || !outToken) throw new Error('Token cirBTC swap tidak dikenal.')
-      const amountUnits = BigInt(Math.round(Number(args.amountIn) * 10 ** token.decimals))
+      const amountUnits = parseUnits(String(args.amountIn), token.decimals)
+      const swapAmountUnits = parseUnits(String(prepared.ammSwapAmount || prepared.platformFee?.swapAmountIn || args.amountIn), token.decimals)
+      const feeUnits = prepared.platformFee?.amount ? parseUnits(String(prepared.platformFee.amount), token.decimals) : 0n
       const actualBalance = await readTokenBalance(ethereum, from, token.address)
-      if (actualBalance < amountUnits) throw new Error(`Saldo ${args.tokenIn} tidak mencukupi untuk swap.`)
+      if (actualBalance < amountUnits) throw new Error(`Saldo ${args.tokenIn} tidak mencukupi untuk swap dan fee.`)
+      if (swapAmountUnits <= 0n || swapAmountUnits > amountUnits) throw new Error('Jumlah swap AMM dari quote tidak valid.')
+      const feeTx = feeUnits > 0n
+        ? await transferToken(ethereum, from, token.address, prepared.platformFee.treasury, feeUnits)
+        : ''
       const minAmountOut = computeMinAmountOut(prepared.amountOut, outToken.decimals)
-      const approveTx = await approveToken(ethereum, from, token.address, prepared.ammRouter, amountUnits)
-      const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, token.address, outToken.address, amountUnits, minAmountOut)
+      const approveTx = await approveToken(ethereum, from, token.address, prepared.ammPool, swapAmountUnits)
+      const swapTx = await swapAmmLeg(ethereum, from, prepared.ammPool, token.address, swapAmountUnits, minAmountOut)
       return {
         success: true,
         source: 'browser-arcox-amm-router',
@@ -109,12 +116,20 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
         grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
         txHash: swapTx, transactionHash: swapTx,
         explorerUrl: `${ARC_TESTNET_EXPLORER_TX}${swapTx}`,
-        approveTx, platformFee: prepared.platformFee,
-        raw: { ...prepared, approveTx, swapTx },
+        approveTx, feeTx, platformFee: prepared.platformFee,
+        raw: { ...prepared, approveTx, feeTx, swapTx },
       }
     }
     // Two-leg AMM route (EURC↔cirBTC via USDC)
     const steps: any[] = []
+    const firstToken = tokenMap[args.tokenIn]
+    const feeUnits = prepared.platformFee?.amount && firstToken
+      ? parseUnits(String(prepared.platformFee.amount), firstToken.decimals)
+      : 0n
+    if (feeUnits > 0n) {
+      const feeTx = await transferToken(ethereum, from, firstToken.address, prepared.platformFee.treasury, feeUnits)
+      steps.push({ name: `Platform fee ${args.tokenIn}`, state: 'success', txHash: feeTx })
+    }
     for (const leg of prepared.legs || []) {
       if (leg.executionParams && leg.signature && prepared.adapterContract) {
         // Stablecoin service leg: approve + execute adapter
@@ -142,21 +157,21 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
         await waitForReceipt(ethereum, swapTx)
         steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
       } else if (leg.provider === 'arcox-amm') {
-        // AMM leg: approve + swapWithFee
+        // AMM leg: approve the registered pool, then call pool.swap directly.
         const tokenInInfo = tokenMap[leg.tokenIn]
         const tokenOutInfo = tokenMap[leg.tokenOut]
-        if (!tokenInInfo || !tokenOutInfo) throw new Error(`Token ${leg.tokenIn}/${leg.tokenOut} tidak dikenal.`)
-        const quotedAmountUnits = BigInt(Math.round(Number(leg.amountIn) * 10 ** tokenInInfo.decimals))
+        if (!tokenInInfo || !tokenOutInfo || !prepared.ammPool) throw new Error(`Token atau AMM pool ${leg.tokenIn}/${leg.tokenOut} tidak dikenal.`)
+        const quotedAmountUnits = parseUnits(String(leg.amountIn), tokenInInfo.decimals)
         // Use the actual token balance in case the previous leg produced slightly less (fees, rounding).
         const actualBalance = await readTokenBalance(ethereum, from, tokenInInfo.address)
         const amountUnits = actualBalance < quotedAmountUnits ? actualBalance : quotedAmountUnits
         if (amountUnits <= 0n) throw new Error(`Saldo ${leg.tokenIn} tidak mencukupi untuk melanjutkan swap.`)
         // Scale minAmountOut proportionally when we use less than the quoted input.
-        const quotedOutUnits = BigInt(Math.round(Number(leg.estimatedAmount) * 10 ** tokenOutInfo.decimals))
+        const quotedOutUnits = parseUnits(String(leg.estimatedAmount), tokenOutInfo.decimals)
         const scaledMinAmountOut = (quotedOutUnits * 99n * amountUnits) / (100n * quotedAmountUnits)
-        const approveTx = await approveToken(ethereum, from, tokenInInfo.address, prepared.ammRouter, amountUnits)
+        const approveTx = await approveToken(ethereum, from, tokenInInfo.address, prepared.ammPool, amountUnits)
         if (approveTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: approveTx })
-        const swapTx = await swapAmmLeg(ethereum, from, prepared.ammRouter, tokenInInfo.address, tokenOutInfo.address, amountUnits, scaledMinAmountOut)
+        const swapTx = await swapAmmLeg(ethereum, from, prepared.ammPool, tokenInInfo.address, amountUnits, scaledMinAmountOut)
         steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.estimatedAmount })
       }
     }
@@ -350,16 +365,16 @@ async function approveToken(ethereum: Eip1193Provider, from: string, token: `0x$
   return tx
 }
 
-async function swapAmmLeg(ethereum: Eip1193Provider, from: string, router: string, tokenIn: `0x${string}`, tokenOut: `0x${string}`, amountIn: bigint, minAmountOut: bigint): Promise<string> {
+async function swapAmmLeg(ethereum: Eip1193Provider, from: string, pool: string, tokenIn: `0x${string}`, amountIn: bigint, minAmountOut: bigint): Promise<string> {
   const swapData = encodeFunctionData({
-    abi: [{ type: 'function', name: 'swapWithFee', stateMutability: 'nonpayable', inputs: [
-      { name: 'tokenIn', type: 'address' }, { name: 'tokenOut', type: 'address' },
+    abi: [{ type: 'function', name: 'swap', stateMutability: 'nonpayable', inputs: [
+      { name: 'tokenIn', type: 'address' },
       { name: 'amountIn', type: 'uint256' }, { name: 'minAmountOut', type: 'uint256' },
     ], outputs: [{ name: 'amountOut', type: 'uint256' }] }],
-    functionName: 'swapWithFee',
-    args: [tokenIn, tokenOut, amountIn, minAmountOut],
+    functionName: 'swap',
+    args: [tokenIn, amountIn, minAmountOut],
   })
-  const tx = await sendBufferedTx(ethereum, { from, to: router, data: swapData, value: '0x0' })
+  const tx = await sendBufferedTx(ethereum, { from, to: pool, data: swapData, value: '0x0' })
   await waitForReceipt(ethereum, tx)
   return tx
 }
@@ -371,6 +386,18 @@ function computeMinAmountOut(amountOutDecimal: string | undefined | number, deci
   const units = BigInt(Math.round(amountOut * 10 ** decimals))
   // 1% slippage tolerance
   return (units * 99n) / 100n
+}
+
+async function transferToken(ethereum: Eip1193Provider, from: string, token: `0x${string}`, to: string, amount: bigint): Promise<string> {
+  if (!to) throw new Error('Treasury fee address tidak tersedia.')
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: 'transfer',
+    args: [to as `0x${string}`, amount],
+  })
+  const tx = await sendBufferedTx(ethereum, { from, to: token, data, value: '0x0' })
+  await waitForReceipt(ethereum, tx)
+  return tx
 }
 
 async function readTokenBalance(ethereum: Eip1193Provider, owner: string, token: `0x${string}`): Promise<bigint> {

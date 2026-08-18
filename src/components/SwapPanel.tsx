@@ -9,9 +9,13 @@ type Status = { type:'success'|'error'|'warning'; msg:string; link?:string }
 interface Props { address:string|null; circleWallet:{id:string;address:string}|null; balances:Record<string,string>; eoaBalances:Record<string,string>; onRefresh:()=>void }
 export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefresh }: Props) {
   const { t } = useI18n()
-  const [source, setSource] = useState<'circle'|'eoa'>('circle')
+  // The reliable cirBTC route is a direct EOA→pool transaction. Circle Wallet
+  // cannot submit arbitrary pool calls through its Stablecoin Service adapter.
+  const [source, setSource] = useState<'circle'|'eoa'>('eoa')
   const [tokenIn, setTokenIn] = useState('USDC')
-  const [tokenOut, setTokenOut] = useState('EURC')
+  // Circle's Stablecoin Service routing is flaky on Arc Testnet for USDC↔EURC.
+  // The on-chain AMM router (USDC↔cirBTC) is the reliable default route.
+  const [tokenOut, setTokenOut] = useState('cirBTC')
   const [amountIn, setAmountIn] = useState('')
   const [quote, setQuote] = useState<{amountOut:string;fee:string;rate:number;platformFee?:{amount:string;token:string;swapAmountIn:string;bps:number}}|null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
@@ -29,7 +33,10 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
         : await quoteCircleSwap({metamaskAddress:address,tokenIn:tin,tokenOut:tout,amountIn:amt})
       if (d.available === false) {
         setQuote(null)
-        setStatus({ type:'warning', msg:d.error || t('swap.routeUnavailable') })
+        const hint = tokenIn === 'USDC' && tokenOut === 'EURC'
+          ? ` ${t('swap.routeUnavailableHint', { fallback: 'Coba USDC ↔ cirBTC (route AMM on-chain).' })}`
+          : ''
+        setStatus({ type:'warning', msg:(d.error || t('swap.routeUnavailable')) + hint })
         setQuoteLoading(false)
         return
       }
@@ -78,7 +85,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
         if (!circleWallet) return
         const d = await swapFromCircleWallet({metamaskAddress:address,tokenIn,tokenOut,amountIn})
         if (d.available === false) {
-          setStatus({ type:'warning', msg:d.error || t('swap.routeUnavailable') })
+          setStatus({ type:'warning', msg:(d.error || t('swap.routeUnavailable')) + (tokenIn === 'USDC' && tokenOut === 'cirBTC' ? ' Pilih Personal Wallet untuk route AMM on-chain.' : '') })
           return
         }
         const feeText = d.result?.platformFee?.amount ? ` • fee ${d.result.platformFee.amount} ${d.result.platformFee.token}` : ''
