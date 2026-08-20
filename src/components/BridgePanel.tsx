@@ -1465,7 +1465,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
 
       {/* Balance */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🔵 Circle Wallet</span><span style={{color:'#818cf8',fontWeight:600}}>{isNativeBridgeToken ? '-' : circleB.toFixed(4)} {displayToken}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🔵 {t('wallet.circle')}</span><span style={{color:'#818cf8',fontWeight:600}}>{isNativeBridgeToken ? '-' : circleB.toFixed(4)} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟡 MetaMask</span><span style={{color:'#f59e0b',fontWeight:600}}>{isNativeBridgeToken ? 'Use wallet gas balance' : eoaB.toFixed(4)} {displayToken}</span></div>
         {solanaWallet && <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟣 Solana</span><span style={{color:'#a78bfa',fontWeight:600}}>{solanaUsdcBal} USDC</span></div>}
         <div style={{borderTop:'1px solid #1e1e2e',paddingTop:3,display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Total EVM</span><span style={{fontWeight:700}}>{isNativeBridgeToken ? 'Not indexed' : totalB.toFixed(4)} {displayToken}</span></div>
@@ -1556,7 +1556,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
         {!isNativeBridgeToken && (
           <div style={{border:'1px solid rgba(99,102,241,0.25)',background:'rgba(99,102,241,0.08)',borderRadius:8,padding:8,display:'flex',flexDirection:'column',gap:4}}>
             <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
-              <span style={{color:'#94a3b8'}}>Selected route</span>
+              <span style={{color:'#94a3b8'}}>{t('balance.selected')} route</span>
               <span style={{color:routeInfo.routeAvailable?'#10b981':'#f87171',fontWeight:700}}>{routeInfo.routeAvailable ? 'Available' : 'Unavailable'}</span>
             </div>
             <div style={{color:'#cbd5e1'}}>{routeInfo.sourceToken} on {fromChain} → {receiveToken} on {toChain}</div>
@@ -1572,7 +1572,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{isNativeBridgeToken ? '-' : totalDebit} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{isNativeBridgeToken ? '-' : customFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{isNativeBridgeToken ? '-' : cctpFee} {displayToken}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('swap.platformFee')}</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
         {isNativeBridgeToken && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gas estimate</span><span>{nativeBridgeExecutable ? nativeGasEstimate || 'Before wallet popup' : 'Route unavailable'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : 'Belum aktif'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? nativeQuote ? `~${nativeQuote.estimatedReceive}` : nativeQuoteLoading ? 'Calculating...' : 'Enter amount' : 'Route unavailable' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>

@@ -210,14 +210,14 @@ const docs: Record<Lang, { intro: string; warning: DocSection; sections: DocSect
 }
 
 export function DocsPanel() {
-  const { lang } = useI18n()
+  const { lang, t } = useI18n()
   const content = docs[lang]
   return (
     <div className='docs-panel'>
       <div className='docs-hero'>
         <div>
           <div className='docs-kicker'>ARCOX DEX Docs</div>
-          <h2>User Guide</h2>
+          <h2>{t('docs.userGuide')}</h2>
           <p>{content.intro}</p>
         </div>
       </div>

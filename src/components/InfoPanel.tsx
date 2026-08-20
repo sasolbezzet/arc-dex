@@ -28,6 +28,7 @@ function fmtTime(ts: number) {
 }
 
 function HistoryRow({ rec }: { rec: TxRecord }) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string|null>(null)
@@ -182,41 +183,41 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
         <div style={{ marginTop: 6, paddingLeft: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {rec.tx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#64748b' }}>Tx</span>
+              <span style={{ color: '#64748b' }}>{t('info.tx')}</span>
               <a href={rec.explorer || '#'} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.tx)} →</a>
             </div>
           )}
           {rec.approveTx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#64748b' }}>Izinkan</span>
+              <span style={{ color: '#64748b' }}>{t('info.approve')}</span>
               <span style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.approveTx)}</span>
             </div>
           )}
           {rec.burnTx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#64748b' }}>Kirim</span>
+              <span style={{ color: '#64748b' }}>{t('info.burn')}</span>
               <a href={rec.burnExplorerUrl || '#'} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.burnTx)} →</a>
             </div>
           )}
           {rec.mintTx && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#64748b' }}>Terima</span>
+              <span style={{ color: '#64748b' }}>{t('info.mint')}</span>
               <a href={rec.mintExplorerUrl || '#'} target='_blank' rel='noreferrer' style={{ color: '#818cf8', fontFamily: 'monospace' }}>{short(rec.mintTx)} →</a>
             </div>
           )}
           {(rec.srcDomain !== undefined || rec.dstDomain !== undefined) && <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: '#64748b' }}>Domain</span>
+            <span style={{ color: '#64748b' }}>{t('info.domain')}</span>
             <span style={{ fontFamily: 'monospace' }}>{rec.srcDomain} → {rec.dstDomain}</span>
           </div>}
           {rec.error && <div style={{ color: '#f87171', fontSize: 11 }}>{rec.error}</div>}
           {retryError && <div style={{ color: '#f87171', fontSize: 11 }}>{retryError}</div>}
           {rec.note && <div style={{ color: '#94a3b8', fontSize: 11, whiteSpace: 'pre-wrap' }}>{rec.note}</div>}
           <button onClick={copyReceipt} style={{marginTop:4,background:'rgba(16,185,129,0.1)',color:'#10b981',border:'1px solid rgba(16,185,129,0.25)',padding:'6px 8px',borderRadius:8,cursor:'pointer',fontSize:11}}>
-            {copiedReceipt ? 'Receipt copied' : 'Copy receipt JSON'}
+            {copiedReceipt ? t('info.receiptCopied') : t('info.copyReceipt')}
           </button>
           {canRetry && (
             <button onClick={retryMint} disabled={retrying} style={{marginTop:4,background:'rgba(99,102,241,0.14)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.35)',padding:'6px 8px',borderRadius:8,cursor:retrying?'not-allowed':'pointer',fontSize:11}}>
-              {retrying ? 'Menunggu penerimaan...' : 'Retry penerimaan'}
+              {retrying ? t('info.waitingReceive') : t('info.retryReceive')}
             </button>
           )}
         </div>
@@ -286,7 +287,7 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       {circleWallet&&(
         <div className='glass' style={{borderRadius:12,padding:14}}>
-          <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🔵 Circle Wallet</div>
+          <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🔵 {t('wallet.circle')}</div>
           <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>{t('info.address')}</div>
           <div style={{color:'#818cf8',fontFamily:'monospace',fontSize:11,wordBreak:'break-all',background:'rgba(99,102,241,0.1)',padding:'8px',borderRadius:8,marginBottom:8}}>{circleWallet.address}</div>
           <div style={{fontSize:11,color:'#64748b',marginBottom:4}}>{t('info.walletId')}</div>
@@ -344,18 +345,18 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div style={{fontWeight:600,fontSize:14,color:'#e2e8f0'}}>Pending Transaction Center</div>
+          <div style={{fontWeight:600,fontSize:14,color:'#e2e8f0'}}>{t('info.pendingCenter')}</div>
           {history.length>0&&<button onClick={()=>{ if(confirm('Hapus semua riwayat?')) txHistory.clear() }} style={{fontSize:11,background:'rgba(239,68,68,0.1)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)',padding:'3px 8px',borderRadius:6,cursor:'pointer'}}>{t('common.delete')}</button>}
         </div>
         {pending.length > 0 ? (
           <>
-            <div style={{color:'#f59e0b',fontSize:12,marginBottom:8}}>{pending.length} transaksi perlu dicek. Bridge pending bisa dilanjutkan jika konfirmasi jaringan sudah siap.</div>
+            <div style={{color:'#f59e0b',fontSize:12,marginBottom:8}}>{t('info.pendingCount', { count: pending.length })}</div>
             {pending.slice(0,6).map(rec=><HistoryRow key={`pending-${rec.id}`} rec={rec} />)}
           </>
         ) : (
           <div style={{color:'#10b981',fontSize:12,marginBottom:8}}>{t('info.retryClear')}</div>
         )}
-        {retryable.length > 0 && <div style={{color:'#94a3b8',fontSize:11,marginTop:8}}>{retryable.length} bridge bisa dilanjutkan penerimaannya dari detail transaksi.</div>}
+        {retryable.length > 0 && <div style={{color:'#94a3b8',fontSize:11,marginTop:8}}>{t('info.retryAvailable', { count: retryable.length })}</div>}
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
@@ -373,15 +374,15 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🌐 Arc Testnet</div>
         {[['Chain ID','5042002'],['Finality','⚡ Sub-second'],['Gas token','USDC'],['RPC','Private backend proxy']].map(([k,v])=>(
-          <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:4}}><span style={{color:'#64748b'}}>{k}</span><span style={{color:v.startsWith('⚡')?'#10b981':'#e2e8f0',fontSize:12}}>{v}</span></div>
+          <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:4}}><span style={{color:'#64748b'}}>{k === 'Chain ID' ? t('info.chainId') : k === 'Finality' ? t('info.finality') : k === 'Gas token' ? t('info.gasToken') : k === 'RPC' ? t('info.rpc') : k}</span><span style={{color:v.startsWith('⚡')?'#10b981':'#e2e8f0',fontSize:12}}>{v}</span></div>
         ))}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:8}}>
         <a href='https://faucet.circle.com/' target='_blank' rel='noreferrer' style={{display:'flex',alignItems:'center',gap:10,background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.3)',borderRadius:12,padding:'12px 14px',color:'#10b981',textDecoration:'none',fontSize:13}}>
-          <span style={{fontSize:20}}>🚰</span><div><div style={{fontWeight:600}}>Circle Faucet (USDC/EURC)</div><div style={{fontSize:11,opacity:0.8}}>faucet.circle.com</div></div><span style={{marginLeft:'auto'}}>→</span>
+          <span style={{fontSize:20}}>🚰</span><div><div style={{fontWeight:600}}>{t('info.circleFaucet')}</div><div style={{fontSize:11,opacity:0.8}}>faucet.circle.com</div></div><span style={{marginLeft:'auto'}}>→</span>
         </a>
         <a href='https://console.circle.com/faucet' target='_blank' rel='noreferrer' style={{display:'flex',alignItems:'center',gap:10,background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.3)',borderRadius:12,padding:'12px 14px',color:'#f59e0b',textDecoration:'none',fontSize:13}}>
-          <span style={{fontSize:20}}>⛽</span><div><div style={{fontWeight:600}}>Console Faucet (Native Gas)</div><div style={{fontSize:11,opacity:0.8}}>{t('info.useWalletId')}</div></div><span style={{marginLeft:'auto'}}>→</span>
+          <span style={{fontSize:20}}>⛽</span><div><div style={{fontWeight:600}}>{t('info.nativeFaucet')}</div><div style={{fontSize:11,opacity:0.8}}>{t('info.useWalletId')}</div></div><span style={{marginLeft:'auto'}}>→</span>
         </a>
       </div>
     </div>

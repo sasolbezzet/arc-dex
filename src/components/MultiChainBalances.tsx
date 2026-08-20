@@ -1,5 +1,6 @@
 // MultiChainBalances.tsx — Balance dashboard across all 4 chains for Agent Wallet.
 import { useState, useEffect, useCallback } from 'react'
+import { useI18n } from '../i18n'
 
 const API = ''
 const CHAIN_KEYS = ['arc-testnet', 'ethereum-sepolia', 'arbitrum-sepolia', 'base-sepolia'] as const
@@ -91,6 +92,7 @@ export function MultiChainBalances({ walletAddress }: Props) {
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
   const [activeChain, setActiveChain] = useState<ChainKey>('arc-testnet')
+  const { t } = useI18n()
 
   const fetchBalances = useCallback(async () => {
     if (!walletAddress) return
@@ -99,14 +101,14 @@ export function MultiChainBalances({ walletAddress }: Props) {
     try {
       const res = await fetch(`${API}/api/multi-balance/${walletAddress}`)
       const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Gagal memuat balance')
+      if (!res.ok) throw new Error(data?.error || t('balance.noChainBalance'))
       if (data.balances) setBalances(data.balances)
     } catch (e: any) {
-      setError(e?.message || 'Gagal memuat balance')
+      setError(e?.message || t('balance.noChainBalance'))
     } finally {
       setLoading(false)
     }
-  }, [walletAddress])
+  }, [walletAddress, t])
 
   useEffect(() => { fetchBalances() }, [fetchBalances])
 
@@ -129,7 +131,7 @@ export function MultiChainBalances({ walletAddress }: Props) {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
-      setError('Address tidak dapat disalin dari browser ini.')
+      setError(t('balance.copyAgentAddress'))
     }
   }
 
@@ -146,7 +148,7 @@ export function MultiChainBalances({ walletAddress }: Props) {
       }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ color: '#94a3b8', fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 5 }}>
-            Agent Wallet · MSCA
+            {t('balance.agentWallet')}
           </div>
           <code title={walletAddress} style={{ display: 'block', color: '#e2e8f0', fontSize: 12, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {shortAddress(walletAddress)}
@@ -155,22 +157,22 @@ export function MultiChainBalances({ walletAddress }: Props) {
         <button
           type='button'
           onClick={copyAddress}
-          title='Copy Agent Wallet address'
-          aria-label='Copy Agent Wallet address'
+          title={t('balance.copyAgentAddress')}
+          aria-label={t('balance.copyAgentAddress')}
           style={{
             flex: '0 0 auto', padding: '7px 10px', borderRadius: 8,
             border: '1px solid rgba(148,163,184,0.22)', background: 'rgba(15,23,42,0.66)',
             color: copied ? '#4ade80' : '#cbd5e1', fontSize: 11, cursor: 'pointer',
           }}
         >
-          {copied ? '✓ Copied' : '📋 Copy'}
+          {copied ? `✓ ${t('common.copied')}` : `📋 ${t('common.copy')}`}
         </button>
       </div>
 
       {/* Aggregated totals */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
-          <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 650 }}>Total across networks</span>
+          <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 650 }}>{t('balance.totalNetworks')}</span>
           <span style={{ color: '#64748b', fontSize: 10 }}>USDC · ETH · EURC · cirBTC</span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(116px, 1fr))', gap: 8 }}>
@@ -188,15 +190,15 @@ export function MultiChainBalances({ walletAddress }: Props) {
       {/* Network selector */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
-          <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 650 }}>Network balances</span>
+          <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 650 }}>{t('balance.networkBalances')}</span>
           <button
             type='button'
             onClick={fetchBalances}
             disabled={loading}
-            aria-label='Refresh balances'
+            aria-label={t('common.refreshBalances')}
             style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid rgba(51,65,85,0.9)', background: 'rgba(15,23,42,0.7)', color: loading ? '#475569' : '#94a3b8', fontSize: 11, cursor: loading ? 'wait' : 'pointer' }}
           >
-            {loading ? 'Loading…' : '↻ Refresh'}
+            {loading ? t('common.checking') : `↻ ${t('common.refresh')}`}
           </button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 7 }}>
@@ -223,7 +225,7 @@ export function MultiChainBalances({ walletAddress }: Props) {
                   </span>
                 </div>
                 <div style={{ color: selected ? accent : '#64748b', fontSize: 10, marginTop: 5 }}>
-                  {selected ? 'Selected' : 'View balance'}
+                  {selected ? t('balance.selected') : t('balance.viewBalance')}
                 </div>
               </button>
             )
@@ -238,10 +240,10 @@ export function MultiChainBalances({ walletAddress }: Props) {
             <span style={{ fontSize: 16 }} aria-hidden='true'>{CHAIN_ICONS[activeChain]}</span>
             <div style={{ minWidth: 0 }}>
               <div style={{ color: '#f8fafc', fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{CHAIN_NAMES[activeChain]}</div>
-              <div style={{ color: '#64748b', fontSize: 10 }}>Available assets</div>
+              <div style={{ color: '#64748b', fontSize: 10 }}>{t('balance.availableAssets')}</div>
             </div>
           </div>
-          {loading && <span style={{ color: activeAccent, fontSize: 10, whiteSpace: 'nowrap' }}>Updating…</span>}
+          {loading && <span style={{ color: activeAccent, fontSize: 10, whiteSpace: 'nowrap' }}>{t('balance.updating')}</span>}
         </div>
         {error && (
           <div role='alert' style={{ marginBottom: 9, padding: '8px 10px', borderRadius: 8, color: '#fca5a5', background: 'rgba(127,29,29,0.22)', border: '1px solid rgba(248,113,113,0.24)', fontSize: 11, lineHeight: 1.35 }}>

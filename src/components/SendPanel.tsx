@@ -96,7 +96,7 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
         <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('send.from')}</label>
         <div style={{display:'flex',gap:8}}>
           <button onClick={()=>setSource('circle')} style={{flex:1,padding:'10px 8px',borderRadius:10,border:`1px solid ${source==='circle'?'rgba(99,102,241,0.5)':'#1e1e2e'}`,background:source==='circle'?'rgba(99,102,241,0.1)':'transparent',color:source==='circle'?'#818cf8':'#64748b',cursor:'pointer',fontSize:12,fontWeight:600,textAlign:'left'}}>
-            <div>🔵 Circle Wallet</div>
+            <div>🔵 {t('wallet.circle')}</div>
             <div style={{fontSize:10,marginTop:2,fontFamily:'monospace',color:'#64748b'}}>{circleWallet?.address.slice(0,8)}...{circleWallet?.address.slice(-4)}</div>
             <div style={{color:source==='circle'?'#818cf8':'#64748b',marginTop:2}}>{parseFloat(balances[token]||'0').toFixed(4)} {token}</div>
           </button>
@@ -121,19 +121,19 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
         <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('send.destination')}</label>
         <input className='input' type='text' placeholder='0x...' value={toAddress} onChange={e=>setToAddress(e.target.value)} style={{fontFamily:'monospace',fontSize:12}} />
         <div style={{display:'flex',gap:6,marginTop:6}}>
-          {circleWallet&&<button onClick={()=>setToAddress(circleWallet.address)} style={{fontSize:10,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',padding:'3px 8px',borderRadius:6,cursor:'pointer'}}>→ Circle Wallet</button>}
-          {address&&<button onClick={()=>setToAddress(address)} style={{fontSize:10,background:'rgba(245,158,11,0.1)',color:'#f59e0b',border:'1px solid rgba(245,158,11,0.3)',padding:'3px 8px',borderRadius:6,cursor:'pointer'}}>→ MetaMask</button>}
+          {circleWallet&&<button onClick={()=>setToAddress(circleWallet.address)} style={{fontSize:10,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',padding:'3px 8px',borderRadius:6,cursor:'pointer'}}>{`→ ${t('wallet.circle')}`}</button>}
+          {address&&<button onClick={()=>setToAddress(address)} style={{fontSize:10,background:'rgba(245,158,11,0.1)',color:'#f59e0b',border:'1px solid rgba(245,158,11,0.3)',padding:'3px 8px',borderRadius:6,cursor:'pointer'}}>{`→ ${t('wallet.personal')}`}</button>}
         </div>
       </div>
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Testnet</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.from')}</span><span style={{color:source==='circle'?'#818cf8':'#f59e0b',fontFamily:'monospace',fontSize:11}}>{source==='circle'?circleWallet?.address.slice(0,8):address?.slice(0,8)}...{source==='circle'?circleWallet?.address.slice(-6):address?.slice(-4)}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('send.estimateFee')}</span><span style={{color:'#10b981'}}>{feeLoading ? t('send.calculating') : feeQuote ? `${feeQuote.fee} ${feeQuote.token}` : '-'}</span></div>
-        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span style={{color:'#f59e0b'}}>{feeQuote?.platformFee ? `${feeQuote.platformFee.amount} ${feeQuote.platformFee.token}` : '-'}</span></div>}
-        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Recipient receives</span><span>{feeQuote?.recipientReceives ? `${feeQuote.recipientReceives} ${token}` : '-'}</span></div>}
+        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.fee')} (platform)</span><span style={{color:'#f59e0b'}}>{feeQuote?.platformFee ? `${feeQuote.platformFee.amount} ${feeQuote.platformFee.token}` : '-'}</span></div>}
+        {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.to')}</span><span>{feeQuote?.recipientReceives ? `${feeQuote.recipientReceives} ${token}` : '-'}</span></div>}
         {feeQuote?.detail && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('send.detail')}</span><span style={{fontSize:11,color:'#94a3b8',textAlign:'right'}}>{feeQuote.detail}</span></div>}
       </div>
-      {status&&<div style={{padding:10,borderRadius:10,fontSize:13,background:status.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&<div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}</div>}
+      {status&&<div style={{padding:10,borderRadius:10,fontSize:13,background:status.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&            <div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>{t('info.viewExplorer')} →</a></div>}</div>}
       <button onClick={handleSend} disabled={!amount||!toAddress||loading||(source==='circle'&&!circleWallet)} className='btn btn-primary'>{loading?`⏳ ${t('common.sending')}`:amount?t('send.actionAmount', { amount, token, source: source==='circle'?'Circle':'MetaMask' }):t('send.action')}</button>
     </div>
   )

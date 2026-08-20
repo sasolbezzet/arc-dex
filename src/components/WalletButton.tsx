@@ -126,7 +126,7 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
       <button onClick={connectWC} disabled={loading} className='btn btn-primary' style={{width:'auto',padding:'8px 20px',fontSize:13,background:'rgba(99,102,241,0.8)'}}>
         {loading ? '...' : '📱 WalletConnect'}
       </button>
-      <button onClick={() => setShowOptions(false)} style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:11}}>← kembali</button>
+      <button onClick={() => setShowOptions(false)} style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:11}}>{t('wallet.back')}</button>
     </div>
   )
 
@@ -138,10 +138,10 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
           : t('wallet.connect')}
       </button>
       {isWalletConnectAvailable() && !showOptions && !loading && (
-        <button onClick={() => setShowOptions(true)} style={{background:'none',border:'none',color:'#818cf8',cursor:'pointer',fontSize:11}}>atau pilih wallet</button>
+        <button onClick={() => setShowOptions(true)} style={{background:'none',border:'none',color:'#818cf8',cursor:'pointer',fontSize:11}}>{t('wallet.choose')}</button>
       )}
       {mobileSignHint && (
-        <span style={{color:'#fbbf24',fontSize:11,textAlign:'right'}}>Buka wallet Anda untuk tanda tangan login</span>
+        <span style={{color:'#fbbf24',fontSize:11,textAlign:'right'}}>{t('wallet.signLogin')}</span>
       )}
       {error && <span className='wallet-error'>{error}</span>}
     </div>

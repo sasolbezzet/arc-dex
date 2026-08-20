@@ -6,6 +6,7 @@ import {
   getTreasuryStatus,
 } from '../payApi'
 import type { X402Invoice } from '../payApi'
+import { useI18n } from '../i18n'
 
 const TEST_COMMANDS = [
   ['Create x402 invoice', 'curl -i -X POST https://arcoxdex.vercel.app/api/x402/invoices/create -H "Content-Type: application/json" -d \'{"resource":"/api/intel/address/0x0000000000000000000000000000000000000000","service":"arcox_intel"}\''],
@@ -25,6 +26,7 @@ export function PaySandbox() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [treasuryResult, setTreasuryResult] = useState<any>(null)
+  const { t } = useI18n()
 
   const invoiceId = invoice?.invoiceId || ''
   const isPending = !!invoice && ['payment_required', 'estimate_ready', 'awaiting_signature', 'spend_submitted', 'settlement_pending', 'pending'].includes(invoice.status)
@@ -77,7 +79,7 @@ export function PaySandbox() {
     <div className='pay-page sandbox-page'>
       <section className='glass sandbox-hero'>
         <div className='docs-kicker'>ARCOX Pay</div>
-        <h2>ARCOX x402 Testnet Payments</h2>
+        <h2>{t('pay.sandboxTitle')}</h2>
         <p>Internal ARCOX invoice flow for paid Intel API access. Pay exact Arc USDC with an on-chain memo, or estimate a Unified Balance spend to the same Arc treasury recipient.</p>
         <div className='inline-warning'>Real testnet only. No NowPayments, no fake unlock, and no manual txHash fallback.</div>
       </section>
@@ -86,15 +88,15 @@ export function PaySandbox() {
 
       <section className='sandbox-grid'>
         <div className='glass sandbox-card'>
-          <h3>Create x402 Invoice</h3>
+          <h3>{t('pay.createInvoice')}</h3>
           <Field label='Resource' value={form.resource} onChange={v => update('resource', v)} />
           <Field label='Service' value={form.service} onChange={v => update('service', v)} />
           <Field label='Base Amount Override' value={form.amount} onChange={v => update('amount', v)} />
-          <button className='btn btn-primary' onClick={createPayment} disabled={busy === 'create'}>Create ARCOX x402 Invoice</button>
+          <button className='btn btn-primary' onClick={createPayment} disabled={busy === 'create'}>{t('pay.createInvoice')}</button>
         </div>
 
         <div className='glass sandbox-card wide'>
-          <h3>Payment Flow</h3>
+          <h3>{t('ui.payment')}</h3>
           <div className='flow-steps'>
             <FlowStep title='User Wallet' value='Arc USDC or Unified Balance' extra='Signs the payment' />
             <FlowStep title='ARCOX Treasury' value={invoice?.recipient || 'Set X402_RECIPIENT_ADDRESS'} extra='Arc Testnet USDC receiver' />
@@ -104,7 +106,7 @@ export function PaySandbox() {
         </div>
 
         <div className='glass sandbox-card wide'>
-          <h3>Invoice Detail</h3>
+          <h3>{t('ui.paymentPreview')}</h3>
           {invoice ? (
             <>
               <div className='pay-grid'>
@@ -121,11 +123,11 @@ export function PaySandbox() {
                 <Info label='Memo ID' value={invoice.memoId || '-'} mono />
               </div>
               <div className='button-row wrap'>
-                <button className='btn btn-secondary' onClick={checkStatus}>Check Status</button>
-                <button className='btn btn-secondary' onClick={estimateUnified}>Estimate Unified Balance</button>
-                <button className='btn btn-secondary' onClick={() => copy(invoice.recipient)}>Copy Treasury Address</button>
-                <button className='btn btn-secondary' onClick={() => copy(invoice.amount)}>Copy Exact Amount</button>
-                <button className='btn btn-secondary' onClick={() => copy(invoice.paymentId)}>Copy Payment ID</button>
+                <button className='btn btn-secondary' onClick={checkStatus}>{t('pay.checkStatus')}</button>
+                <button className='btn btn-secondary' onClick={estimateUnified}>{t('intel.estimate')}</button>
+                <button className='btn btn-secondary' onClick={() => copy(invoice.recipient)}>{t('pay.copyTreasury')}</button>
+                <button className='btn btn-secondary' onClick={() => copy(invoice.amount)}>{t('pay.copyAmount')}</button>
+                <button className='btn btn-secondary' onClick={() => copy(invoice.paymentId)}>{t('pay.copyPaymentId')}</button>
               </div>
             </>
           ) : (
@@ -134,9 +136,9 @@ export function PaySandbox() {
         </div>
 
         <div className='glass sandbox-card wide'>
-          <h3>Unified Balance</h3>
+          <h3>{t('balance.title')}</h3>
           <p className='pay-muted'>Unified Balance is a USDC routing layer, not a third wallet. The app estimates before spend and keeps settlement pending until Arc/Gateway confirms payment.</p>
-          <button className='btn btn-primary' onClick={loadTreasury}>Check Treasury Readiness</button>
+          <button className='btn btn-primary' onClick={loadTreasury}>{t('pay.treasuryReadiness')}</button>
           {treasuryResult && (
             <div className='pay-grid'>
               <Info label='Mode' value={treasuryResult.mode || '-'} />

@@ -5,6 +5,7 @@ import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccou
 import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
+import { useI18n } from '../i18n'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
@@ -104,6 +105,7 @@ async function siweLogin(address: string): Promise<string | null> {
 }
 
 export function PluginPanel({ address, circleWallet, solanaAddress }: { address: string | null; circleWallet: { id: string; address: string } | null; solanaAddress: string | null }) {
+  const { t } = useI18n()
   // ── OAuth callback params (from ChatGPT/Claude redirect) ──
   const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
   // OAuth approval has two deliberate signing steps: the passkey binds the
@@ -350,7 +352,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       ...(init || {}),
       headers: { ...(init?.headers || {}), ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}) },
     })
-    if (r.status === 401) { clearStaleSession(requestToken); throw new Error('__SESSION_EXPIRED__') }
+    if (r.status === 401) { clearStaleSession(requestToken || undefined); throw new Error('__SESSION_EXPIRED__') }
     return r.json()
   }
 
@@ -419,11 +421,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const resolved = typeof patch === 'function' ? patch(prev) : patch
       const next = { ...prev, ...resolved }
       try {
-        const stored = JSON.parse(localStorage.getItem('arx_msca_state') || '{}')
+        const stored: Record<string, any> = JSON.parse(localStorage.getItem('arx_msca_state') || '{}')
         // React state can legitimately lag a just-completed passkey operation.
         // Never let an undefined field erase a newer persisted value, and
         // merge per-chain maps so status polling cannot erase deployment data.
-        const definedPatch = Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined))
+        const definedPatch: Record<string, any> = Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined))
         const merged = {
           ...stored,
           ...definedPatch,
@@ -686,7 +688,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             60_000,
             passkeyMode === 'Register'
               ? 'Pembuatan Agent Wallet timeout. Izinkan passkey di halaman OAuth lalu coba lagi.'
-              : 'Login Passkey timeout. Izinkan passkey di halaman OAuth lalu coba lagi.',
+              : t('plugin.passkeyTimeout'),
           )
           oauthMscaWalletAddress = passkey.walletAddress
           oauthMscaSessionToken = passkey.sessionToken
@@ -911,7 +913,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 background: 'linear-gradient(135deg, #6366f1, #818cf8)',
                 color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
               }}>
-                🔐 User lama<br />Login Passkey
+                {t('plugin.oldUser')}<br />{t('plugin.loginPasskey')}
               </button>
               <button onClick={() => approveOAuth('Register')} disabled={oauthStatus === 'done'} style={{
                 width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(16,185,129,0.4)',
@@ -923,7 +925,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             </div>
           )}
           {oauthStatus === 'error' && (
-            <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>Pilih flow lagi</button>
+            <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>{t('plugin.chooseFlow')}</button>
           )}
         </div>
       )}
@@ -935,16 +937,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <StatusDot on={claudeConnected} label="Claude" />
           <StatusDot on={anyConnected} label={anyConnected ? 'Agent aktif' : 'Belum ada agent'} />
         </div>
-        <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>Keluar</button>
+        <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>{t('plugin.logout')}</button>
       </div>
 
       {/* Setup MCP */}
-      <Section title='🔌 Setup MCP' badge={anyConnected ? <StatusDot on={true} label="Terhubung" /> : undefined}>
-        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Hubungkan AI agent ke ARCOX. Copy URL ini ke Claude, ChatGPT, atau Codex sebagai MCP server.</div>
+      <Section title={t('plugin.setupTitle')} badge={anyConnected ? <StatusDot on={true} label={t('plugin.connected')} /> : undefined}>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.setupCopy')}</div>
         <Row label='MCP URL' value={
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <code style={{ background: 'rgba(99,102,241,0.1)', padding: '4px 8px', borderRadius: 6, color: '#818cf8' }}>{MCP_URL}</code>
-            <button onClick={() => navigator.clipboard.writeText(MCP_URL)} style={{ background: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>Copy</button>
+            <button onClick={() => navigator.clipboard.writeText(MCP_URL)} style={{ background: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>{t('plugin.copy')}</button>
           </div>
         } />
         <ol style={{ color: '#94a3b8', fontSize: 11, paddingLeft: 16, marginTop: 8 }}>
@@ -957,10 +959,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Credentials */}
-      <Section title='🔐 Credentials'>
-        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Wallet dan API key yang bisa dipakai agent. Wallet terdaftar otomatis setelah login.</div>
+      <Section title={t('plugin.credentials')}>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.credentialsCopy')}</div>
         {credentials.length === 0 ? (
-          <div style={{ color: '#64748b', fontSize: 12 }}>Belum ada credential.</div>
+          <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noCredentials')}</div>
         ) : (
           credentials.map(c => (
             <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6 }}>
@@ -977,14 +979,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             const label = prompt('Nama credential:')
             const value = prompt('Value (API key):')
             if (label && value) fetch(`${API}/api/vault/credentials`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ type: 'api_key', label, value }) }).then(() => fetchAll()).catch((e: any) => setError(e?.message || 'Tambah credential gagal'))
-          }} style={{ width: '100%', background: 'rgba(99,102,241,0.1)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', padding: 8, borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>+ Tambah API Key</button>
+          }} style={{ width: '100%', background: 'rgba(99,102,241,0.1)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', padding: 8, borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>{t('plugin.addApiKey')}</button>
         </div>
       </Section>
 
       {/* Agents */}
-      <Section title='🤖 Agents' badge={anyConnected ? <StatusDot on={true} label={`${mcpSessions.filter(s => s.active).length} aktif`} /> : undefined}>
+      <Section title={t('plugin.agents')} badge={anyConnected ? <StatusDot on={true} label={t('plugin.activeCount', { count: mcpSessions.filter(s => s.active).length })} /> : undefined}>
         {mcpSessions.length === 0 ? (
-          <div style={{ color: '#64748b', fontSize: 12 }}>Belum ada agent terhubung. Hubungkan via MCP URL di atas.</div>
+          <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noAgents')}</div>
         ) : (
           mcpSessions.map((s, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6 }}>
@@ -992,25 +994,25 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{s.agent || 'MCP Agent'}</div>
                 <div style={{ color: '#64748b', fontSize: 10 }}>ID: {s.clientId?.slice(0, 20)}... · Last: {fmtTime(s.lastActivity)}</div>
               </div>
-              <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: s.active ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.1)', color: s.active ? '#10b981' : '#64748b' }}>{s.active ? '🟢 Aktif' : '⭕ Idle'}</span>
+              <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: s.active ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.1)', color: s.active ? '#10b981' : '#64748b' }}>{s.active ? t('plugin.active') : t('plugin.idle')}</span>
             </div>
           ))
         )}
       </Section>
 
       {/* Approvals — pending only */}
-      <Section title='✅ Approvals' badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{approvals.filter(a => a.status === 'pending').length} menunggu</span> : undefined}>
+      <Section title={t('plugin.approvals')} badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{t('plugin.waitingCount', { count: approvals.filter(a => a.status === 'pending').length })}</span> : undefined}>
         {approvals.filter(a => a.status === 'pending').length === 0 ? (
-          <div style={{ color: '#64748b', fontSize: 12 }}>Tidak ada permintaan persetujuan.</div>
+          <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noApproval')}</div>
         ) : (
           approvals.filter(a => a.status === 'pending').map(a => (
             <div key={a.id} style={{ padding: '8px', background: a.id === highlightApproval ? 'rgba(245,158,11,0.12)' : 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6, border: a.id === highlightApproval ? '1px solid rgba(245,158,11,0.6)' : '1px solid rgba(245,158,11,0.25)' }}>
               <div style={{ color: '#e2e8f0', fontSize: 12 }}>{a.agent}: {a.action} {a.amount} {a.token} {a.to ? `→ ${a.to.slice(0, 10)}...` : ''}</div>
               <div style={{ color: '#64748b', fontSize: 10 }}>Source: {a.source} · {fmtTime(a.createdAt)}</div>
-              {a.action === 'bridge' && <div style={{ color: '#818cf8', fontSize: 10, marginTop: 4 }}>Bridge butuh beberapa langkah — Approve akan membuka halaman Bridge yang sudah terisi.</div>}
+              {a.action === 'bridge' && <div style={{ color: '#818cf8', fontSize: 10, marginTop: 4 }}>{t('plugin.bridgeHint')}</div>}
               <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <button onClick={() => approve(a)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: signingId === a.id ? 'wait' : 'pointer' }}>{signingId === a.id ? '⏳ Menunggu MetaMask...' : a.action === 'bridge' ? 'Approve & Buka Bridge' : 'Approve & Sign'}</button>
-                <button onClick={() => reject(a.id)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>Reject</button>
+                <button onClick={() => approve(a)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: signingId === a.id ? 'wait' : 'pointer' }}>{signingId === a.id ? '⏳ Menunggu MetaMask...' : a.action === 'bridge' ? t('plugin.approveBridge') : t('plugin.approveSign')}</button>
+                <button onClick={() => reject(a.id)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>{t('plugin.reject')}</button>
               </div>
             </div>
           ))
@@ -1018,9 +1020,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Approval History — approved / rejected */}
-      <Section title='📖 Riwayat Approval' badge={approvals.filter(a => a.status !== 'pending').length > 0 ? <span style={{ fontSize: 11, color: '#64748b' }}>{approvals.filter(a => a.status !== 'pending').length}</span> : undefined}>
+      <Section title={t('plugin.approvalHistory')} badge={approvals.filter(a => a.status !== 'pending').length > 0 ? <span style={{ fontSize: 11, color: '#64748b' }}>{approvals.filter(a => a.status !== 'pending').length}</span> : undefined}>
         {approvals.filter(a => a.status !== 'pending').length === 0 ? (
-          <div style={{ color: '#64748b', fontSize: 12 }}>Belum ada riwayat.</div>
+          <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noHistory')}</div>
         ) : (
           approvals
             .filter(a => a.status !== 'pending')
@@ -1032,7 +1034,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 <div key={a.id} style={{ padding: '8px', background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6, borderLeft: `3px solid ${ok ? '#10b981' : '#f87171'}` }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ color: '#e2e8f0', fontSize: 12 }}>{a.action} {a.amount} {a.token} {a.to ? `→ ${a.to.slice(0, 10)}...` : ''}</div>
-                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: ok ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: ok ? '#10b981' : '#f87171' }}>{a.status === 'auto_approved' ? 'auto' : a.status === 'approved' ? 'disetujui' : 'ditolak'}</span>
+                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: ok ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: ok ? '#10b981' : '#f87171' }}>{a.status === 'auto_approved' ? 'auto' : a.status === 'approved' ? t('plugin.approved') : t('plugin.rejected')}</span>
                   </div>
                   <div style={{ color: '#64748b', fontSize: 10 }}>{a.agent} · {fmtTime(a.approvedAt || a.createdAt)}</div>
                   {a.txHash && (
@@ -1045,18 +1047,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Limits */}
-      <Section title='🛡️ Limits'>
-        <Row label='Max per tx' value={
+      <Section title={t('plugin.limits')}>
+        <Row label={t('plugin.maxPerTx')} value={
           <input type='number' value={limits.maxPerTx} onChange={e => updateLimits({ maxPerTx: Number(e.target.value) })} style={{ width: 80, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px 8px', fontSize: 12 }} />
         } />
-        <Row label='Daily limit' value={
+        <Row label={t('plugin.dailyLimit')} value={
           <input type='number' value={limits.dailyLimit} onChange={e => updateLimits({ dailyLimit: Number(e.target.value) })} style={{ width: 80, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px 8px', fontSize: 12 }} />
         } />
-        <Row label='Auto-approve dalam limit' value={
+        <Row label={t('plugin.autoApprove')} value={
           <input type='checkbox' checked={limits.autoApprove} onChange={e => updateLimits({ autoApprove: e.target.checked })} style={{ cursor: 'pointer' }} />
         } />
         <div style={{ marginTop: 8 }}>
-          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>Whitelist address:</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>{t('plugin.whitelist')}</div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input type='text' value={newWhitelist} onChange={e => setNewWhitelist(e.target.value)} placeholder='0x...' style={{ flex: 1, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px 8px', fontSize: 12 }} />
             <button onClick={addWhitelist} style={{ background: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer' }}>+</button>
@@ -1071,9 +1073,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Agent Wallet (MSCA + Passkey) */}
-      <Section title='🔑 Agent Wallet' badge={
+      <Section title={t('plugin.agentWallet')} badge={
         mscaState.walletAddress
-          ? (mscaState.sessionActive ? <StatusDot on={true} label={mscaState.deployed ? 'Deployed & aktif' : 'Session aktif'} /> : <StatusDot on={false} label='Session belum aktif' />)
+          ? (mscaState.sessionActive ? <StatusDot on={true} label={mscaState.deployed ? t('plugin.deployedActive') : t('plugin.sessionActive')} /> : <StatusDot on={false} label={t('plugin.sessionInactive')} />)
           : undefined
       }>
         {!mscaState.walletAddress ? (
@@ -1083,7 +1085,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
-                🔐 Login Passkey
+                {t('plugin.loginPasskey')}
               </button>
               <button className='btn' style={{ flex: 1, border: '1px solid #1e1e2e' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
                 ✨ Buat Baru
@@ -1100,16 +1102,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               ].map(([key, label]) => {
                 const status = mscaState.deploymentStatus?.[key]
                 const color = status?.status === 'deployed' ? '#10b981' : status?.status === 'unsupported' ? '#f59e0b' : status?.status === 'failed' ? '#f87171' : '#64748b'
-                const text = status?.status === 'deployed' ? 'deployed' : status?.status === 'unsupported' ? 'MSCA unsupported' : status?.status === 'failed' ? 'failed' : 'not checked'
+                const text = status?.status === 'deployed' ? t('plugin.deployed') : status?.status === 'unsupported' ? 'MSCA unsupported' : status?.status === 'failed' ? t('plugin.failed') : t('plugin.notChecked')
                 const authorizationFailed = mscaState.chainAuthorizationStatus?.[key] === 'failed'
-                return <div key={key} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(18,18,26,0.6)', border: `1px solid ${color}33`, fontSize: 10 }}><div style={{ color: '#cbd5e1' }}>{label}</div><div style={{ color }}>{text}</div>{authorizationFailed && <div style={{ color: '#f87171', marginTop: 2 }}>authorization belum selesai</div>}{status?.error && <div title={status.error} style={{ color: '#94a3b8', marginTop: 2, lineHeight: 1.2 }}>{status.error.slice(0, 180)}</div>}</div>
+                return <div key={key} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(18,18,26,0.6)', border: `1px solid ${color}33`, fontSize: 10 }}><div style={{ color: '#cbd5e1' }}>{label}</div><div style={{ color }}>{text}</div>{authorizationFailed && <div style={{ color: '#f87171', marginTop: 2 }}>{t('plugin.authorizationPending')}</div>}{status?.error && <div title={status.error} style={{ color: '#94a3b8', marginTop: 2, lineHeight: 1.2 }}>{status.error.slice(0, 180)}</div>}</div>
               })}
             </div>
-            {Object.values(mscaState.deploymentStatus || {}).some(status => status.status === 'failed') && <button className='btn' style={{ width: '100%', marginBottom: 8, fontSize: 11 }} disabled={busy === 'deployments'} onClick={() => run('deployments', retryMscaDeployments)}>↻ Ulangi deployment chain gagal</button>}
-            <Row label='Passkey' value={<span style={{ color: '#4ade80' }}>✓ Terdaftar</span>} />
+            {Object.values(mscaState.deploymentStatus || {}).some(status => status.status === 'failed') && <button className='btn' style={{ width: '100%', marginBottom: 8, fontSize: 11 }} disabled={busy === 'deployments'} onClick={() => run('deployments', retryMscaDeployments)}>↻ {t('plugin.retryDeployment')}</button>}
+            <Row label='Passkey' value={<span style={{ color: '#4ade80' }}>{t('plugin.passkeyRegistered')}</span>} />
             <Row label='Contract' value={mscaState.deployed
-              ? <span style={{ color: '#4ade80' }}>✓ Deployed</span>
-              : <span style={{ color: '#f59e0b' }}>○ Belum deployed</span>
+              ? <span style={{ color: '#4ade80' }}>{t('plugin.deployed')}</span>
+              : <span style={{ color: '#f59e0b' }}>{t('plugin.notDeployed')}</span>
             } />
             {mscaState.delegateAddress ? (
               <>
@@ -1146,7 +1148,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 </button>
               )}
               <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
-                🔐 Login Passkey
+                {t('plugin.loginPasskey')}
               </button>
             </div>
             <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
@@ -1166,18 +1168,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
       {/* Multi-chain Agent Wallet Balances */}
       {mscaState.walletAddress && (
-        <Section title='💰 Agent Wallet Balances'>
+        <Section title={t('plugin.multiBalances')}>
           <MultiChainBalances walletAddress={mscaState.walletAddress} />
         </Section>
       )}
 
       {/* Pending Transactions (passkey approval) */}
       {pendingTxs.length > 0 && (
-        <Section title='⏳ Transaksi Menunggu Persetujuan' badge={<span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{pendingTxs.length}</span>}>
+        <Section title={t('plugin.pending')} badge={<span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{pendingTxs.length}</span>}>
           {pendingTxs.map(tx => (
             <div key={tx.txId} style={{ padding: '8px 0', borderBottom: '1px solid #1e1e2e' }}>
               <div style={{ fontSize: 12, color: '#e2e8f0', marginBottom: 4 }}>
-                <span style={{ color: '#f59e0b' }}>Agent minta transaksi</span>
+                <span style={{ color: '#f59e0b' }}>{t('plugin.agentRequests')}</span>
                 <span style={{ color: '#64748b', marginLeft: 8 }}>{fmtTime(tx.createdAt)}</span>
               </div>
               <div style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', marginBottom: 6 }}>
@@ -1198,7 +1200,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                   } finally { setBusy(null) }
                 }}
               >
-                {busy === `pending-${tx.txId}` ? 'Menandatangani...' : '🔐 Approve dengan Passkey'}
+                {busy === `pending-${tx.txId}` ? t('plugin.signing') : t('plugin.approvePasskey')}
               </button>
             </div>
           ))}
@@ -1206,9 +1208,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       )}
 
       {/* Activity */}
-      <Section title='📜 Activity'>
+      <Section title={t('plugin.activity')}>
         {activity.length === 0 ? (
-          <div style={{ color: '#64748b', fontSize: 12 }}>Belum ada aktivitas agent.</div>
+          <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noActivity')}</div>
         ) : (
           activity.map(a => (
             <div key={a.id} style={{ fontSize: 11, color: '#94a3b8', padding: '4px 0', borderBottom: '1px solid #1e1e2e' }}>

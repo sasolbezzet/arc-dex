@@ -5,6 +5,7 @@ import { estimateDelegatedUnifiedBalance, estimateX402UnifiedBalance, markX402Un
 import { estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
 import type { AgentIdentity } from '../services/agentIdentity'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
+import { useI18n } from '../i18n'
 
 type IntelType =
   | 'address'
@@ -123,6 +124,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
   const [requirement, setRequirement] = useState<any>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const { t } = useI18n()
   const [paying, setPaying] = useState(false)
   const [paymentTx, setPaymentTx] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<'arc' | 'unified'>('arc')
@@ -362,16 +364,16 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     <div className='pay-page'>
       <section className='glass sandbox-hero'>
         <div className='docs-kicker'>ARCOX Insights</div>
-        <h2>Wallet and market insights</h2>
-        <p>Choose a report, review the price, pay with USDC, and view the result.</p>
-        <div className='inline-warning'>Information only. Not financial advice.</div>
+        <h2>{t('intel.hero')}</h2>
+        <p>{t('intel.copy')}</p>
+        <div className='inline-warning'>{t('intel.warning')}</div>
       </section>
 
       {error && <div className='inline-error'>{error}</div>}
 
       <section className='sandbox-grid'>
         <div className='glass sandbox-card'>
-          <h3>Choose a Report</h3>
+          <h3>{t('intel.choose')}</h3>
           <ServicePicker
             value={type}
             onChange={next => {
@@ -384,7 +386,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
           {selected.needsChain && <Field label='Chain' value={chain} onChange={setChain} placeholder='ethereum, base, arbitrum...' />}
           {selected.needsTimeWindow && (
             <label className='sandbox-field'>
-              <span>Time Window</span>
+              <span>{t('intel.timeWindow')}</span>
               <select className='input compact-intel-select' value={timeWindow} onChange={event => setTimeWindow(event.target.value)}>
                 {TIME_WINDOWS.map(window => <option key={window} value={window}>{window}</option>)}
               </select>
@@ -396,16 +398,16 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
             <Info label='Pay With' value='USDC on Arc Testnet' />
             <Info label='Category' value={selected.group} />
           </div>
-          <button className='btn btn-primary' onClick={() => analyze()} disabled={loading}>{loading ? 'Analyzing...' : 'Analyze'}</button>
+          <button className='btn btn-primary' onClick={() => analyze()} disabled={loading}>{loading ? t('intel.analyzing') : t('intel.analyze')}</button>
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>Payment</h3>
+          <h3>{t('intel.payment')}</h3>
           {requirement ? (
             <>
-              <p className='pay-muted'>Choose how to pay. Your report opens after payment is confirmed.</p>
+              <p className='pay-muted'>{t('intel.paymentCopy')}</p>
               <div className='sandbox-field'>
-                <span>Payment Method</span>
+                <span>{t('intel.paymentMethod')}</span>
                 <div className='payment-method-picker' role='radiogroup' aria-label='Payment method'>
                   <button type='button' role='radio' aria-checked={paymentMethod === 'arc'} className={paymentMethod === 'arc' ? 'active' : ''} onClick={() => setPaymentMethod('arc')}>
                     <strong>Arc USDC</strong><small>Pay from wallet</small>
@@ -429,7 +431,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
                 <Info label='Expires' value={`${requirement.expiresInSeconds || 300}s`} />
               </div>
               <button className='btn btn-primary' onClick={checkInvoiceStatus} disabled={loading || !requirement.invoiceId}>
-                {loading ? 'Checking...' : 'Check Payment Status'}
+                {loading ? t('common.checking') : t('intel.checkPayment')}
               </button>
               {paymentMethod === 'arc' ? (
                 <button className='btn btn-secondary' onClick={payInvoiceWithWallet} disabled={paying || loading || !isPayable(requirement.status)}>
@@ -438,7 +440,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
               ) : (
                 <>
                   <label className='sandbox-field'>
-                    <span>Unified Balance Source</span>
+                    <span>{t('intel.unifiedSource')}</span>
                     <div className='compact-chain-grid compact-chain-grid--stacked'>
                       {UB_SOURCES.map(source => (
                         <button key={source.id} type='button' className={unifiedSourceChain === source.id ? 'active' : ''} onClick={() => { setUnifiedSourceChain(source.id); setUnifiedEstimate(null) }}>
@@ -449,10 +451,10 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
                   </label>
                   <div className='button-row wrap'>
                     <button className='btn btn-secondary' onClick={estimateUnifiedPayment} disabled={paying || loading || !isPayable(requirement.status)}>
-                      {paying ? 'Estimating...' : 'Estimate Unified Balance'}
+                      {paying ? t('common.checking') : t('intel.estimate')}
                     </button>
                     <button className='btn btn-primary' onClick={payWithUnifiedBalance} disabled={paying || loading || !isPayable(requirement.status)}>
-                      {paying ? 'Submitting...' : 'Pay with Unified Balance'}
+                      {paying ? t('ui.submitting') : t('intel.payUnified')}
                     </button>
                   </div>
                 </>
@@ -473,7 +475,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
         </div>
 
         <div className='glass sandbox-card wide'>
-          <h3>Result</h3>
+          <h3>{t('intel.result')}</h3>
           <IntelResult result={result} requirement={requirement} selected={selected} />
         </div>
       </section>
@@ -509,6 +511,7 @@ function ServicePicker({ value, onChange }: { value: IntelType; onChange: (value
 }
 
 function IntelResult({ result, requirement, selected }: { result: any; requirement: any; selected: IntelService }) {
+  const { t } = useI18n()
   if (result?.ok) {
     const presentation = normalizePresentation(result, selected)
     const quality = presentation.dataQuality
@@ -591,12 +594,12 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
                 ))}
               </div>
             )}
-            {!section.fields.length && !section.records.length && <p className='pay-muted'>No populated data was returned for this section.</p>}
+            {!section.fields.length && !section.records.length && <p className='pay-muted'>{t('intel.noData')}</p>}
           </section>
         ))}
 
         <section className='intel-detail-section intel-quality'>
-          <div className='intel-section-heading'><div><span>Data Quality</span><h4>Coverage and Interpretation</h4></div></div>
+          <div className='intel-section-heading'><div><span>{t('intel.dataQuality')}</span><h4>Coverage and Interpretation</h4></div></div>
           {quality.errors && quality.errors.length > 0 && (
             <div className='intel-error-list'>
               {quality.errors.map((item, index) => <p key={`${item.section}-${index}`}><strong>{humanize(item.section)}:</strong> {item.message}</p>)}
@@ -607,7 +610,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
               {presentation.guidance.map((note, index) => <li key={index}>{note}</li>)}
             </ul>
           )}
-          {!quality.fieldCount && !quality.recordCount && <p className='pay-muted'>The provider returned no populated fields or records for this query.</p>}
+          {!quality.fieldCount && !quality.recordCount && <p className='pay-muted'>{t('intel.noFields')}</p>}
         </section>
       </div>
     )
@@ -619,7 +622,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
           <div>
             <div className='docs-kicker'>Payment Required</div>
             <h4>{selected.label}</h4>
-            <p>Pay this invoice to unlock the Arkham result. No intelligence data is shown before payment.</p>
+            <p>{t('intel.payRequired')}</p>
           </div>
           <span className='intel-pill warning'>{statusLabel(requirement.status || 'pending')}</span>
         </div>
@@ -632,7 +635,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
       </div>
     )
   }
-  return <p className='pay-muted'>Run an analysis to create an x402 invoice or show an unlocked Arkham result.</p>
+  return <p className='pay-muted'>{t('intel.runFirst')}</p>
 }
 
 function DetailField({ field, mono = false }: { field: IntelField; mono?: boolean }) {

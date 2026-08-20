@@ -57,10 +57,12 @@ const STORAGE_KEY = 'arx_msca_state'
 let livePasskeyCredential: any = null
 
 type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationPrecheckFailed?: boolean; authorizationError?: string; error?: string; updatedAt: number }
+type DeploymentStatusUpdate = Omit<Partial<DeploymentStatus>, 'updatedAt'> & { updatedAt: number }
+type StoredCredential = { id: string; publicKey: `0x${string}`; raw?: unknown }
 
 interface MscaState {
   walletAddress: string
-  credential: { id: string; publicKey: string } | null
+  credential: StoredCredential | null
   delegateAddress: string
   sessionActive: boolean
   deployed?: boolean
@@ -453,8 +455,16 @@ function bundlerClientFor(chainKey: string, account: any, publicClient: any) {
 }
 
 
+function createStoredCredential(id: unknown, publicKey: unknown, raw: unknown): StoredCredential {
+  const normalizedPublicKey = String(publicKey || '')
+  if (!/^0x[0-9a-fA-F]+$/.test(normalizedPublicKey)) {
+    throw new Error('Kunci passkey dari server tidak valid. Login passkey ulang diperlukan.')
+  }
+  return { id: String(id), publicKey: normalizedPublicKey as `0x${string}`, raw }
+}
+
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown }; sessionToken: string }> {
+export async function registerPasskey(): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
   // Keep one browser credential request at a time. The browser assertion is
   // verified by Circle exactly once on the backend; the SDK high-level helper
@@ -467,7 +477,7 @@ export async function registerPasskey(): Promise<{ walletAddress: string; creden
       }) as any
       if (!rawCredential) throw new Error('No credential created.')
       const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId)
-      const credential = { id: String(rawCredential.id), publicKey: String(verified.credential.publicKey), raw: rawCredential }
+      const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
       const smartAccount = await toCircleSmartAccount({
@@ -528,14 +538,20 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
 
-function saveDeploymentStatus(chainKey: string, status: DeploymentStatus) {
+function saveDeploymentStatus(chainKey: string, status: DeploymentStatusUpdate) {
   const state = loadState()
   const previous = state.deploymentStatus?.[chainKey]
+  const merged: DeploymentStatus = {
+    ...(previous || {}),
+    ...status,
+    status: status.status || previous?.status || 'failed',
+    updatedAt: status.updatedAt,
+  } as DeploymentStatus
   saveState({
     ...state,
     deploymentStatus: {
       ...(state.deploymentStatus || {}),
-      [chainKey]: { ...(previous || {}), ...status },
+      [chainKey]: merged,
     },
   })
 }
@@ -633,7 +649,7 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
 }
 
 // ── Login with existing passkey ──
-export async function loginPasskey(): Promise<{ walletAddress: string; credential: { id: string; publicKey: string; raw?: unknown }; sessionToken: string }> {
+export async function loginPasskey(): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
   const state = loadState()
   return runPasskeyOperation(async () => {
@@ -644,7 +660,7 @@ export async function loginPasskey(): Promise<{ walletAddress: string; credentia
       }) as any
       if (!rawCredential) throw new Error('No credential available.')
       const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId)
-      const credential = { id: String(rawCredential.id), publicKey: String(verified.credential.publicKey), raw: rawCredential }
+      const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
       const smartAccount = await toCircleSmartAccount({
@@ -970,12 +986,17 @@ export async function signPendingTx(txId: string, calls: Array<{ to: string; dat
   // Using a plain public client here omits Circle Gas Station paymaster data,
   // which makes the relayed Arbitrum UserOp fall back to native ETH funding.
   const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
-  const { signUserOperation } = await import('viem/account-abstraction')
-  const signedUserOp = await signUserOperation(bundlerClient as any, {
+  const preparedUserOp = await bundlerClient.prepareUserOperation({
     account: smartAccount as any,
     calls: normalizedCalls,
     paymaster: true,
+    ...(await circleGasFees(chainKey)),
   })
+  const signature = await smartAccount.signUserOperation({
+    ...preparedUserOp,
+    chainId: config.chain.id,
+  })
+  const signedUserOp = { ...preparedUserOp, signature }
 
   // Submit signed UserOp to backend relay
   const token = localStorage.getItem('arx_vault_token')

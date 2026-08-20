@@ -19,6 +19,7 @@ import {
   setAiRouterAutoPay,
 } from '../aiRouterApi'
 import type { AgentIdentity } from '../services/agentIdentity'
+import { useI18n } from '../i18n'
 
 export function AiRouterPanel({ address, activeAgentIdentity }: { address: string; activeAgentIdentity: AgentIdentity | null }) {
   const [status, setStatus] = useState<any>(null)
@@ -28,6 +29,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const [copied, setCopied] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const { t } = useI18n()
   const solanaDelegateForPolling = autoPaySolanaAddress(status)
 
   async function run(label: string, fn: () => Promise<any>) {
@@ -309,8 +311,8 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
       <section className='glass sandbox-hero ai-router-hero'>
         <div>
           <div className='docs-kicker'>AI Router</div>
-          <h2>Deposit USDC. Create API key. Use AI models.</h2>
-          <p>Each AI request is paid automatically from your deposited USDC.</p>
+          <h2>{t('ai.hero')}</h2>
+          <p>{t('ai.copy')}</p>
         </div>
         <div className='ai-router-status'>
           <StatusPill label='Unified Balance' value={formatUnifiedBalance(unifiedBalance)} />
@@ -326,12 +328,12 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
       {error && <div className='inline-error'>{error}</div>}
       {newKey && (
         <section className='glass sandbox-card'>
-          <h3>New API Key</h3>
-          <p className='pay-muted'>Copy now. It will not be shown again.</p>
+          <h3>{t('ai.newKey')}</h3>
+          <p className='pay-muted'>{t('ai.copyNow')}</p>
           <div className='copy-line with-action'>
             <code>{newKey}</code>
             <button className='btn btn-secondary small' onClick={() => copyText(newKey, 'new-key')}>
-              {copied === 'new-key' ? 'Copied' : 'Copy'}
+              {copied === 'new-key' ? t('common.copied') : t('common.copy')}
             </button>
           </div>
         </section>
@@ -339,13 +341,13 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
 
       <section className='ai-router-steps'>
         <div className='glass sandbox-card'>
-          <h3>1. Unified Balance</h3>
-          <p className='pay-muted'>Your USDC stays in your Unified Balance until each AI request is paid.</p>
+          <h3>{t('ai.stepBalance')}</h3>
+          <p className='pay-muted'>{t('ai.balanceCopy')}</p>
           <div className='button-row wrap'>
             <button className='btn btn-secondary' disabled={busy === 'balance'} onClick={checkUnified}>
-              {busy === 'balance' ? 'Checking...' : 'Check Unified Balance'}
+              {busy === 'balance' ? t('common.checking') : t('balance.check')}
             </button>
-            <button className='btn btn-primary' onClick={openUnifiedBalance}>Deposit USDC</button>
+            <button className='btn btn-primary' onClick={openUnifiedBalance}>{t('ai.deposit')}</button>
           </div>
           <div className='pay-grid'>
             <Info label='Available' value={formatUnifiedBalance(unifiedBalance)} />
@@ -354,18 +356,18 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>2. Auto Pay</h3>
-          <p className='pay-muted'>Approve each funded network once. Future AI requests are then paid automatically.</p>
+          <h3>{t('ai.stepAutoPay')}</h3>
+          <p className='pay-muted'>{t('ai.autoCopy')}</p>
           <div className='pay-grid'>
             <Info label='Auto Pay' value={autoPayLabel} />
             <Info label='Payment Source' value='Unified Balance' />
           </div>
           <div className='button-row wrap'>
             <button className='btn btn-primary' disabled={!!busy} onClick={enableAutoPay}>
-              {busy === 'autoPaySetup' || busy === 'autoPayStatus' || busy === 'autoPay' ? 'Preparing...' : autoPayReady ? 'Sync Auto Pay Chains' : 'Enable Auto Pay'}
+              {busy === 'autoPaySetup' || busy === 'autoPayStatus' || busy === 'autoPay' ? t('ai.preparing') : autoPayReady ? t('ai.sync') : t('ai.enable')}
             </button>
             <button className='btn btn-secondary' disabled={!!busy || !hasAutoPaySetup} onClick={disableAutoPay}>
-              {busy === 'autoPayRemove' || busy === 'autoPay' ? 'Turning off...' : 'Turn OFF'}
+              {busy === 'autoPayRemove' || busy === 'autoPay' ? t('ai.turningOff') : t('ai.turnOff')}
             </button>
           </div>
           <div className='pay-grid'>
@@ -374,20 +376,20 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
           </div>
           <div className='button-row wrap'>
             <button className='btn btn-primary' disabled={!!busy || solanaAutoPayReady} onClick={() => setSolanaAutoPayOnly(true)}>
-              {busy === 'solanaAutoPayOn' ? 'Enabling Solana...' : 'Enable Solana Auto Pay'}
+              {busy === 'solanaAutoPayOn' ? t('ai.solanaEnabling') : t('ai.solanaEnable')}
             </button>
             <button className='btn btn-secondary' disabled={!!busy || !solanaAutoPayReady} onClick={() => setSolanaAutoPayOnly(false)}>
-              {busy === 'solanaAutoPayOff' ? 'Disabling Solana...' : 'Turn OFF Solana Auto Pay'}
+              {busy === 'solanaAutoPayOff' ? t('ai.solanaDisabling') : t('ai.solanaDisable')}
             </button>
           </div>
         </div>
 
         <div className='glass sandbox-card'>
-          <h3>3. API Key</h3>
-          <p className='pay-muted'>Create a key for Hermes and other supported AI apps. Copy it now because it cannot be shown again.</p>
+          <h3>{t('ai.apiStep')}</h3>
+          <p className='pay-muted'>{t('ai.apiCopy')}</p>
           <div className='button-row wrap'>
             <button className='btn btn-primary' disabled={busy === 'apiKey'} onClick={createKey}>
-              {busy === 'apiKey' ? 'Creating...' : 'Create API Key'}
+              {busy === 'apiKey' ? t('ai.creating') : t('ai.create')}
             </button>
           </div>
           <div className='api-key-list'>
@@ -398,17 +400,17 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
                   <span>{key.agentId ? `Agent #${key.agentId} · ` : 'Personal · '}{key.status}</span>
                 </div>
                 <div className='button-row'>
-                  <button className='btn btn-secondary small danger' disabled={busy === 'delete'} onClick={() => deleteKey(key)}>Delete</button>
+                  <button className='btn btn-secondary small danger' disabled={busy === 'delete'} onClick={() => deleteKey(key)}>{t('ai.delete')}</button>
                 </div>
               </div>
-            )) : <p className='pay-muted'>No active API key yet.</p>}
+            )) : <p className='pay-muted'>{t('ai.noKey')}</p>}
           </div>
         </div>
       </section>
 
       <section className='sandbox-grid'>
         <div className='glass sandbox-card'>
-          <h3>Models</h3>
+          <h3>{t('ai.models')}</h3>
           <div className='model-list'>
             {(models.length ? models : [{ id: 'arcox/auto', owned_by: 'arcox' }]).map(model => (
               <div className='model-row' key={model.id}>
@@ -419,7 +421,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
           </div>
         </div>
         <div className='glass sandbox-card'>
-          <h3>Usage Log</h3>
+          <h3>{t('ai.usage')}</h3>
           {usage.length ? usage.map((item: any) => (
             <div className='usage-row' key={item.requestId}>
               <div><strong>{item.model || 'arcox/auto'}</strong><span>{item.providerUsed || 'provider pending'}</span></div>
@@ -434,10 +436,10 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
                 )}
               </div>
             </div>
-          )) : <p className='pay-muted'>No usage yet.</p>}
+          )) : <p className='pay-muted'>{t('ai.noUsage')}</p>}
         </div>
         <div className='glass sandbox-card'>
-          <h3>Client Config</h3>
+          <h3>{t('ai.client')}</h3>
           <div className='config-snippet'>
             <code>base_url = https://arcoxdex.vercel.app/v1</code>
             <code>api_key = arx_sk_...</code>

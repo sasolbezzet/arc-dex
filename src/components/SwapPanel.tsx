@@ -61,7 +61,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
     setLoading(true); setStatus(null)
     try {
       if (source === 'eoa') {
-        setStatus({ type:'warning', msg:'USDC hanya perlu 1 popup transaksi. Token lain mungkin meminta izin lebih dulu.' })
+        setStatus({ type:'warning', msg: t('swap.onePopup') })
         const result = await swapFromEoa({ metamaskAddress: address, tokenIn, tokenOut, amountIn })
         const feeText = result?.platformFee?.amount ? ` • fee ${result.platformFee.amount} ${result.platformFee.token}` : ''
         txHistory.add({
@@ -113,21 +113,21 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   }
   const activeBalances = source === 'circle' ? balances : eoaBalances
   const maxBal = activeBalances[tokenIn] ? parseFloat(activeBalances[tokenIn]).toFixed(4) : '0'
-  const walletLabel = source === 'circle' ? 'Circle Wallet' : 'Personal Wallet'
+  const walletLabel = source === 'circle' ? t('swap.circleWallet') : t('swap.personalWallet')
   const walletAddr = source === 'circle' ? circleWallet?.address : address
   const swapDisabled = !amountIn || !quote || quoteLoading || loading || tokenIn === tokenOut || (source === 'circle' && !circleWallet)
   const swapLabel = loading
     ? `⏳ ${t('common.processing')}`
     : quoteLoading
-      ? 'Mengambil estimasi...'
+      ? t('swap.estimateLoading')
       : amountIn
           ? t('swap.actionAmount', { amount: amountIn, tokenIn, tokenOut, source: source === 'circle' ? 'Circle' : 'EOA' })
           : t('swap.action')
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-        <button onClick={()=>setSource('circle')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:source==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:source==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>Circle Wallet</button>
-        <button onClick={()=>setSource('eoa')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:source==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:source==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>Personal Wallet</button>
+        <button onClick={()=>setSource('circle')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='circle'?'1px solid rgba(99,102,241,0.75)':'1px solid #1e1e2e',background:source==='circle'?'rgba(99,102,241,0.16)':'rgba(18,18,26,0.8)',color:source==='circle'?'#c7d2fe':'#64748b',fontSize:12,fontWeight:600}}>{t('swap.circleWallet')}</button>
+        <button onClick={()=>setSource('eoa')} style={{padding:'10px 8px',borderRadius:8,cursor:'pointer',border:source==='eoa'?'1px solid rgba(245,158,11,0.75)':'1px solid #1e1e2e',background:source==='eoa'?'rgba(245,158,11,0.14)':'rgba(18,18,26,0.8)',color:source==='eoa'?'#fbbf24':'#64748b',fontSize:12,fontWeight:600}}>{t('swap.personalWallet')}</button>
       </div>
       <div>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
@@ -154,14 +154,14 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       </div>
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Testnet</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Platform fee</span><span>{quote?.platformFee ? `${quote.platformFee.amount} ${quote.platformFee.token}` : '-'}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Swap input</span><span>{quote?.platformFee ? `${quote.platformFee.swapAmountIn} ${tokenIn}` : '-'}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('swap.platformFee')}</span><span>{quote?.platformFee ? `${quote.platformFee.amount} ${quote.platformFee.token}` : '-'}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('swap.swapInput')}</span><span>{quote?.platformFee ? `${quote.platformFee.swapAmountIn} ${tokenIn}` : '-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.fee')}</span><span>{quote?quote.fee+' USDC':'-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.rate')}</span><span>{quote?`1 ${tokenIn} = ${quote.rate} ${tokenOut}`:'-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.source')}</span><span>{walletLabel}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.wallet')}</span><span style={{color:source==='circle'?'#818cf8':'#f59e0b',fontFamily:'monospace',fontSize:11}}>{walletAddr?.slice(0,8)}...{walletAddr?.slice(-6)}</span></div>
       </div>
-      {quoteLoading && <div style={{padding:10,borderRadius:10,fontSize:12,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>Mengambil estimasi swap...</div>}
+      {quoteLoading && <div style={{padding:10,borderRadius:10,fontSize:12,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>{t('swap.estimateLoading')}</div>}
       {status && <div style={{padding:10,borderRadius:10,fontSize:13,background:status.type==='success'?'rgba(16,185,129,0.1)':status.type==='warning'?'rgba(245,158,11,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':status.type==='warning'?'#f59e0b':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':status.type==='warning'?'1px solid rgba(245,158,11,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&<div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}</div>}
       {!address ? <div style={{padding:10,borderRadius:10,fontSize:13,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>{t('swap.connectWalletHint')}</div>
       : <button onClick={handleSwap} disabled={swapDisabled} className='btn btn-primary'>{swapLabel}</button>}

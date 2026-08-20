@@ -4,6 +4,7 @@ import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
 import { getInvoice, markInvoicePaid, quoteEcoRoute } from '../payApi'
 import type { ArcoxInvoice } from '../payApi'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
+import { useI18n } from '../i18n'
 
 type Props = {
   address: string | null
@@ -20,6 +21,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
   const [busy, setBusy] = useState(false)
   const [paymentMode, setPaymentMode] = useState<'arc-eoa' | 'cross-chain'>('arc-eoa')
   const [sourceChain, setSourceChain] = useState('base-sepolia')
+  const { t } = useI18n()
 
   const load = async () => {
     if (!invoiceId) {
@@ -134,12 +136,12 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
         <div className='pay-title-row'>
           <div>
             <div className='docs-kicker'>ARCOX Pay</div>
-            <h2>USDC Payment Request</h2>
+            <h2>{t('pay.request')}</h2>
           </div>
           {invoice && <span className={`pay-status ${invoice.status}`}>{invoice.status}</span>}
         </div>
 
-        {loading && <p className='pay-muted'>Loading invoice...</p>}
+        {loading && <p className='pay-muted'>{t('pay.loading')}</p>}
         {error && <div className='inline-error'>{error}</div>}
 
         {invoice && (
@@ -189,14 +191,14 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
 
             <div className='pay-actions'>
               <button className='btn btn-primary' disabled={busy || ['paid','expired','cancelled','failed'].includes(invoice.status)} onClick={preparePayment}>
-                {!address ? 'Connect Wallet' : preview ? 'Preview Ready' : paymentMode === 'cross-chain' ? 'Preview Cross-Chain Route' : 'Pay Now'}
+                {!address ? t('pay.connect') : preview ? t('pay.previewReady') : paymentMode === 'cross-chain' ? t('pay.previewRoute') : t('pay.payNow')}
               </button>
-              <button className='header-link-button' type='button' onClick={load}>Refresh Status</button>
+              <button className='header-link-button' type='button' onClick={load}>{t('pay.refresh')}</button>
             </div>
 
             {preview && (
               <div className='pay-preview'>
-                <h3>{preview.type === 'cross-chain' ? 'Cross-Chain Route Preview' : 'Confirm Payment Preview'}</h3>
+                <h3>{preview.type === 'cross-chain' ? t('pay.previewRoute') : t('ui.paymentPreview')}</h3>
                 <Info label='From' value={preview.from} mono />
                 <Info label='To' value={preview.to} mono />
                 <Info label='Amount' value={`${preview.amount} ${preview.token}`} />
@@ -210,13 +212,13 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
                 ) : (
                   <Info label='Estimated network fee' value={preview.estimate?.fee ? `${preview.estimate.fee} USDC` : preview.estimate?.error || 'Unavailable'} />
                 )}
-                {preview.type === 'arc-eoa' && <button className='btn btn-primary' disabled={busy} onClick={confirmAndPay}>Confirm and Send</button>}
-                <button className='header-link-button' type='button' onClick={() => setPreview(null)}>Cancel</button>
+                {preview.type === 'arc-eoa' && <button className='btn btn-primary' disabled={busy} onClick={confirmAndPay}>{t('pay.confirmSend')}</button>}
+                <button className='header-link-button' type='button' onClick={() => setPreview(null)}>{t('pay.cancel')}</button>
               </div>
             )}
 
             <details className='pay-advanced'>
-              <summary>Advanced details</summary>
+              <summary>{t('pay.advanced')}</summary>
               <div className='pay-grid'>
                 <Info label='Network' value='Arc Testnet' />
                 <Info label='Tx Hash' value={invoice.txHash || '-'} mono link={invoice.txHash ? ARC_TESTNET_EXPLORER_TX + invoice.txHash : ''} />
@@ -226,7 +228,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
             </details>
 
             <div className='pay-timeline'>
-              <h3>Payment Timeline</h3>
+              <h3>{t('pay.timeline')}</h3>
               {(invoice.timeline || []).map((item, idx) => (
                 <div className='pay-timeline-item' key={`${item.type}-${idx}`}>
                   <div>

@@ -25,19 +25,19 @@ const API = ''
 const EMPTY_BAL = { USDC:'0', EURC:'0', USYC:'0', cirBTC:'0' }
 
 const NAV = [
-  { id: 'intro', path: '/', label: 'Home', icon: 'IN' },
-  { id: 'portfolio', path: '/portfolio', label: 'Balances', icon: 'PF' },
-  { id: 'swap', path: '/swap', label: 'Swap', icon: 'SW' },
-  { id: 'bridge', path: '/bridge', label: 'Bridge', icon: 'BR' },
-  { id: 'send', path: '/send', label: 'Send', icon: 'SE' },
-  { id: 'receive', path: '/receive', label: 'Request', icon: 'RC' },
-  { id: 'unified', path: '/unified-balance', label: 'Unified Balance', icon: 'UB' },
-  { id: 'ai-router', path: '/ai-router', label: 'AI Router', icon: 'AR' },
-  { id: 'plugin', path: '/plugin', label: 'Plugin', icon: 'PL' },
-  { id: 'agentic', path: '/agent-jobs', label: 'Jobs', icon: 'AI' },
-  { id: 'intel', path: '/intel', label: 'x402', icon: 'IX' },
-  { id: 'info', path: '/info', label: 'Info', icon: 'IF' },
-  { id: 'docs', path: '/docs', label: 'Docs', icon: 'DX' },
+  { id: 'intro', path: '/', label: 'Home', labelKey: 'nav.home', icon: 'IN' },
+  { id: 'portfolio', path: '/portfolio', label: 'Balances', labelKey: 'nav.balances', icon: 'PF' },
+  { id: 'swap', path: '/swap', label: 'Swap', labelKey: 'tab.swap', icon: 'SW' },
+  { id: 'bridge', path: '/bridge', label: 'Bridge', labelKey: 'tab.bridge', icon: 'BR' },
+  { id: 'send', path: '/send', label: 'Send', labelKey: 'tab.send', icon: 'SE' },
+  { id: 'receive', path: '/receive', label: 'Request', labelKey: 'nav.request', icon: 'RC' },
+  { id: 'unified', path: '/unified-balance', label: 'Unified Balance', labelKey: 'nav.unified', icon: 'UB' },
+  { id: 'ai-router', path: '/ai-router', label: 'AI Router', labelKey: 'nav.aiRouter', icon: 'AR' },
+  { id: 'plugin', path: '/plugin', label: 'Plugin', labelKey: 'nav.plugin', icon: 'PL' },
+  { id: 'agentic', path: '/agent-jobs', label: 'Jobs', labelKey: 'nav.jobs', icon: 'AI' },
+  { id: 'intel', path: '/intel', label: 'x402', labelKey: 'nav.x402', icon: 'IX' },
+  { id: 'info', path: '/info', label: 'Info', labelKey: 'tab.info', icon: 'IF' },
+  { id: 'docs', path: '/docs', label: 'Docs', labelKey: 'nav.docs', icon: 'DX' },
 ] as const
 
 type PageId = typeof NAV[number]['id']
@@ -58,10 +58,10 @@ function currentPageFromLocation(): PageId {
   return NAV.find(item => item.path === path)?.id || 'intro'
 }
 
-function titleFor(page: PageId) {
+function titleFor(page: PageId, t: ReturnType<typeof useI18n>['t']) {
   if (page === 'intro') return 'ARCOX DEX'
-  if (page === 'agentic') return 'Agent Jobs'
-  return NAV.find(item => item.id === page)?.label || 'ARCOX DEX'
+  const item = NAV.find(entry => entry.id === page)
+  return item ? t(item.labelKey as Parameters<typeof t>[0]) : 'ARCOX DEX'
 }
 
 export default function App() {
@@ -356,30 +356,30 @@ export default function App() {
           : !address && page !== 'plugin'
             ? <ConnectRequired walletSetupError={walletSetupError} t={t} />
             : page === 'portfolio'
-              ? <PortfolioPage address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} balanceLoading={balanceLoading} balanceError={balanceError} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} />
+              ? <PortfolioPage address={address!} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} balanceLoading={balanceLoading} balanceError={balanceError} loadingWallet={loadingWallet} walletSetupError={walletSetupError} retryCircleWallet={retryCircleWallet} refresh={refresh} t={t} />
               : page === 'swap'
-                ? <SwapPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                ? <SwapPanel address={address!} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                 : page === 'bridge'
-                  ? <BridgePanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                  ? <BridgePanel address={address!} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                   : page === 'send'
-                    ? <SendPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                    ? <SendPanel address={address!} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                     : page === 'receive'
-                      ? <ReceivePanel address={address} circleWallet={circleWallet} />
+                      ? <ReceivePanel address={address!} circleWallet={circleWallet} />
                       : page === 'unified'
                         ? <UnifiedBalancePanel eoaAddress={address} />
                       : page === 'ai-router'
-                        ? <AiRouterPanel address={address} activeAgentIdentity={activeAgentIdentity} />
+                        ? <AiRouterPanel address={address!} activeAgentIdentity={activeAgentIdentity} />
                       : page === 'plugin'
                         ? <PluginPanel address={address} circleWallet={circleWallet} solanaAddress={solanaAddress} />
                       : page === 'agentic'
                         ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} identities={agentIdentities} activeIdentity={activeAgentIdentity} onSelectIdentity={chooseAgentIdentity} onIdentityRefresh={() => refreshAgentIdentities(true)} />
                         : page === 'intel'
-                          ? <IntelPanel address={address} activeAgentIdentity={activeAgentIdentity} />
+                          ? <IntelPanel address={address!} activeAgentIdentity={activeAgentIdentity} />
                           : page === 'info'
-                            ? <InfoPanel address={address} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
+                            ? <InfoPanel address={address!} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                             : null
 
-  const pageTitle = routeMode === 'pay-console' ? 'ARCOX Pay Status' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : titleFor(page)
+  const pageTitle = routeMode === 'pay-console' ? 'ARCOX Pay Status' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : titleFor(page, t)
 
   return (
     <div className='app-shell page-layout'>
@@ -391,7 +391,7 @@ export default function App() {
             <nav>
               {NAV.map(item => (
                 <button key={item.id} type='button' className={page === item.id ? 'active' : ''} onClick={() => navigate(item.id)}>
-                  <span className='nav-mark'>{item.icon}</span>{item.label}
+                  <span className='nav-mark'>{item.icon}</span>{t(item.labelKey as Parameters<typeof t>[0])}
                 </button>
               ))}
             </nav>
@@ -497,7 +497,7 @@ function ConnectRequired({ walletSetupError, t }: { walletSetupError: string; t:
   )
 }
 
-function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLoading, balanceError, loadingWallet, walletSetupError, retryCircleWallet, refresh }: {
+function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLoading, balanceError, loadingWallet, walletSetupError, retryCircleWallet, refresh, t }: {
   address: string
   circleWallet: {id:string;address:string}|null
   balances: Record<string,string>
@@ -508,6 +508,7 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLo
   walletSetupError: string
   retryCircleWallet: () => void
   refresh: () => void
+  t: ReturnType<typeof useI18n>['t']
 }) {
   const [unifiedBalance, setUnifiedBalance] = useState<any>(null)
   const [unifiedError, setUnifiedError] = useState('')
@@ -536,20 +537,20 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLo
     <div className='portfolio-page'>
       <section className='glass portfolio-card wallet-card'>
         <div>
-          <span>Connected Wallet</span>
+          <span>{t('ui.connectedWallet')}</span>
           <strong>{address.slice(0,6)}...{address.slice(-4)}</strong>
         </div>
         <div>
-          <span>Circle Wallet</span>
-          {circleWallet ? <strong>{circleWallet.address.slice(0,6)}...{circleWallet.address.slice(-4)}</strong> : loadingWallet ? <strong>Preparing...</strong> : <button onClick={retryCircleWallet}>Retry setup</button>}
+          <span>{t('portfolio.circle')}</span>
+          {circleWallet ? <strong>{circleWallet.address.slice(0,6)}...{circleWallet.address.slice(-4)}</strong> : loadingWallet ? <strong>{t('portfolio.preparing')}</strong> : <button onClick={retryCircleWallet}>{t('portfolio.retrySetup')}</button>}
         </div>
         {walletSetupError && <div className='inline-error'>{walletSetupError}</div>}
       </section>
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
           <div>
-            <h3>Personal Wallet</h3>
-            <p>Funds held directly in your connected wallet.</p>
+            <h3>{t('ui.personalWallet')}</h3>
+            <p>{t('portfolio.personalCopy')}</p>
           </div>
           <span>MetaMask</span>
         </div>
@@ -559,14 +560,14 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLo
           {renderBalance('USYC', eoaBalances.USYC, '#10b981')}
           {renderBalance('cirBTC', eoaBalances.cirBTC, '#f7931a', 8)}
         </div>
-        {balanceLoading.eoa && <p className='pay-muted'>Refreshing wallet balance...</p>}
+        {balanceLoading.eoa && <p className='pay-muted'>{t('portfolio.refreshWallet')}</p>}
         {balanceError.eoa && <div className='inline-error'>{balanceError.eoa}</div>}
       </section>
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
           <div>
-            <h3>Circle Wallet</h3>
-            <p>Funds available in your ARCOX Circle wallet.</p>
+            <h3>{t('wallet.circle')}</h3>
+            <p>{t('portfolio.circleCopy')}</p>
           </div>
           <span>Circle</span>
         </div>
@@ -576,30 +577,30 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLo
           {renderBalance('USYC', balances.USYC, '#10b981')}
           {renderBalance('cirBTC', balances.cirBTC, '#f7931a', 8)}
         </div>
-        {balanceLoading.circle && <p className='pay-muted'>Refreshing Circle balance...</p>}
+        {balanceLoading.circle && <p className='pay-muted'>{t('portfolio.refreshCircle')}</p>}
         {balanceError.circle && <div className='inline-error'>{balanceError.circle}</div>}
       </section>
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
           <div>
-            <h3>Unified Balance</h3>
-            <p>Your deposited USDC available across supported networks.</p>
+            <h3>{t('balance.title')}</h3>
+            <p>{t('portfolio.unifiedCopy')}</p>
           </div>
-          <span>Deposited</span>
+          <span>{t('portfolio.deposited')}</span>
         </div>
         <div className='portfolio-grid'>
           {renderBalance('USDC', formatUnifiedBalanceValue(unifiedBalance), '#fbbf24')}
           <div className='glass portfolio-card'>
-            <span>Networks</span>
+            <span>{t('common.networks')}</span>
             <strong>{formatUnifiedChainCount(unifiedBalance)}</strong>
           </div>
         </div>
         {unifiedError && <div className='inline-error'>{unifiedError}</div>}
         <button type='button' className='btn btn-secondary' onClick={refreshUnifiedBalance} disabled={loadingUnified}>
-          {loadingUnified ? 'Checking...' : 'Refresh Unified Balance'}
+          {loadingUnified ? t('common.checking') : t('portfolio.refreshUnified')}
         </button>
       </section>
-      <button type='button' className='btn btn-primary' onClick={refresh}>Refresh Balances</button>
+      <button type='button' className='btn btn-primary' onClick={refresh}>{t('portfolio.refreshAll')}</button>
     </div>
   )
 }
