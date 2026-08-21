@@ -385,7 +385,7 @@ export default function App() {
     <div className='app-shell page-layout'>
       {routeMode === 'normal' && (
         <div className={`mobile-drawer ${drawerOpen ? 'open' : ''}`}>
-          <button type='button' className='drawer-backdrop' aria-label='Close menu' onClick={() => setDrawerOpen(false)} />
+          <button type='button' className='drawer-backdrop' aria-label={t('common.closeMenu')} onClick={() => setDrawerOpen(false)} />
           <aside className='drawer-panel glass'>
             <div className='side-brand'><ArcoxLogo /><div><strong>ARCOX</strong><span>Arc Testnet</span></div></div>
             <nav>
@@ -404,7 +404,7 @@ export default function App() {
           <div className='header-row'>
             <div className='brand-row'>
               {routeMode === 'normal' && (
-                <button type='button' className='menu-button' onClick={() => setDrawerOpen(true)} aria-label='Open navigation'>
+                <button type='button' className='menu-button' onClick={() => setDrawerOpen(true)} aria-label={t('common.openNavigation')}>
                   <span />
                   <span />
                   <span />
@@ -416,11 +416,11 @@ export default function App() {
             </div>
             <div className='header-actions'>
               <div className={`language-menu ${languageOpen ? 'open' : ''}`}>
-                <button ref={languageTriggerRef} type='button' className='language-trigger' onClick={() => setLanguageOpen(v => !v)} aria-haspopup='listbox' aria-expanded={languageOpen} aria-label='Language'>
+                <button ref={languageTriggerRef} type='button' className='language-trigger' onClick={() => setLanguageOpen(v => !v)} aria-haspopup='listbox' aria-expanded={languageOpen} aria-label={t('common.language')}>
                   <span>{lang === 'zh' ? '中文' : lang.toUpperCase()}</span>
                 </button>
                 <ViewportPopover open={languageOpen} anchorRef={languageTriggerRef} onClose={() => setLanguageOpen(false)} preferredWidth={176} className='language-menu-popover'>
-                  <div role='listbox' aria-label='Select language'>
+                  <div role='listbox' aria-label={t('common.selectLanguage')}>
                   {LANGUAGES.map(item => (
                   <button
                     key={item.code}
@@ -615,7 +615,7 @@ function formatUnifiedBalanceValue(balance: any) {
 
 function formatUnifiedChainCount(balance: any) {
   const entries = unifiedBalanceEntries(balance)
-  return entries.length ? `${entries.length} chain${entries.length > 1 ? 's' : ''}` : 'Check'
+  return entries.length ? `${entries.length} ${entries.length > 1 ? 'chains' : 'chain'}` : 'Check'
 }
 
 function unifiedBalanceEntries(balance: any) {

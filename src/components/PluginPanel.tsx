@@ -38,12 +38,12 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 // WalletConnect disconnect can itself wait on a dead relay. Never await that
 // cleanup before updating the UI: otherwise a completed/expired signature can
 // leave the OAuth card forever on "Menunggu persetujuan wallet".
-function cleanupWalletConnectInBackground() {
+function cleanupWalletConnectInBackground(t: ReturnType<typeof useI18n>['t']) {
   if (!isMobile() || !getWalletConnectProviderSync()) return
   void withTimeout(
     disconnectWalletConnect(),
     4_000,
-    'WalletConnect cleanup timeout',
+    t('plugin.relayTimeout'),
   ).catch(() => {})
 }
 
@@ -72,7 +72,7 @@ const StatusDot = ({ on, label }: { on: boolean; label: string }) => (
 )
 
 // 🔐 SIWE login button
-async function siweLogin(address: string): Promise<string | null> {
+async function siweLogin(address: string, t: ReturnType<typeof useI18n>['t']): Promise<string | null> {
   try {
     // 1. Get challenge
     const ch = await fetch(`${API}/api/vault/challenge`, {
@@ -83,11 +83,11 @@ async function siweLogin(address: string): Promise<string | null> {
 
     // 2. Request signature — works with MetaMask, WalletConnect, or any injected provider.
     const provider = await findConnectedWalletProvider(address)
-    if (!provider) { alert('Wallet tidak terdeteksi. Connect wallet terlebih dahulu.'); return null }
+    if (!provider) { alert(t('plugin.walletNotDetected')); return null }
     const accounts = await provider.request({ method: 'eth_accounts' }) as string[]
     const from = accounts?.[0]
     if (!from || from.toLowerCase() !== address.toLowerCase()) {
-      throw new Error('Wallet terhubung berbeda dari wallet utama ARCOX.')
+      throw new Error(t('plugin.walletDifferent'))
     }
     const signature = await provider.request({ method: 'personal_sign', params: [ch.message, from] }) as string
 
@@ -96,10 +96,10 @@ async function siweLogin(address: string): Promise<string | null> {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address: from, message: ch.message, signature })
     }).then(r => r.json())
-    if (!verify.token) { alert('Verifikasi gagal: ' + (verify.error || 'unknown')); return null }
+    if (!verify.token) { alert(`${t('plugin.verifyFailed')}: ${verify.error || t('plugin.unknown')}`); return null }
     return verify.token
   } catch (e: any) {
-    alert('Login gagal: ' + (e?.message || e))
+    alert(`${t('plugin.loginFailed')}: ${e?.message || e}`)
     return null
   }
 }
@@ -206,7 +206,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     // session. Base and Arbitrum are prepared immediately afterwards in the
     // same flow (one UserOp each), so the agent wallet is usable everywhere.
     const token = existingToken
-    if (!token) throw new Error('Passkey token gagal')
+    if (!token) throw new Error(t('plugin.passkeyTokenFailed'))
 
     // Binding an EOA is optional. Only send ownerAddress when this browser has
     // a separate SIWE proof; the passkey/MSCA token is never an EOA proof.
@@ -279,7 +279,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
   }
   const revokeSession = async () => {
-    if (!sessionToken) throw new Error('Login vault gagal')
+    if (!sessionToken) throw new Error(t('plugin.vaultLoginFailed'))
     await revokeSessionKey(sessionToken)
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
   }
@@ -309,7 +309,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const prepareBaseSepoliaBridge = async () => {
-    if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error('Aktifkan session key Arc terlebih dahulu.')
+    if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error(t('plugin.sessionActivateFirst'))
     const fresh = sessionToken ? null : await loginPasskey()
     const token = sessionToken || fresh!.sessionToken
     if (!token) throw new Error('Passkey token gagal.')
@@ -374,7 +374,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       setActivity(act.activity || [])
       setMcpSessions(sess.sessions || [])
     } catch (e: any) {
-      if (e?.message !== '__SESSION_EXPIRED__') setError(e?.message || 'Gagal memuat vault')
+      if (e?.message !== '__SESSION_EXPIRED__') setError(e?.message || t('plugin.vaultLoadFailed'))
     }
     setLoading(false)
   }
@@ -404,7 +404,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const doLogin = async () => {
     if (!address) return
-    const token = await siweLogin(address)
+    const token = await siweLogin(address, t)
     if (token) {
       setSessionToken(token)
       localStorage.setItem('arx_vault_token', token)
@@ -569,7 +569,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setLimits(next)
     if (limitsTimer.current) clearTimeout(limitsTimer.current)
     limitsTimer.current = setTimeout(async () => {
-      try { await fetch(`${API}/api/vault/limits`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(next) }) } catch (e: any) { setError(e?.message || 'Update limits gagal') }
+      try { await fetch(`${API}/api/vault/limits`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(next) }) } catch (e: any) { setError(e?.message || t('plugin.updateLimitsFailed')) }
     }, 800)
   }
 
@@ -582,7 +582,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // multi-step flow, so it hands off to the full Bridge page (prefilled).
   const [signingId, setSigningId] = useState<string | null>(null)
   const approve = async (a: Approval) => {
-    if (!address) { setError('Wallet belum terhubung.'); return }
+    if (!address) { setError(t('plugin.walletRequired')); return }
     setError(null)
     let details: any = {}
     try { details = a.details ? JSON.parse(a.details) : {} } catch {}
@@ -606,7 +606,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       let txHash = ''
       let explorerUrl = ''
       if (a.action === 'send') {
-        if (!a.to) throw new Error('Alamat tujuan tidak ada pada permintaan.')
+        if (!a.to) throw new Error(t('plugin.destinationMissing'))
         const res = await sendTokenFromEoa({ from: address, to: a.to, token: a.token || 'USDC', amount: a.amount })
         txHash = res.txHash || ''
         explorerUrl = res.explorerUrl || ''
@@ -616,7 +616,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         txHash = res?.txHash || res?.transactionHash || ''
         explorerUrl = res?.explorerUrl || ''
       } else {
-        throw new Error(`Aksi tidak dikenal: ${a.action}`)
+        throw new Error(t('plugin.unknownAction', { action: a.action }))
       }
       // Record the signed tx on the backend approval (flips status → approved).
       try {
@@ -629,7 +629,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       fetchAll()
     } catch (e: any) {
       // User rejected in MetaMask or tx failed — leave approval pending.
-      const msg = e?.code === 4001 ? 'Tanda tangan dibatalkan di MetaMask.' : (e?.message || 'Transaksi gagal.')
+      const msg = e?.code === 4001 ? t('plugin.signatureCancelled') : (e?.message || t('plugin.transactionFailed'))
       setError(msg)
     }
     setSigningId(null)
@@ -685,10 +685,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           }
           const passkey = await withTimeout(
             passkeyMode === 'Register' ? registerPasskey() : loginPasskey(),
-            60_000,
-            passkeyMode === 'Register'
-              ? 'Pembuatan Agent Wallet timeout. Izinkan passkey di halaman OAuth lalu coba lagi.'
-              : t('plugin.passkeyTimeout'),
+            60_000,passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
           )
           oauthMscaWalletAddress = passkey.walletAddress
           oauthMscaSessionToken = passkey.sessionToken
@@ -707,7 +704,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         const sessionResponse = await withTimeout(
           fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${oauthMscaSessionToken}` } }),
           20_000,
-          'Verifikasi session passkey timeout. Coba lagi.',
+          t('plugin.passkeySessionTimeout'),
         )
         sessionData = await sessionResponse.json().catch(() => ({}))
         const verifiedWallet = String(sessionData?.session?.walletAddress || '').toLowerCase()
@@ -739,11 +736,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const msgResp = await withTimeout(
         fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}&request_id=${encodeURIComponent(oauthParams.request_id)}`, { headers: authHeaders() }),
         20_000,
-        'Challenge timeout. Periksa koneksi lalu tekan Coba Lagi.',
+        t('plugin.challengeTimeout'),
       )
       if (!msgResp.ok) throw new Error(`Gagal mendapat challenge (${msgResp.status})`)
-      const msgData = await withTimeout(msgResp.json(), 10_000, 'Respons challenge tidak selesai. Tekan Coba Lagi.')
-      if (!msgData.message) throw new Error('Gagal mendapat challenge')
+      const msgData = await withTimeout(msgResp.json(), 10_000, t('plugin.challengeResponseTimeout'))
+      if (!msgData.message) throw new Error(t('plugin.challengeFailed'))
 
       // 2. Sign with the already-connected wallet provider. This is a separate
       // SIWE proof from the passkey step above; it proves control of the EOA
@@ -753,7 +750,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       let provider = await withTimeout(
         findConnectedWalletProvider(address),
         20_000,
-        'Wallet provider timeout. Hubungkan kembali wallet lalu tekan Coba Lagi.',
+        t('plugin.providerTimeout'),
       )
       // Claude can open OAuth in a separate mobile browser context where the
       // injected provider from the original Plugin tab is unavailable. Start
@@ -763,10 +760,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         const connectedAddress = await withTimeout(
           connectWalletConnect(),
           180_000,
-          'Koneksi wallet timeout. Pilih wallet di WalletConnect, setujui, lalu kembali ke halaman ini.',
+          t('plugin.walletConnectTimeout'),
         )
         if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) {
-          throw new Error('WalletConnect terhubung ke address berbeda dari wallet utama ARCOX.')
+          throw new Error(t('plugin.walletConnectMismatch'))
         }
         const connectedProvider = getWalletConnectProviderSync()
         if (connectedProvider) {
@@ -774,7 +771,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           provider = await findConnectedWalletProvider(address)
         }
       }
-      if (!provider) throw new Error('Wallet utama tidak terdeteksi. Hubungkan wallet melalui WalletConnect lalu tekan Coba Lagi.')
+      if (!provider) throw new Error(t('plugin.walletMainMissing'))
       const from = address
       const messageHex = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
       // Re-open the relay before creating the request. The approval helper
@@ -790,9 +787,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         const relayReady = await withTimeout(
           resumeWalletConnect(),
           8_000,
-          'Relay WalletConnect belum siap. Kembali ke halaman ini lalu tekan Coba Lagi.',
+          t('plugin.relayTimeout'),
         )
-        if (!relayReady) throw new Error('Relay WalletConnect tidak siap. Kembali ke halaman ini lalu tekan Coba Lagi.')
+        if (!relayReady) throw new Error(t('plugin.relayUnavailable'))
       }
       const signPromise = provider.request({ method: 'personal_sign', params: [messageHex, from] }) as Promise<string>
       // Attach a rejection handler immediately. If the relay dies after the
@@ -839,7 +836,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           state: oauthParams.state, codeChallenge: oauthParams.code_challenge,
           ...mscaBinding,
         }),
-      }), 20_000, 'Verifikasi timeout. Tekan Coba Lagi.')
+      }), 20_000, t('plugin.verifyTimeout'))
       const codeData = await withTimeout(codeResp.json(), 10_000, 'Respons verifikasi tidak selesai. Tekan Coba Lagi.')
       if (attempt !== oauthAttempt.current) return
       if (codeData.redirect) {
@@ -847,29 +844,29 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         window.location.href = codeData.redirect
         return
       }
-      throw new Error(codeData.error || 'Gagal mendapat kode otorisasi')
+      throw new Error(codeData.error || t('plugin.authorizationCodeFailed'))
     } catch (e: any) {
       if (attempt !== oauthAttempt.current) return
       // Update React state before relay cleanup. A dead WalletConnect socket
       // must never block the error/retry state from rendering.
       setOauthStatus('error')
-      setError(e?.message || 'OAuth approval gagal. Tekan Coba Lagi.')
+      setError(e?.message || t('plugin.oauthFailed'))
       // Reset only the WC transport so the next retry starts cleanly; injected
       // desktop providers are left untouched. Cleanup is deliberately
       // fire-and-forget and bounded because disconnect() may hang on a dead
       // relay after the wallet already accepted the signature.
-      cleanupWalletConnectInBackground()
+      cleanupWalletConnectInBackground(t)
     }
   }
 
   // Wallet utama adalah identitas Plugin. Tidak ada login kedua di sini.
   if (!address) return (
     <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-      Hubungkan wallet utama untuk membuka Plugin.
+      {t('plugin.noWalletForPlugin')}
     </div>
   )
 
-  if (loading) return <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>Memuat plugin...</div>
+  if (loading) return <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>{t('plugin.pluginLoading')}</div>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -880,19 +877,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
           <div style={{ textAlign: 'center', marginBottom: 16 }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>🔌</div>
-            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Permintaan Koneksi MCP</div>
-            <div style={{ color: '#94a3b8', fontSize: 12 }}>AI agent ingin terhubung ke wallet ARCOX kamu</div>
+            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{t('plugin.mcpConnectionRequest')}</div>
+            <div style={{ color: '#94a3b8', fontSize: 12 }}>{t('plugin.agentConnectionRequest')}</div>
           </div>
           <div style={{ background: 'rgba(18,18,26,0.6)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>Agent:</div>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>{t('plugin.agent')}:</div>
             <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{oauthParams.client_id.startsWith('arcox_') ? 'ChatGPT / Claude' : oauthParams.client_id}</div>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 8, marginBottom: 4 }}>Akses yang diminta:</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Lihat saldo wallet</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Request approval transaksi (dalam limit)</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• Lihat credential vault</div>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 8, marginBottom: 4 }}>{t('plugin.requestedAccess')}:</div>
+            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.viewBalance')}</div>
+            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.requestApproval')}</div>
+            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.viewCredentials')}</div>
           </div>
           <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            ⚠️ User lama memilih Login dengan Passkey. User baru memilih Buat Agent Wallet dengan Passkey. Setelah itu wallet utama menandatangani SIWE untuk koneksi MCP. Kunci private tidak pernah dikirim.
+            ⚠️ {t('plugin.oauthNotice')}
           </div>
           {(['passkey', 'checking', 'wallet', 'approving', 'done'].includes(oauthStatus)) ? (
             <button disabled style={{
@@ -900,11 +897,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               background: 'linear-gradient(135deg, #6366f1, #818cf8)',
               color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'wait',
             }}>
-              {oauthStatus === 'passkey' ? (oauthPasskeyMode === 'Register' ? '✨ Membuat Agent Wallet dengan Passkey...' : '🔐 Menunggu persetujuan Passkey...') :
-               oauthStatus === 'checking' ? '⏳ Memeriksa session Agent Wallet...' :
-               oauthStatus === 'wallet' ? '👛 Membuka wallet — setujui tanda tangan...' :
-               oauthStatus === 'approving' ? '⏳ Memverifikasi koneksi MCP...' :
-               '✅ Terhubung! Mengalihkan...'}
+              {oauthStatus === 'passkey' ? (oauthPasskeyMode === 'Register' ? `✨ ${t('plugin.creatingPasskeyWallet')}` : `🔐 ${t('plugin.waitingPasskey')}`) :
+               oauthStatus === 'checking' ? `⏳ ${t('plugin.checkingAgentSession')}` :
+               oauthStatus === 'wallet' ? `👛 ${t('plugin.openingWallet')}` :
+               oauthStatus === 'approving' ? `⏳ ${t('plugin.verifyingMcp')}` :
+               `✅ ${t('plugin.connectedRedirecting')}`}
             </button>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -920,7 +917,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 background: 'rgba(16,185,129,0.12)',
                 color: '#4ade80', fontSize: 12, fontWeight: 700, cursor: 'pointer',
               }}>
-                ✨ User baru<br />Buat Agent Wallet
+                ✨ {t('plugin.newUser')}<br />{t('plugin.newWalletButton')}
               </button>
             </div>
           )}
@@ -935,7 +932,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         <div style={{ display: 'flex', gap: 8 }}>
           <StatusDot on={chatgptConnected} label="ChatGPT" />
           <StatusDot on={claudeConnected} label="Claude" />
-          <StatusDot on={anyConnected} label={anyConnected ? 'Agent aktif' : 'Belum ada agent'} />
+          <StatusDot on={anyConnected} label={anyConnected ? t('plugin.agentActive') : t('plugin.noAgent')} />
         </div>
         <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>{t('plugin.logout')}</button>
       </div>
@@ -976,9 +973,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         )}
         <div style={{ marginTop: 8 }}>
           <button onClick={() => {
-            const label = prompt('Nama credential:')
-            const value = prompt('Value (API key):')
-            if (label && value) fetch(`${API}/api/vault/credentials`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ type: 'api_key', label, value }) }).then(() => fetchAll()).catch((e: any) => setError(e?.message || 'Tambah credential gagal'))
+            const label = prompt(t('plugin.credentialName'))
+            const value = prompt(t('plugin.credentialValue'))
+            if (label && value) fetch(`${API}/api/vault/credentials`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ type: 'api_key', label, value }) }).then(() => fetchAll()).catch((e: any) => setError(e?.message || t('plugin.addCredentialFailed')))
           }} style={{ width: '100%', background: 'rgba(99,102,241,0.1)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', padding: 8, borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>{t('plugin.addApiKey')}</button>
         </div>
       </Section>
@@ -991,7 +988,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           mcpSessions.map((s, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6 }}>
               <div>
-                <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{s.agent || 'MCP Agent'}</div>
+                <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{s.agent || t('plugin.mcpAgent')}</div>
                 <div style={{ color: '#64748b', fontSize: 10 }}>ID: {s.clientId?.slice(0, 20)}... · Last: {fmtTime(s.lastActivity)}</div>
               </div>
               <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: s.active ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.1)', color: s.active ? '#10b981' : '#64748b' }}>{s.active ? t('plugin.active') : t('plugin.idle')}</span>
@@ -1011,7 +1008,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               <div style={{ color: '#64748b', fontSize: 10 }}>Source: {a.source} · {fmtTime(a.createdAt)}</div>
               {a.action === 'bridge' && <div style={{ color: '#818cf8', fontSize: 10, marginTop: 4 }}>{t('plugin.bridgeHint')}</div>}
               <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <button onClick={() => approve(a)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: signingId === a.id ? 'wait' : 'pointer' }}>{signingId === a.id ? '⏳ Menunggu MetaMask...' : a.action === 'bridge' ? t('plugin.approveBridge') : t('plugin.approveSign')}</button>
+                <button onClick={() => approve(a)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: signingId === a.id ? 'wait' : 'pointer' }}>{signingId === a.id ? `⏳ ${t('plugin.approvalWaitingMetaMask')}` : a.action === 'bridge' ? t('plugin.approveBridge') : t('plugin.approveSign')}</button>
                 <button onClick={() => reject(a.id)} disabled={signingId === a.id} style={{ flex: 1, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '5px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>{t('plugin.reject')}</button>
               </div>
             </div>
@@ -1034,7 +1031,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 <div key={a.id} style={{ padding: '8px', background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 6, borderLeft: `3px solid ${ok ? '#10b981' : '#f87171'}` }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ color: '#e2e8f0', fontSize: 12 }}>{a.action} {a.amount} {a.token} {a.to ? `→ ${a.to.slice(0, 10)}...` : ''}</div>
-                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: ok ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: ok ? '#10b981' : '#f87171' }}>{a.status === 'auto_approved' ? 'auto' : a.status === 'approved' ? t('plugin.approved') : t('plugin.rejected')}</span>
+                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: ok ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: ok ? '#10b981' : '#f87171' }}>{a.status === 'auto_approved' ? t('plugin.auto') : a.status === 'approved' ? t('plugin.approved') : t('plugin.rejected')}</span>
                   </div>
                   <div style={{ color: '#64748b', fontSize: 10 }}>{a.agent} · {fmtTime(a.approvedAt || a.createdAt)}</div>
                   {a.txHash && (
@@ -1102,13 +1099,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               ].map(([key, label]) => {
                 const status = mscaState.deploymentStatus?.[key]
                 const color = status?.status === 'deployed' ? '#10b981' : status?.status === 'unsupported' ? '#f59e0b' : status?.status === 'failed' ? '#f87171' : '#64748b'
-                const text = status?.status === 'deployed' ? t('plugin.deployed') : status?.status === 'unsupported' ? 'MSCA unsupported' : status?.status === 'failed' ? t('plugin.failed') : t('plugin.notChecked')
+                const text = status?.status === 'deployed' ? t('plugin.deployed') : status?.status === 'unsupported' ? t('plugin.mscaUnsupported') : status?.status === 'failed' ? t('plugin.failed') : t('plugin.notChecked')
                 const authorizationFailed = mscaState.chainAuthorizationStatus?.[key] === 'failed'
                 return <div key={key} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(18,18,26,0.6)', border: `1px solid ${color}33`, fontSize: 10 }}><div style={{ color: '#cbd5e1' }}>{label}</div><div style={{ color }}>{text}</div>{authorizationFailed && <div style={{ color: '#f87171', marginTop: 2 }}>{t('plugin.authorizationPending')}</div>}{status?.error && <div title={status.error} style={{ color: '#94a3b8', marginTop: 2, lineHeight: 1.2 }}>{status.error.slice(0, 180)}</div>}</div>
               })}
             </div>
             {Object.values(mscaState.deploymentStatus || {}).some(status => status.status === 'failed') && <button className='btn' style={{ width: '100%', marginBottom: 8, fontSize: 11 }} disabled={busy === 'deployments'} onClick={() => run('deployments', retryMscaDeployments)}>↻ {t('plugin.retryDeployment')}</button>}
-            <Row label='Passkey' value={<span style={{ color: '#4ade80' }}>{t('plugin.passkeyRegistered')}</span>} />
+            <Row label={t('plugin.passkeyLabel')} value={<span style={{ color: '#4ade80' }}>{t('plugin.passkeyRegistered')}</span>} />
             <Row label='Contract' value={mscaState.deployed
               ? <span style={{ color: '#4ade80' }}>{t('plugin.deployed')}</span>
               : <span style={{ color: '#f59e0b' }}>{t('plugin.notDeployed')}</span>
@@ -1128,23 +1125,23 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               </>
             ) : (
               <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>
-                Login Passkey untuk mengaktifkan session key otomatis. Session key hanya dapat dimatikan melalui Cabut Akses.
+                {t('plugin.loginPasskey')} untuk mengaktifkan session key otomatis. Session key hanya dapat dimatikan melalui {t('plugin.revoke')}.
               </div>
             )}
             {mscaState.sessionActive && (
               <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: destinationReady ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)', border: `1px solid ${destinationReady ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)'}` }}>
                 <div style={{ color: destinationReady ? '#4ade80' : '#a5b4fc', fontSize: 11, marginBottom: 7 }}>
-                  {destinationReady ? '✓ Base Sepolia siap untuk receiveMessage via MSCA UserOp' : 'Bridge Arc → Base membutuhkan deployment dan otorisasi delegate di Base Sepolia.'}
+                  {destinationReady ? '✓ Base Sepolia siap untuk receiveMessage via MSCA UserOp' : t('plugin.destinationBridgeHint')}
                 </div>
                 {!destinationReady && <button className='btn btn-primary' style={{ width: '100%', fontSize: 11 }} disabled={busy === 'destination'} onClick={() => run('destination', prepareBaseSepoliaBridge)}>
-                  🛡️ Deploy + aktifkan Base Sepolia bridge
+                  🛡️ {t('plugin.deployBaseBridge')}
                 </button>}
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               {mscaState.sessionActive && (
                 <button className='btn' style={{ flex: 1, background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }} disabled={busy === 'revoke'} onClick={() => run('revoke', revokeSession)}>
-                  Cabut Akses
+                  {t('plugin.revoke')}
                 </button>
               )}
               <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
@@ -1153,13 +1150,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             </div>
             <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
               <div style={{ color: '#64748b', fontSize: 11, marginBottom: 6 }}>
-                Ganti ke Agent Wallet baru? Membuat wallet baru menghasilkan alamat baru — dana dan izin wallet lama TIDAK berpindah otomatis.
+                {t('plugin.newWalletWarning')}
               </div>
               <button className='btn' style={{ width: '100%', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', background: 'rgba(239,68,68,0.08)' }} disabled={busy === 'register'} onClick={async () => {
-                if (!window.confirm('Buat Agent Wallet MSCA baru?\n\nWallet baru mendapat alamat baru. Dana dan izin wallet lama TIDAK berpindah otomatis. Lanjutkan?')) return
+                if (!window.confirm(t('plugin.newWalletConfirm'))) return
                 run('register', forceRegisterMsca)
               }}>
-                🆕 Buat Wallet Baru (ganti MSCA)
+                🆕 {t('plugin.newWalletButton')}
               </button>
             </div>
           </div>

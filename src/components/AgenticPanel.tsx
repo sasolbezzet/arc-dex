@@ -52,6 +52,7 @@ function shortAddress(value?: string) {
 }
 
 function StatusBox({ status }: { status: Status | null }) {
+  const { t } = useI18n()
   if (!status) return null
   const tone = status.type === 'success'
     ? { bg: 'rgba(16,185,129,0.1)', color: '#10b981', border: 'rgba(16,185,129,0.3)' }
@@ -61,7 +62,7 @@ function StatusBox({ status }: { status: Status | null }) {
   return (
     <div style={{padding:10,borderRadius:10,fontSize:12,background:tone.bg,color:tone.color,border:`1px solid ${tone.border}`,overflowWrap:'anywhere'}}>
       {status.msg}
-      {status.link && <div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}
+      {status.link && <div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>{t('agentic.explorer')}</a></div>}
     </div>
   )
 }
@@ -155,7 +156,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
   }
 
   const requireActiveIdentity = () => {
-    if (!activeIdentity) throw new Error('Agent Identity required for Agent Jobs')
+    if (!activeIdentity) throw new Error(t('agentic.identityRequired'))
     return activeIdentity.agentId
   }
 
@@ -395,11 +396,11 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
         </div>
         <div style={{display:'flex',justifyContent:'space-between',gap:10,marginTop:4}}>
           <span style={{color:'#64748b'}}>Active Agent Identity</span>
-          <span style={{color:activeIdentity?'#10b981':'#f59e0b'}}>{activeIdentity ? `#${activeIdentity.agentId}` : 'Not found'}</span>
+          <span style={{color:activeIdentity?'#10b981':'#f59e0b'}}>{activeIdentity ? `#${activeIdentity.agentId}` : t('agentic.notFound')}</span>
         </div>
       </div>
 
-      {!activeIdentity && <div className='inline-warning'>Agent Identity required for Agent Jobs. AI Router remains available.</div>}
+      {!activeIdentity && <div className='inline-warning'>{t('agentic.identityRequired')}</div>}
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4, minmax(0, 1fr))',gap:8}}>
         {(['agent', 'link', 'create', 'manage'] as View[]).map(item => (
@@ -413,10 +414,10 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
         <div style={{display:'flex',flexDirection:'column',gap:12}}>
           <div className='glass' style={{padding:12,borderRadius:10}}>
             <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13,marginBottom:4}}>{t('agentic.identity')}</div>
-            <div style={{color:'#64748b',fontSize:11,marginBottom:10}}>Detected from the Arc ERC-8004 registry. Registration through ARCOX is optional.</div>
+            <div style={{color:'#64748b',fontSize:11,marginBottom:10}}>{t('agentic.detectedIdentity')}</div>
             {identities.length > 0 && (
               <label className='sandbox-field' style={{marginBottom:10}}>
-                <span>Active Agent Identity</span>
+                <span>{t('agentic.activeIdentity')}</span>
                 <select className='input' value={activeIdentity?.agentId || ''} onChange={event => onSelectIdentity(event.target.value)}>
                   {identities.map(identity => <option key={identity.agentId} value={identity.agentId}>Agent #{identity.agentId}</option>)}
                 </select>
@@ -424,8 +425,8 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
             )}
             {profile && (
               <div style={{fontSize:12,marginBottom:10,display:'grid',gap:4}}>
-                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Agent ID</span><span style={{color:'#818cf8'}}>{profile.agentId}</span></div>
-                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Owner</span><span style={{fontFamily:'monospace'}}>{shortAddress(profile.owner)}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.agentId')}</span><span style={{color:'#818cf8'}}>{profile.agentId}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.owner')}</span><span style={{fontFamily:'monospace'}}>{shortAddress(profile.owner)}</span></div>
               </div>
             )}
             <FieldLabel>{t('agentic.metadataUri')}</FieldLabel>
@@ -443,7 +444,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
             </div>
             {agentLookup && (
               <div style={{fontSize:12,marginTop:10,display:'grid',gap:4}}>
-                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Owner</span><span style={{fontFamily:'monospace'}}>{shortAddress(agentLookup.owner)}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.owner')}</span><span style={{fontFamily:'monospace'}}>{shortAddress(agentLookup.owner)}</span></div>
                 <div style={{color:'#64748b',overflowWrap:'anywhere'}}>{agentLookup.metadataUri}</div>
               </div>
             )}
@@ -458,8 +459,8 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
             <div style={{color:'#64748b',fontSize:11,marginBottom:10}}>{t('agentic.aiLinkHelp')}</div>
             {agentLink && (
               <div style={{fontSize:12,marginBottom:10,display:'grid',gap:4}}>
-                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Agent ID</span><span style={{color:'#818cf8'}}>{agentLink.agentId}</span></div>
-                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>AI</span><span>{agentLink.aiName}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.agentId')}</span><span style={{color:'#818cf8'}}>{agentLink.agentId}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.ai')}</span><span>{agentLink.aiName}</span></div>
                 <div style={{color:'#64748b',overflowWrap:'anywhere'}}>{agentLink.endpoint}</div>
               </div>
             )}
@@ -501,8 +502,8 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
             </button>
             {simulationResult && (
               <div style={{marginTop:10,fontSize:12,display:'grid',gap:5}}>
-                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Request</span><span>{simulationResult.requestId}</span></div>
-                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Status</span><span style={{color:'#10b981'}}>{simulationResult.status}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.request')}</span><span>{simulationResult.requestId}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.status')}</span><span style={{color:'#10b981'}}>{simulationResult.status}</span></div>
                 <div style={{color:'#94a3b8'}}>{simulationResult.summary}</div>
                 <div style={{overflowWrap:'anywhere',color:'#64748b'}}>deliverable: {simulationResult.deliverableHash}</div>
                 <button className='btn btn-primary' onClick={()=>setView('create')} style={{marginTop:6}}>{t('agentic.useSimulation')}</button>
@@ -556,11 +557,11 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
           </div>
           {jobInfo && (
             <div className='glass' style={{padding:12,borderRadius:10,fontSize:12,display:'grid',gap:5}}>
-              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Status</span><span style={{color:'#10b981'}}>{jobInfo.status}</span></div>
-              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Budget</span><span>{jobInfo.budget} USDC</span></div>
-              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Client</span><span style={{fontFamily:'monospace'}}>{shortAddress(jobInfo.client)}</span></div>
-              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Provider</span><span style={{fontFamily:'monospace'}}>{shortAddress(jobInfo.provider)}</span></div>
-              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>Evaluator</span><span style={{fontFamily:'monospace'}}>{shortAddress(jobInfo.evaluator)}</span></div>
+              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.status')}</span><span style={{color:'#10b981'}}>{jobInfo.status}</span></div>
+              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.budgetLabel')}</span><span>{jobInfo.budget} USDC</span></div>
+              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.client')}</span><span style={{fontFamily:'monospace'}}>{shortAddress(jobInfo.client)}</span></div>
+              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.providerLabel')}</span><span style={{fontFamily:'monospace'}}>{shortAddress(jobInfo.provider)}</span></div>
+              <div style={{display:'flex',justifyContent:'space-between',gap:8}}><span style={{color:'#64748b'}}>{t('agentic.evaluatorLabel')}</span><span style={{fontFamily:'monospace'}}>{shortAddress(jobInfo.evaluator)}</span></div>
               <div style={{color:'#94a3b8',overflowWrap:'anywhere'}}>{jobInfo.description}</div>
             </div>
           )}

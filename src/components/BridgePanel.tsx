@@ -233,7 +233,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
         : (window.phantom?.solana || window.solana?.isPhantom)
           ? wrapPhantom(window.phantom?.solana || window.solana)
           : rawProvider
-      if (!provider) { alert('Install Solflare atau Phantom wallet'); return null }
+      if (!provider) { alert(t('plugin.walletNotDetected')); return null }
       await provider.connect()
       const addr = provider.publicKey?.toString()
       if (addr) {
@@ -1466,9 +1466,9 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
       {/* Balance */}
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🔵 {t('wallet.circle')}</span><span style={{color:'#818cf8',fontWeight:600}}>{isNativeBridgeToken ? '-' : circleB.toFixed(4)} {displayToken}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟡 MetaMask</span><span style={{color:'#f59e0b',fontWeight:600}}>{isNativeBridgeToken ? 'Use wallet gas balance' : eoaB.toFixed(4)} {displayToken}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟡 MetaMask</span><span style={{color:'#f59e0b',fontWeight:600}}>{isNativeBridgeToken ? t('bridge.useWalletGas') : eoaB.toFixed(4)} {displayToken}</span></div>
         {solanaWallet && <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{color:'#64748b'}}>🟣 Solana</span><span style={{color:'#a78bfa',fontWeight:600}}>{solanaUsdcBal} USDC</span></div>}
-        <div style={{borderTop:'1px solid #1e1e2e',paddingTop:3,display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Total EVM</span><span style={{fontWeight:700}}>{isNativeBridgeToken ? 'Not indexed' : totalB.toFixed(4)} {displayToken}</span></div>
+        <div style={{borderTop:'1px solid #1e1e2e',paddingTop:3,display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalEvm')}</span><span style={{fontWeight:700}}>{isNativeBridgeToken ? t('bridge.notIndexed') : totalB.toFixed(4)} {displayToken}</span></div>
       </div>
 
       {/* Solana Wallet Card */}
@@ -1513,7 +1513,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
       </div>
 
       {/* Token selection */}
-      <div>          <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Token</label>
+      <div>          <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.token')}</label>
         <CompactTokenPicker
           value={isNativeBridgeToken ? displayToken : token}
           width={104}
@@ -1536,7 +1536,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
       </div>
 
       <div>
-        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>Receive token</label>
+        <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.receiveTokenLabel')}</label>
         <CompactTokenPicker
           value={receiveToken}
           width={104}
@@ -1557,7 +1557,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
           <div style={{border:'1px solid rgba(99,102,241,0.25)',background:'rgba(99,102,241,0.08)',borderRadius:8,padding:8,display:'flex',flexDirection:'column',gap:4}}>
             <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
               <span style={{color:'#94a3b8'}}>{t('balance.selected')} route</span>
-              <span style={{color:routeInfo.routeAvailable?'#10b981':'#f87171',fontWeight:700}}>{routeInfo.routeAvailable ? 'Available' : 'Unavailable'}</span>
+              <span style={{color:routeInfo.routeAvailable?'#10b981':'#f87171',fontWeight:700}}>{routeInfo.routeAvailable ? t('bridge.available') : t('bridge.unavailable')}</span>
             </div>
             <div style={{color:'#cbd5e1'}}>{routeInfo.sourceToken} on {fromChain} → {receiveToken} on {toChain}</div>
             <div style={{fontSize:11,color:'#94a3b8'}}>
@@ -1567,17 +1567,17 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
             </div>
           </div>
         )}
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Protocol</span><span>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Native swap + CCTP v2' : 'Native route preview' : `CCTP v2 ${isToSolana||isFromSolana?'Fast Transfer':''}`}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.protocol')}</span><span>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Native swap + CCTP v2' : 'Native route preview' : `CCTP v2 ${isToSolana||isFromSolana?'Fast Transfer':''}`}</span></div>
         {!isFromSolana && fromChain==='Arc_Testnet'&&<div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.fundingSource')}</span><span>{source==='circle'?'Circle → EOA → Bridge':'EOA MetaMask'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{isNativeBridgeToken ? '-' : totalDebit} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{isNativeBridgeToken ? '-' : customFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{isNativeBridgeToken ? '-' : cctpFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('swap.platformFee')}</span><span style={{color:routerFee==='-'?'#64748b':'#f59e0b'}}>{platformFeeLabel}</span></div>
-        {isNativeBridgeToken && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gas estimate</span><span>{nativeBridgeExecutable ? nativeGasEstimate || 'Before wallet popup' : 'Route unavailable'}</span></div>}
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Gateway forwarding</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : 'Belum aktif'}</span></div>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? nativeQuote ? `~${nativeQuote.estimatedReceive}` : nativeQuoteLoading ? 'Calculating...' : 'Enter amount' : 'Route unavailable' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>
-        {isNativeBridgeToken && nativeQuote && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Pool fee</span><span>{nativeQuote.poolFee}</span></div>}
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Settlement</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
+        {isNativeBridgeToken && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.gasEstimate')}</span><span>{nativeBridgeExecutable ? nativeGasEstimate || 'Before wallet popup' : 'Route unavailable'}</span></div>}
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.gatewayForwarding')}</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : t('bridge.belumnyaAktif')}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? nativeQuote ? `~${nativeQuote.estimatedReceive}` : nativeQuoteLoading ? t('bridge.calculating') : t('bridge.enterAmount') : 'Route unavailable' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>
+        {isNativeBridgeToken && nativeQuote && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.poolFee')}</span><span>{nativeQuote.poolFee}</span></div>}
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.settlement')}</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span style={{color:'#10b981'}}>3x (approve + burn + mint)</span></div>}
         {!isFromSolana && isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>MetaMask popup</span><span>2x + Solflare 1x</span></div>}
         {isFromSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>Solflare popup</span><span>1x (burn)</span></div>}

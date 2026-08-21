@@ -143,7 +143,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
 
   async function analyze(proof?: { paymentId: string }) {
     if (selected.needsValue !== false && !value.trim()) {
-      setError('Input is required.')
+      setError(t('common.input') + ' is required.')
       return
     }
     setLoading(true)
@@ -383,7 +383,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
               setUnifiedEstimate(null)
             }}
           />
-          {selected.needsChain && <Field label='Chain' value={chain} onChange={setChain} placeholder='ethereum, base, arbitrum...' />}
+          {selected.needsChain && <Field label={t('intel.chain')} value={chain} onChange={setChain} placeholder='ethereum, base, arbitrum...' />}
           {selected.needsTimeWindow && (
             <label className='sandbox-field'>
               <span>{t('intel.timeWindow')}</span>
@@ -392,11 +392,11 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
               </select>
             </label>
           )}
-          {selected.needsValue !== false && <Field label={selected.inputLabel || 'Input'} value={value} onChange={setValue} placeholder={selected.placeholder || selected.inputLabel || ''} />}
+          {selected.needsValue !== false && <Field label={selected.inputLabel || t('intel.input')} value={value} onChange={setValue} placeholder={selected.placeholder || selected.inputLabel || ''} />}
           <div className='pay-grid'>
-            <Info label='Price' value={`${selected.price} USDC`} />
-            <Info label='Pay With' value='USDC on Arc Testnet' />
-            <Info label='Category' value={selected.group} />
+            <Info label={t('intel.price')} value={`${selected.price} USDC`} />
+            <Info label={t('intel.payWith')} value='USDC on Arc Testnet' />
+            <Info label={t('intel.category')} value={selected.group} />
           </div>
           <button className='btn btn-primary' onClick={() => analyze()} disabled={loading}>{loading ? t('intel.analyzing') : t('intel.analyze')}</button>
         </div>
@@ -408,12 +408,12 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
               <p className='pay-muted'>{t('intel.paymentCopy')}</p>
               <div className='sandbox-field'>
                 <span>{t('intel.paymentMethod')}</span>
-                <div className='payment-method-picker' role='radiogroup' aria-label='Payment method'>
+                <div className='payment-method-picker' role='radiogroup' aria-label={t('intel.paymentMethod')}>
                   <button type='button' role='radio' aria-checked={paymentMethod === 'arc'} className={paymentMethod === 'arc' ? 'active' : ''} onClick={() => setPaymentMethod('arc')}>
-                    <strong>Arc USDC</strong><small>Pay from wallet</small>
+                    <strong>Arc USDC</strong><small>{t('intel.payFromWallet')}</small>
                   </button>
                   <button type='button' role='radio' aria-checked={paymentMethod === 'unified'} className={paymentMethod === 'unified' ? 'active' : ''} onClick={() => setPaymentMethod('unified')}>
-                    <strong>Unified Balance</strong><small>Pay from deposited USDC</small>
+                    <strong>Unified Balance</strong><small>{t('intel.payFromDeposited')}</small>
                   </button>
                 </div>
               </div>
@@ -435,7 +435,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
               </button>
               {paymentMethod === 'arc' ? (
                 <button className='btn btn-secondary' onClick={payInvoiceWithWallet} disabled={paying || loading || !isPayable(requirement.status)}>
-                  {paying ? 'Sending USDC...' : 'Pay with Arc USDC Memo'}
+                  {paying ? t('common.paymentSending') : t('intel.payArc')}
                 </button>
               ) : (
                 <>
@@ -467,7 +467,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
                   {unifiedEstimate.maxTotalDebit && <Info label='Maximum Total' value={`${unifiedEstimate.maxTotalDebit} USDC`} />}
                 </div>
               )}
-              {paymentTx && <p className='pay-muted'>Payment submitted. Waiting for on-chain settlement: {short(paymentTx, 10, 8)}</p>}
+              {paymentTx && <p className='pay-muted'>{t('common.waitingSettlement')} {short(paymentTx, 10, 8)}</p>}
             </>
           ) : (
             <p className='pay-muted'>The first request creates a payment invoice. Once paid, the same service returns the unlocked result.</p>
@@ -490,7 +490,7 @@ function delegatedFallbackError(error: unknown) {
 function ServicePicker({ value, onChange }: { value: IntelType; onChange: (value: IntelType) => void }) {
   return (
     <div className='sandbox-field'>
-      <span>Service</span>
+      <span>{t('intel.service')}</span>
       <div className='intel-service-list'>
         {Object.entries(groupServices()).map(([group, services]) => (
           <div className='intel-service-group' key={group}>
@@ -520,28 +520,28 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
       <div className='intel-result'>
         <div className='intel-result-header'>
           <div>
-            <div className='docs-kicker'>Unlocked Result</div>
+            <div className='docs-kicker'>{t('common.paidUnlocked')}</div>
             <h4>{presentation.title || selected.label}</h4>
-            <p>{presentation.subtitle || 'Arkham intelligence data is available for review.'}</p>
+            <p>{presentation.subtitle || t('intel.copy')}</p>
           </div>
           <span className={`intel-pill ${quality.status === 'partial' ? 'warning' : ''}`}>{quality.status || 'complete'}</span>
         </div>
 
         <div className='intel-result-meta'>
-          <Info label='Service' value={selected.label} />
-          <Info label='Data Provider' value={presentation.provider || 'Arkham Intel API'} />
-          <Info label='Generated At' value={formatDate(presentation.generatedAt)} />
-          <Info label='Coverage' value={`${quality.fieldCount} labeled fields, ${quality.recordCount} records, ${quality.sectionCount} sections`} />
+          <Info label={t('intel.service')} value={selected.label} />
+          <Info label={t('intel.dataProvider')} value={presentation.provider || 'Arkham Intel API'} />
+          <Info label={t('intel.generatedAt')} value={formatDate(presentation.generatedAt)} />
+          <Info label={t('intel.coverage')} value={`${quality.fieldCount} labeled fields, ${quality.recordCount} records, ${quality.sectionCount} sections`} />
           <Info label='ARCOX Resource' value={presentation.resource || requestLabel(selected)} mono />
           <Info label='Provider Endpoint' value={presentation.providerPath || 'Arkham endpoint'} mono />
           <Info label='Query Parameters' value={formatQuery(presentation.query)} mono />
-          <Info label='Access Status' value='Paid and unlocked' />
+          <Info label={t('intel.accessStatus')} value='Paid and unlocked' />
         </div>
 
         {payment && (
           <section className='intel-detail-section intel-payment-receipt'>
             <div className='intel-section-heading'>
-              <div><span>Payment Receipt</span><h4>x402 Access Payment</h4></div>
+              <div><span>{t('intel.paymentReceipt')}</span><h4>{t('intel.accessPayment')}</h4></div>
               <span className='intel-pill'>{statusLabel(payment.status || 'paid')}</span>
             </div>
             <div className='intel-field-grid'>
@@ -553,10 +553,10 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
               <DetailField field={{ label: 'Paid At', value: formatDate(payment.paidAt), kind: 'datetime' }} />
               <DetailField field={{ label: 'Reconciled By', value: payment.reconciledBy || 'On-chain reconciliation', kind: 'text' }} />
               <div className='intel-field intel-field--wide'>
-                <span className='intel-field-label'>Payment Transaction</span>
+                <span className='intel-field-label'>{t('intel.paymentTransaction')}</span>
                 {payment.txHash ? (
                   <a className='intel-field-value mono intel-tx-link' href={`https://testnet.arcscan.app/tx/${payment.txHash}`} target='_blank' rel='noreferrer'>{payment.txHash}</a>
-                ) : <strong className='intel-field-value'>Not reported</strong>}
+                ) : <strong className='intel-field-value'>{t('intel.notReported')}</strong>}
               </div>
             </div>
           </section>
@@ -564,7 +564,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
 
         {presentation.overview.length > 0 && (
           <section className='intel-detail-section'>
-            <div className='intel-section-heading'><div><span>Overview</span><h4>Key Result Fields</h4></div></div>
+            <div className='intel-section-heading'><div><span>{t('intel.overview')}</span><h4>{t('intel.resultFields')}</h4></div></div>
             <div className='intel-field-grid'>
               {presentation.overview.map((field, index) => <DetailField key={`${field.path || field.label}-${index}`} field={field} />)}
             </div>
@@ -574,7 +574,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
         {presentation.sections.map(section => (
           <section className='intel-detail-section' key={section.id}>
             <div className='intel-section-heading'>
-              <div><span>Result Section</span><h4>{section.title}</h4></div>
+              <div><span>{t('intel.resultSection')}</span><h4>{section.title}</h4></div>
               <small>{section.description || `${section.records.length} records`}</small>
             </div>
             {section.fields.length > 0 && (
@@ -599,7 +599,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
         ))}
 
         <section className='intel-detail-section intel-quality'>
-          <div className='intel-section-heading'><div><span>{t('intel.dataQuality')}</span><h4>Coverage and Interpretation</h4></div></div>
+          <div className='intel-section-heading'><div><span>{t('intel.dataQuality')}</span><h4>{t('intel.coverageInterpretation')}</h4></div></div>
           {quality.errors && quality.errors.length > 0 && (
             <div className='intel-error-list'>
               {quality.errors.map((item, index) => <p key={`${item.section}-${index}`}><strong>{humanize(item.section)}:</strong> {item.message}</p>)}
@@ -620,7 +620,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
       <div className='intel-result'>
         <div className='intel-result-header'>
           <div>
-            <div className='docs-kicker'>Payment Required</div>
+            <div className='docs-kicker'>{t('intel.paymentRequired')}</div>
             <h4>{selected.label}</h4>
             <p>{t('intel.payRequired')}</p>
           </div>
