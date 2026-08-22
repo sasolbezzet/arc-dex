@@ -3,6 +3,7 @@ import { switchToArcTestnet } from '../domain/arcNetwork'
 import { ARC_TOKENS } from '../domain/tokens'
 import { estimateDelegatedUnifiedBalance, estimateX402UnifiedBalance, markX402UnifiedBalanceSpendSubmitted, spendDelegatedUnifiedBalance } from '../payApi'
 import { estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
+import { getAuthToken } from '../auth'
 import type { AgentIdentity } from '../services/agentIdentity'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
@@ -132,6 +133,10 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
   const [unifiedEstimate, setUnifiedEstimate] = useState<any>(null)
   const [walletPaymentSubmitted, setWalletPaymentSubmitted] = useState(false)
   const [paymentPaid, setPaymentPaid] = useState<{ paymentId: string } | null>(null)
+  const [adminStats, setAdminStats] = useState<any>(null)
+  const [adminHealth, setAdminHealth] = useState<any>(null)
+  const [adminCircuits, setAdminCircuits] = useState<any>(null)
+  const [adminLoading, setAdminLoading] = useState(false)
 
   const selected = SERVICE_BY_ID[type]
   const path = useMemo(() => selected.buildPath(value.trim(), chain.trim()), [selected, value, chain])
@@ -360,6 +365,48 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     return () => clearInterval(timer)
   }, [requirement?.invoiceId, requirement?.paymentId, requirement?.status, walletPaymentSubmitted])
 
+  // x402 operator snapshot: usage analytics (owner-gated) + treasury health +
+  // provider circuit state. All read-only; never triggers a payment.
+  async function loadAdminStats() {
+    setAdminLoading(true)
+    try {
+      const token = getAuthToken()
+      const [statsResponse, treasuryResponse, circuitsResponse] = await Promise.all([
+        fetch('/api/x402/stats', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Arcox-Owner': address,
+          },
+          cache: 'no-store',
+        }),
+        fetch('/api/x402/treasury-health', { cache: 'no-store' }),
+        fetch('/api/intel/provider-health', { cache: 'no-store' }),
+      ])
+      const [statsData, treasuryData, circuitsData] = await Promise.all([
+        statsResponse.json().catch(() => ({})),
+        treasuryResponse.json().catch(() => ({})),
+        circuitsResponse.json().catch(() => ({})),
+      ])
+      if (statsResponse.ok) setAdminStats(statsData.stats || statsData)
+      setAdminHealth(treasuryResponse.ok ? treasuryData : null)
+      setAdminCircuits(circuitsResponse.ok ? circuitsData.circuits || [] : [])
+    } catch {
+      // Snapshot is best-effort; the main intel flow is unaffected.
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    // Deferred so the synchronous loading flag does not cascade renders inside
+    // the effect body (react-hooks/set-state-in-effect).
+    const timer = setTimeout(() => {
+      loadAdminStats().catch(() => {})
+    }, 0)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address])
+
   return (
     <div className='pay-page'>
       <section className='glass sandbox-hero'>
@@ -479,6 +526,69 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
           <IntelResult result={result} requirement={requirement} selected={selected} />
         </div>
       </section>
+
+      <section className='glass sandbox-card wide'>
+        <div className='intel-section-heading'>
+          <div><span>x402 operator</span><h3>x402 Status</h3></div>
+          <button type='button' className='btn btn-secondary' onClick={() => loadAdminStats()} disabled={adminLoading}>
+            {adminLoading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+        <AdminStats stats={adminStats} health={adminHealth} circuits={adminCircuits} />
+      </section>
+    </div>
+  )
+}
+
+function AdminStats({ stats, health, circuits }: { stats: any; health: any; circuits: any }) {
+  if (!stats && !health && !circuits) {
+    return <p className='pay-muted'>Sign in with an active MSCA session to see x402 usage analytics.</p>
+  }
+  const degradedCount = Array.isArray(circuits)
+    ? circuits.filter((circuit: any) => circuit?.state === 'open').length
+    : 0
+  return (
+    <div className='intel-result'>
+      <div className='pay-grid'>
+        <Info label='Total Revenue' value={stats ? `${stats.revenueUsdc ?? '-'} USDC` : '-'} />
+        <Info label='Revenue (24h)' value={stats ? `${stats.revenueLast24hUsdc ?? '-'} USDC` : '-'} />
+        <Info label='Paid Invoices' value={String(stats?.totals?.paid ?? '-')} />
+        <Info label='Open Invoices' value={String(stats?.totals?.open ?? '-')} />
+        <Info label='Total Invoices' value={String(stats?.totals?.invoices ?? '-')} />
+        <Info label='Paid (24h)' value={String(stats?.paid24h ?? '-')} />
+        <Info label='Provider Not Found' value={String(stats?.providerErrors?.provider_not_found ?? '-')} />
+        <Info label='Provider Errors' value={String(stats?.providerErrors?.provider_error ?? '-')} />
+      </div>
+      {stats && (
+        <div className='pay-grid'>
+          <Info label='Refund Pending Review' value={String(stats?.refunds?.pending_review ?? '-')} />
+          <Info label='Refund Approved' value={String(stats?.refunds?.refund_approved ?? '-')} />
+          <Info label='Refunded' value={String(stats?.refunds?.refunded ?? '-')} />
+          <Info label='Manual Review' value={String(stats?.refunds?.manual_review ?? '-')} />
+          <Info label='Refund Failed (Manual)' value={String(stats?.refunds?.refund_failed_manual ?? '-')} />
+          <Info label='Refunded Total' value={`${stats?.refunds?.refundedUsdc ?? '-'} USDC`} />
+        </div>
+      )}
+      <div className='pay-grid'>
+        <Info label='Treasury Balance' value={health ? `${health.totalUsdc ?? '-'} USDC` : '-'} />
+        <Info label='Treasury Min' value={health ? `${health.minUsdc ?? '-'} USDC` : '-'} />
+        <Info label='Treasury Status' value={health ? (health.healthy ? 'Healthy' : health.known === false ? 'Unknown (fail-open)' : 'LOW') : '-'} />
+        <Info label='Degraded Services' value={String(degradedCount)} />
+      </div>
+      {health?.byChain && (
+        <div className='pay-grid'>
+          {Object.entries(health.byChain).map(([chain, amount]) => (
+            <Info key={chain} label={`Treasury · ${chain}`} value={`${String(amount)} USDC`} />
+          ))}
+        </div>
+      )}
+      {Array.isArray(circuits) && circuits.length > 0 && (
+        <div className='pay-grid'>
+          {circuits.map((circuit: any) => (
+            <Info key={circuit?.key} label={`Circuit · ${circuit?.key || '-'}`} value={String(circuit?.state || '-')} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
