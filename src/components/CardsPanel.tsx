@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 import {
+  getCardConfig,
   getMerchants,
   getCardBalance,
   syncCardBalance,
@@ -18,6 +19,7 @@ import {
 
 export function CardsPanel() {
   const { t } = useI18n()
+  const [config, setConfig] = useState<any>(null)
   const [merchants, setMerchants] = useState<SimMerchant[]>([])
   const [cards, setCards] = useState<SimCard[]>([])
   const [balance, setBalance] = useState<CardBalance | null>(null)
@@ -40,12 +42,14 @@ export function CardsPanel() {
   const refresh = useCallback(async () => {
     try {
       setError('')
-      const [merch, bal, cs, txs] = await Promise.all([
+      const [cfg, merch, bal, cs, txs] = await Promise.all([
+        getCardConfig().catch(() => null),
         getMerchants().catch(() => ({ merchants: [] as SimMerchant[] })),
         getCardBalance().catch(() => null),
         listCards().catch(() => ({ cards: [] as SimCard[] })),
         listMyCardTransactions().catch(() => ({ transactions: [] as CardTx[] })),
       ])
+      setConfig(cfg)
       setMerchants(merch.merchants || [])
       setBalance(bal && bal.ok ? bal : null)
       setCards(cs.cards || [])
@@ -83,10 +87,12 @@ export function CardsPanel() {
   const selectedCard = cards.find(c => c.cardId === spendCardId) || cards[0]
   const activeCardId = spendCardId || selectedCard?.cardId || ''
 
+  const issuerLabel = (config?.issuer as any)?.configured ? (config?.issuer as any)?.provider : 'simulator'
+
   return (
-    <div className='pay-page'>
+    <div className='pay-page cards-page'>
       <section className='glass sandbox-hero'>
-        <div className='docs-kicker'>ARCOX Cards</div>
+        <div className='docs-kicker'>ARCOX Cards · issuer: <b>{issuerLabel}</b></div>
         <h2>{t('cards.title')}</h2>
         <p>{t('cards.subtitle')}</p>
         <div className='inline-warning'>⚠️ {t('cards.warning')}</div>
@@ -97,10 +103,12 @@ export function CardsPanel() {
 
       {/* Balance + issue card */}
       <section className='glass sandbox-card'>
-        <h3>
-          💳 {balance?.balance ? `${balance.balance} USDC` : '…'}
-          {balance?.source === 'onchain' && <span className='muted'> · on-chain MSCA</span>}
-        </h3>
+        <div className='cards-head'>
+          <div className='cards-balance'>
+            {balance?.balance ? `${balance.balance} USDC` : '…'}
+            <small> · {balance?.source === 'onchain' ? 'on-chain MSCA' : 'simulated'}</small>
+          </div>
+        </div>
         <div className='row'>
           {balance?.source === 'onchain' ? (
             <button
@@ -160,6 +168,7 @@ export function CardsPanel() {
               <div className='card-pan'>•••• •••• •••• {card.last4}</div>
               <div className='card-meta'>
                 <span>{card.brand} · {card.expMonth}/{card.expYear}</span>
+                <span>{card.provider === 'simulator' ? 'Simulator' : card.provider}</span>
                 <span>perTx {card.limits.perTx || '∞'} · daily {card.limits.daily || '∞'}</span>
                 <span>today {card.usage.today} · month {card.usage.month}</span>
               </div>
