@@ -80,8 +80,19 @@ export function getCardConfig() {
 export function getMerchants(): Promise<{ ok: boolean; merchants: SimMerchant[] }> {
   return api('/api/cards/merchants')
 }
-export function getCardBalance() {
+export type CardBalance = {
+  owner: string
+  balance: string
+  source: 'onchain' | 'simulated'
+  mscaAddress?: string
+  syncedAt?: string | null
+}
+
+export function getCardBalance(): Promise<{ ok: boolean } & CardBalance> {
   return api('/api/cards/balance')
+}
+export function syncCardBalance(): Promise<{ ok: boolean } & CardBalance> {
+  return api('/api/cards/sync', { method: 'POST', body: JSON.stringify({}) })
 }
 export function fundCardBalance(amount: string) {
   return api('/api/cards/balance/fund', { method: 'POST', body: JSON.stringify({ amount }) })
@@ -106,4 +117,15 @@ export function refundCardTx(cardId: string, txId: string) {
 }
 export function listMyCardTransactions(): Promise<{ ok: boolean; transactions: CardTx[] }> {
   return api('/api/cards/my-transactions')
+}
+export type CardConfig = {
+  mode: string
+  onchain: boolean
+  merchantSettlementWallet?: string
+  brand: string
+  network: string
+  asset: string
+  chain: string
+  maxCardsPerOwner: number
+  defaultBalance: string
 }

@@ -3,7 +3,7 @@ import { useI18n } from '../i18n'
 import {
   getMerchants,
   getCardBalance,
-  fundCardBalance,
+  syncCardBalance,
   listCards,
   createCard,
   setCardStatus,
@@ -13,13 +13,14 @@ import {
   type SimCard,
   type SimMerchant,
   type CardTx,
+  type CardBalance,
 } from '../cardsApi'
 
 export function CardsPanel() {
   const { t } = useI18n()
   const [merchants, setMerchants] = useState<SimMerchant[]>([])
   const [cards, setCards] = useState<SimCard[]>([])
-  const [balance, setBalance] = useState('')
+  const [balance, setBalance] = useState<CardBalance | null>(null)
   const [transactions, setTransactions] = useState<CardTx[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -46,7 +47,7 @@ export function CardsPanel() {
         listMyCardTransactions().catch(() => ({ transactions: [] as CardTx[] })),
       ])
       setMerchants(merch.merchants || [])
-      setBalance(bal?.balance ?? '')
+      setBalance(bal && bal.ok ? bal : null)
       setCards(cs.cards || [])
       setTransactions(txs.transactions || [])
     } catch (e) {
@@ -96,16 +97,30 @@ export function CardsPanel() {
 
       {/* Balance + issue card */}
       <section className='glass sandbox-card'>
-        <h3>💳 {balance !== '' ? `${balance} USDC` : '…'}</h3>
+        <h3>
+          💳 {balance?.balance ? `${balance.balance} USDC` : '…'}
+          {balance?.source === 'onchain' && <span className='muted'> · on-chain MSCA</span>}
+        </h3>
         <div className='row'>
-          <button
-            type='button'
-            className='action-button'
-            disabled={busy !== ''}
-            onClick={() => run('fund', () => fundCardBalance('50'), '+50 test USDC')}
-          >
-            {busy === 'fund' ? '…' : '+50 test USDC'}
-          </button>
+          {balance?.source === 'onchain' ? (
+            <button
+              type='button'
+              className='action-button'
+              disabled={busy !== ''}
+              onClick={() => run('sync', () => syncCardBalance(), 'Balance synced from MSCA on-chain')}
+            >
+              {busy === 'sync' ? '…' : '⟳ Sync Saldo MSCA'}
+            </button>
+          ) : (
+            <button
+              type='button'
+              className='action-button'
+              disabled={busy !== ''}
+              onClick={() => run('fund', () => fundCardBalance('50'), '+50 test USDC')}
+            >
+              {busy === 'fund' ? '…' : '+50 test USDC'}
+            </button>
+          )}
           <button
             type='button'
             className='action-button'
@@ -197,17 +212,24 @@ export function CardsPanel() {
             <input value={spendDescription} onChange={e => setSpendDescription(e.target.value)} placeholder='Laptop stand' />
           </label>
         </div>
+        <p className='muted'>
+          {balance?.source === 'onchain'
+            ? 'Spend mengirim USDC nyata (Arc Testnet) dari Agent Wallet MSCA via session key — periksa saldo on-chain sebelum bayar.'
+            : 'Mode simulasi — tidak ada uang sungguhan.'}
+        </p>
         <button
           type='button'
           className='action-button'
           disabled={busy !== '' || !activeCardId}
           onClick={async () => {
-            const result = await run('spend', () => spendWithCard(activeCardId, {
+            const result = await run('spend', async () => spendWithCard(activeCardId, {
               merchantId: spendMerchant,
               amount: spendAmount,
               description: spendDescription,
-            }), result?.approved ? 'Payment settled' : '')
-            if (result?.approved) setNotice('✅ ' + result.amount + ' USDC charged to •••• ' + result.cardId?.slice?.(-4) || '')
+            }))
+            if (result?.approved && result?.txHash) {
+              setNotice(`✅ ${result.amount} USDC settled · tx ${String(result.txHash).slice(0, 10)}…`)
+            }
           }}
         >
           {busy === 'spend' ? '…' : '💳 Pay with card'}
@@ -228,7 +250,10 @@ export function CardsPanel() {
                 <td>{new Date(tx.createdAt).toLocaleTimeString()}</td>
                 <td>{tx.merchantName} <small>{tx.description}</small></td>
                 <td>{tx.amount} USDC</td>
-                <td><span className={`badge-${tx.status}`}>{tx.status}{tx.declineReason ? ` (${tx.declineReason})` : ''}</span></td>
+                <td>
+                  <span className={`badge-${tx.status}`}>{tx.status}{tx.declineReason ? ` (${tx.declineReason})` : ''}</span>
+                  {tx.txHash && <div className='muted'><a href={tx.explorerUrl || '#'} target='_blank' rel='noreferrer'>{tx.txHash.slice(0, 10)}…</a></div>}
+                </td>
                 <td>
                   {tx.status === 'settled' && (
                     <button type='button' className='mini-button' disabled={busy !== ''} onClick={() => run('refund', () => refundCardTx(tx.cardId, tx.id), 'Refunded')}>
