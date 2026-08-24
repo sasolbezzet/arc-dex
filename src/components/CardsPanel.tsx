@@ -119,6 +119,13 @@ export function CardsPanel() {
     return result
   }
 
+  async function authenticateAndPay() {
+    const fresh = await loginPasskey()
+    localStorage.setItem('arx_vault_token', fresh.sessionToken)
+    localStorage.setItem('arx_passkey_vault_token', fresh.sessionToken)
+    return spendWithCard(activeCardId, { merchantId: spendMerchant, amount: spendAmount, description: spendDescription }, fresh.sessionToken)
+  }
+
   async function createAndIssue() {
     const created = await createCard({ label, perTxLimit: perTx, dailyLimit: daily })
     if (!created?.card?.cardId) throw new Error('Card record was not created')
@@ -261,8 +268,8 @@ export function CardsPanel() {
             <label>{t('cards.description')}<input value={spendDescription} onChange={e => setSpendDescription(e.target.value)} placeholder='Software subscription' /></label>
           </div>
           <p className='muted'>{balance?.source === 'onchain' ? t('cards.mscaSettlement') : t('cards.noRealFunds')}</p>
-          <button type='button' className='action-button' disabled={busy !== '' || !activeCardId} onClick={() => run('spend', () => spendWithCard(activeCardId, { merchantId: spendMerchant, amount: spendAmount, description: spendDescription }), 'Payment settled')}>
-            {busy === 'spend' ? 'Processing…' : '💳 Pay with card'}
+          <button type='button' className='action-button' disabled={busy !== '' || !activeCardId || !mscaActive} onClick={() => run('spend', authenticateAndPay, 'Payment settled')}>
+            {busy === 'spend' ? t('cards.authenticatingPayment') : `🔐 ${t('cards.payWithCard')}`}
           </button>
         </div>
 

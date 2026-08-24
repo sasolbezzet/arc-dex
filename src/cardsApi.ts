@@ -176,8 +176,8 @@ export function updateCardLimits(cardId: string, input: Record<string, unknown>)
 export function setCardStatus(cardId: string, status: CardStatus) {
   return api(`/api/cards/${encodeURIComponent(cardId)}/status`, { method: 'POST', body: JSON.stringify({ status }) })
 }
-export function spendWithCard(cardId: string, input: Record<string, unknown>) {
-  return api(`/api/cards/${encodeURIComponent(cardId)}/spend`, { method: 'POST', body: JSON.stringify(input) })
+export function spendWithCard(cardId: string, input: Record<string, unknown>, freshPasskeyToken: string) {
+  return api(`/api/cards/${encodeURIComponent(cardId)}/spend`, { method: 'POST', body: JSON.stringify(input) }, freshPasskeyToken)
 }
 export function refundCardTx(cardId: string, txId: string) {
   return api(`/api/cards/${encodeURIComponent(cardId)}/refund`, { method: 'POST', body: JSON.stringify({ txId }) })
