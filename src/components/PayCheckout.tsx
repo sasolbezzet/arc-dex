@@ -168,18 +168,18 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
 
             <div className='pay-methods'>
               <button type='button' className={paymentMode === 'arc-eoa' ? 'active' : ''} onClick={() => { setPaymentMode('arc-eoa'); setPreview(null) }}>
-                <strong>Pay on Arc</strong>
-                <span>Use connected EOA wallet and sign one USDC transfer on Arc Testnet.</span>
+                <strong>{t('pay.payOnArc')}</strong>
+                <span>{t('pay.payOnArcCopy')}</span>
               </button>
               <button type='button' className={paymentMode === 'cross-chain' ? 'active' : ''} onClick={() => { setPaymentMode('cross-chain'); setPreview(null) }}>
-                <strong>Pay Cross-Chain</strong>
-                <span>Preview an Eco-style route where buyer pays elsewhere and merchant receives USDC on Arc.</span>
+                <strong>{t('pay.payCrossChain')}</strong>
+                <span>{t('pay.payCrossChainCopy')}</span>
               </button>
             </div>
 
             {paymentMode === 'cross-chain' && (
               <label className='sandbox-field pay-source-chain'>
-                <span>Source chain</span>
+                <span>{t('common.sourceChain')}</span>
                 <select className='input' value={sourceChain} onChange={event => setSourceChain(event.target.value)}>
                   <option value='base-sepolia'>Base Sepolia</option>
                   <option value='ethereum-sepolia'>Ethereum Sepolia</option>
@@ -207,7 +207,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
                     <Info label='Source chain' value={preview.sourceChain} />
                     <Info label='Route provider' value={preview.route?.provider ? `${preview.route.provider}${preview.route.mockMode ? ' preview' : ''}` : 'Eco preview'} />
                     <Info label='Estimated steps' value={(preview.route?.estimatedSteps || []).join(' -> ') || 'Publish intent -> fulfill -> prove -> settle'} />
-                    <p className='pay-muted'>Cross-chain payment execution is shown as a route preview. The receiver wallet stays locked to this invoice; execute only after a production Eco/Circle route is available for this source chain.</p>
+                    <p className='pay-muted'>{t('pay.crossChainPreviewNote')}</p>
                   </>
                 ) : (
                   <Info label='Estimated network fee' value={preview.estimate?.fee ? `${preview.estimate.fee} USDC` : preview.estimate?.error || 'Unavailable'} />

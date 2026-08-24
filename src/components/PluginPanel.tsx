@@ -172,7 +172,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       if (/Passkey (hanya|membutuhkan|dibatalkan|tidak dapat|tidak menyediakan)/i.test(msg)) {
         setError(msg)
       } else if (msg.includes('Cannot find the entity config')) {
-        setError('Konfigurasi Circle belum lengkap. Hubungi admin.')
+        setError(t('plugin.circleConfigIncomplete'))
       } else {
         setError(msg)
       }
@@ -715,9 +715,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       }
       if (!sessionVerified) {
         if (sessionData?.session?.active !== true) {
-          throw new Error('Agent Wallet belum aktif. Aktifkan session key di Plugin page terlebih dahulu.')
+          throw new Error(t('plugin.agentWalletInactive'))
         }
-        throw new Error('Passkey session tidak cocok dengan MSCA yang dipilih. Login ulang Passkey di Plugin page.')
+        throw new Error(t('plugin.passkeySessionMismatch'))
       }
       if (hydratedPasskey) {
         localStorage.setItem('arx_vault_token', oauthMscaSessionToken)
@@ -837,7 +837,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ...mscaBinding,
         }),
       }), 20_000, t('plugin.verifyTimeout'))
-      const codeData = await withTimeout(codeResp.json(), 10_000, 'Respons verifikasi tidak selesai. Tekan Coba Lagi.')
+      const codeData = await withTimeout(codeResp.json(), 10_000, t('plugin.verificationIncomplete'))
       if (attempt !== oauthAttempt.current) return
       if (codeData.redirect) {
         setOauthStatus('done')
@@ -947,11 +947,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
         } />
         <ol style={{ color: '#94a3b8', fontSize: 11, paddingLeft: 16, marginTop: 8 }}>
-          <li>ChatGPT: Settings → Connectors → Add custom connector. Claude: Settings → Connectors → Add custom connector.</li>
-          <li>Paste MCP URL di atas</li>
-          <li>OAuth: pilih Dynamic Client Registration (DCR)</li>
-          <li>Atau manual: Auth URL = <code style={{fontSize:10,color:'#818cf8'}}>{AUTH_URL}</code>, Token URL = <code style={{fontSize:10,color:'#818cf8'}}>{SERVER_URL}/api/auth/token</code></li>
-          <li>Setelah connect, setujui dengan tanda tangan wallet di halaman auth.</li>
+          <li>{t('plugin.setupStep1')}</li>
+          <li>{t('plugin.setupStep2')}</li>
+          <li>{t('plugin.setupStep3')}</li>
+          <li>{t('plugin.setupStep4Prefix')}<code style={{fontSize:10,color:'#818cf8'}}>{AUTH_URL}</code>{t('plugin.setupStep4Middle')}<code style={{fontSize:10,color:'#818cf8'}}>{SERVER_URL}/api/auth/token</code></li>
+          <li>{t('plugin.setupStep5')}</li>
         </ol>
       </Section>
 
@@ -1078,20 +1078,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         {!mscaState.walletAddress ? (
           <div>
             <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
-              Buat smart account (MSCA) dengan passkey. Setelah passkey selesai, deployment otomatis dicoba di Arc, Base, dan Arbitrum dengan Circle Gas Station. Ethereum Sepolia ditampilkan unsupported karena Circle belum menyediakan MSCA di chain itu.
+              {t('plugin.mscaDescription')}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
                 {t('plugin.loginPasskey')}
               </button>
               <button className='btn' style={{ flex: 1, border: '1px solid #1e1e2e' }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>
-                ✨ Buat Baru
+                {t('plugin.newWallet')}
               </button>
             </div>
           </div>
         ) : (
           <div>
-            <Row label='MSCA Address' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.walletAddress?.slice(0, 10)}...{mscaState.walletAddress?.slice(-6)}</span>} />
+            <Row label={t('plugin.mscaAddress')} value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.walletAddress?.slice(0, 10)}...{mscaState.walletAddress?.slice(-6)}</span>} />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, margin: '8px 0' }}>
               {[
                 ['arc-testnet', 'Arc Testnet'], ['ethereum-sepolia', 'Ethereum Sepolia'],
@@ -1106,20 +1106,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             </div>
             {Object.values(mscaState.deploymentStatus || {}).some(status => status.status === 'failed') && <button className='btn' style={{ width: '100%', marginBottom: 8, fontSize: 11 }} disabled={busy === 'deployments'} onClick={() => run('deployments', retryMscaDeployments)}>↻ {t('plugin.retryDeployment')}</button>}
             <Row label={t('plugin.passkeyLabel')} value={<span style={{ color: '#4ade80' }}>{t('plugin.passkeyRegistered')}</span>} />
-            <Row label='Contract' value={mscaState.deployed
+            <Row label={t('plugin.contract')} value={mscaState.deployed
               ? <span style={{ color: '#4ade80' }}>{t('plugin.deployed')}</span>
               : <span style={{ color: '#f59e0b' }}>{t('plugin.notDeployed')}</span>
             } />
             {mscaState.delegateAddress ? (
               <>
-                <Row label='Delegate Key' value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.delegateAddress?.slice(0, 10)}...{mscaState.delegateAddress?.slice(-6)}</span>} />
-                <Row label='Status' value={mscaState.sessionActive
-                  ? <span style={{ color: '#4ade80' }}>● Aktif — transfer dalam limit</span>
-                  : <span style={{ color: '#f59e0b' }}>○ Nonaktif</span>
+                <Row label={t('plugin.delegateKey')} value={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>{mscaState.delegateAddress?.slice(0, 10)}...{mscaState.delegateAddress?.slice(-6)}</span>} />
+                <Row label={t('common.status')} value={mscaState.sessionActive
+                  ? <span style={{ color: '#4ade80' }}>{t('plugin.sessionActiveWithLimit')}</span>
+                  : <span style={{ color: '#f59e0b' }}>{t('plugin.sessionInactiveLabel')}</span>
                 } />
                 {!mscaState.sessionActive && (
                   <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>
-                    Session key belum aktif. Login Passkey akan mengaktifkannya otomatis setelah authorization on-chain berhasil.
+                    {t('plugin.sessionKeyInactiveHint')}
                   </div>
                 )}
               </>
@@ -1131,7 +1131,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             {mscaState.sessionActive && (
               <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: destinationReady ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)', border: `1px solid ${destinationReady ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)'}` }}>
                 <div style={{ color: destinationReady ? '#4ade80' : '#a5b4fc', fontSize: 11, marginBottom: 7 }}>
-                  {destinationReady ? '✓ Base Sepolia siap untuk receiveMessage via MSCA UserOp' : t('plugin.destinationBridgeHint')}
+                  {destinationReady ? t('plugin.baseSepoliaReady') : t('plugin.destinationBridgeHint')}
                 </div>
                 {!destinationReady && <button className='btn btn-primary' style={{ width: '100%', fontSize: 11 }} disabled={busy === 'destination'} onClick={() => run('destination', prepareBaseSepoliaBridge)}>
                   🛡️ {t('plugin.deployBaseBridge')}
@@ -1191,9 +1191,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                     setBusy(`pending-${tx.txId}`)
                     setError(null)
                     const result = await approvePendingTx(tx)
-                    if (result.txHash) alert(`Transaksi berhasil!\n${result.explorerUrl}`)
+                    if (result.txHash) alert(`${t('plugin.txSuccess')}\n${result.explorerUrl}`)
                   } catch (e: any) {
-                    setError(e?.message || 'Gagal menandatangani')
+                    setError(e?.message || t('plugin.signFailed'))
                   } finally { setBusy(null) }
                 }}
               >

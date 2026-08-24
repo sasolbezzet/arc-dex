@@ -5,6 +5,7 @@ import { BridgePanel } from './components/BridgePanel'
 import { SendPanel } from './components/SendPanel'
 import { ReceivePanel } from './components/ReceivePanel'
 import { CardsPanel } from './components/CardsPanel'
+import { ConnectPanel } from './components/ConnectPanel'
 import { AgenticPanel } from './components/AgenticPanel'
 import { InfoPanel } from './components/InfoPanel'
 import { DocsPanel } from './components/DocsPanel'
@@ -38,6 +39,7 @@ const NAV = [
   { id: 'agentic', path: '/agent-jobs', label: 'Jobs', labelKey: 'nav.jobs', icon: 'AI' },
   { id: 'intel', path: '/intel', label: 'x402', labelKey: 'nav.x402', icon: 'IX' },
   { id: 'cards', path: '/cards', label: 'Cards', labelKey: 'nav.cards', icon: 'CC' },
+  { id: 'connect', path: '/connect', label: 'Market', labelKey: 'nav.connect', icon: 'MK' },
   { id: 'info', path: '/info', label: 'Info', labelKey: 'tab.info', icon: 'IF' },
   { id: 'docs', path: '/docs', label: 'Docs', labelKey: 'nav.docs', icon: 'DX' },
 ] as const
@@ -379,6 +381,8 @@ export default function App() {
                           ? <IntelPanel address={address!} activeAgentIdentity={activeAgentIdentity} />
                           : page === 'cards'
                             ? <CardsPanel />
+                          : page === 'connect'
+                            ? <ConnectPanel />
                           : page === 'info'
                             ? <InfoPanel address={address!} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                             : null

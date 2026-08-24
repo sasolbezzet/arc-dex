@@ -395,7 +395,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
           <span style={{color:'#10b981'}}>{usdcBalance}</span>
         </div>
         <div style={{display:'flex',justifyContent:'space-between',gap:10,marginTop:4}}>
-          <span style={{color:'#64748b'}}>Active Agent Identity</span>
+          <span style={{color:'#64748b'}}>{t('agentic.activeIdentity')}</span>
           <span style={{color:activeIdentity?'#10b981':'#f59e0b'}}>{activeIdentity ? `#${activeIdentity.agentId}` : t('agentic.notFound')}</span>
         </div>
       </div>

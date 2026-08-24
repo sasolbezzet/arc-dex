@@ -410,7 +410,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
   return (
     <div className='pay-page'>
       <section className='glass sandbox-hero'>
-        <div className='docs-kicker'>ARCOX Insights</div>
+        <div className='docs-kicker'>{t('intel.insightsTitle')}</div>
         <h2>{t('intel.hero')}</h2>
         <p>{t('intel.copy')}</p>
         <div className='inline-warning'>{t('intel.warning')}</div>

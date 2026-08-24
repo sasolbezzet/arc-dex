@@ -1482,3 +1482,30 @@ button, a, select {
 .badge-authorized { color: #93c5fd; }
 .badge-refunded { color: #fde68a; }
 .badge-declined { color: #fca5a5; }
+
+/* ── Stripe Connect panel ─────────────────────────────────────────────── */
+.connect-panel .panel-header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.connect-panel h2 { margin: 0; font-size: 18px; }
+.connect-panel .tab-row { display: flex; gap: 6px; }
+.connect-panel .tab-button { min-height: 34px; padding: 7px 12px; font-size: 12px; }
+.connect-config-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border: 1px solid var(--border, rgba(99,102,241,0.25)); border-radius: 10px; margin-bottom: 14px; background: rgba(99,102,241,0.06); flex-wrap: wrap; }
+.badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.badge-test { background: rgba(251,191,36,0.16); color: #fde68a; }
+.badge-live { background: rgba(52,211,153,0.16); color: #6ee7b7; }
+.badge-ok { background: rgba(52,211,153,0.16); color: #6ee7b7; }
+.badge-warn { background: rgba(251,191,36,0.16); color: #fde68a; }
+.error-banner { padding: 10px 12px; border-radius: 10px; background: rgba(248,113,113,0.12); color: #fca5a5; border: 1px solid rgba(248,113,113,0.3); margin-bottom: 14px; font-size: 13px; }
+.onboard-box, .account-status, .product-form, .product-list, .storefront { border: 1px solid var(--border, rgba(99,102,241,0.25)); border-radius: 12px; padding: 16px; margin-bottom: 14px; background: rgba(99,102,241,0.04); }
+.onboard-box h3, .account-status h3, .product-form h3, .product-list h3, .storefront h3 { margin: 0 0 10px; font-size: 15px; }
+.connect-panel input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(99,102,241,0.3); background: rgba(15,23,42,0.6); color: inherit; font-size: 13px; margin-bottom: 8px; }
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 12px 0; }
+.status-grid > div { display: flex; flex-direction: column; gap: 4px; }
+.row-actions, .form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.form-row input { flex: 1; min-width: 120px; }
+.product-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid rgba(99,102,241,0.12); }
+.product-row:last-child { border-bottom: none; }
+.store-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
+.store-card { border: 1px solid rgba(99,102,241,0.25); border-radius: 12px; padding: 14px; background: rgba(99,102,241,0.05); display: flex; flex-direction: column; gap: 8px; }
+.store-card h4 { margin: 0; font-size: 14px; }
+.store-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }

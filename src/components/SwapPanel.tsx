@@ -148,7 +148,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
           {quote && <span style={{color:'#10b981',fontSize:12}}>≈ {quote.amountOut} {tokenOut}</span>}
         </div>
         <div style={{display:'flex',gap:8}}>
-          <input className='input' type='number' placeholder='estimasi...' value={quote?.amountOut||''} disabled style={{opacity:0.7}} />
+          <input className='input' type='number' placeholder={t('swap.estimatePlaceholder')} value={quote?.amountOut||''} disabled style={{opacity:0.7}} />
           <CompactTokenPicker value={tokenOut} options={SWAP_TOKENS.filter(t=>t!==tokenIn)} onChange={t=>{setTokenOut(t);setQuote(null)}} />
         </div>
       </div>
