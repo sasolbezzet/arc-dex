@@ -18,6 +18,8 @@ export type SimCard = {
   limits: { perTx: string; daily: string; monthly: string }
   usage: { today: string; month: string }
   createdAt: string
+  provider?: string
+  providerCardId?: string | null
 }
 
 export type SimMerchant = {
@@ -102,6 +104,24 @@ export function listCards(): Promise<{ ok: boolean; cards: SimCard[] }> {
 }
 export function createCard(input: Record<string, unknown>): Promise<{ ok: boolean; card: SimCard }> {
   return api('/api/cards', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export type ProvisionedCard = SimCard & {
+  pan: string
+  cvv?: string | null
+}
+
+export function provisionCard(cardId: string, label?: string): Promise<{
+  ok: boolean
+  card: ProvisionedCard
+  provider: string
+  providerCardId: string
+  sensitive: boolean
+}> {
+  return api(`/api/cards/${encodeURIComponent(cardId)}/provision`, {
+    method: 'POST',
+    body: JSON.stringify({ label }),
+  })
 }
 export function updateCardLimits(cardId: string, input: Record<string, unknown>) {
   return api(`/api/cards/${encodeURIComponent(cardId)}/limits`, { method: 'PATCH', body: JSON.stringify(input) })

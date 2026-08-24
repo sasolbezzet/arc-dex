@@ -1415,8 +1415,79 @@ button, a, select {
   }
 }
 
-/* ── Cards Panel (virtual Visa simulator) ─────────────────────────────────── */
-.cards-page { display: grid; gap: 14px; }
+/* ── Cards Panel ─────────────────────────────────────────────────────────── */
+.cards-page { display: grid; gap: 16px; }
+.cards-hero { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 24px; background: linear-gradient(120deg, rgba(245,158,11,.12), rgba(139,92,246,.08) 58%, rgba(34,211,238,.04)), rgba(8,12,19,.86); }
+.cards-hero-copy { min-width: 0; }
+.cards-hero h2 { margin: 5px 0 8px; font-size: clamp(24px, 4vw, 36px); }
+.cards-hero p { max-width: 720px; margin: 0; color: #a8b3c7; line-height: 1.6; font-size: 13px; }
+.cards-hero-badge { flex: 0 0 auto; display: grid; gap: 4px; min-width: 130px; padding: 14px; border: 1px solid rgba(245,158,11,.28); border-radius: 14px; background: rgba(245,158,11,.08); text-align: right; color: #fde68a; }
+.cards-hero-badge small { color: #a8b3c7; font-size: 10px; }
+.cards-status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.14); margin-right: 6px; }
+.cards-overview-grid, .cards-lower-grid { display: grid; grid-template-columns: minmax(230px,.72fr) minmax(0,1.28fr); gap: 16px; }
+.cards-balance-panel, .card-create-panel, .cards-section { padding: 20px; }
+.section-eyebrow { color: #71809a; font-size: 10px; font-weight: 800; letter-spacing: 1.1px; }
+.cards-balance { margin: 8px 0 6px; font-size: 30px; font-weight: 850; color: #fbbf24; }
+.cards-balance small { font-size: 13px; color: #fde68a; }
+.cards-balance-source { color: #9aa8bc; font-size: 11px; margin-bottom: 14px; }
+.text-button { padding: 0; border: 0; background: none; color: #fbbf24; cursor: pointer; font-size: 12px; font-weight: 800; }
+.text-button:disabled { opacity: .5; cursor: wait; }
+.card-create-title { display: flex; align-items: center; gap: 10px; margin: 10px 0 12px; }
+.card-create-title strong, .card-create-title small { display: block; }
+.card-create-title small { color: #71809a; font-size: 11px; margin-top: 3px; }
+.card-chip-icon { display: grid; place-items: center; width: 32px; height: 24px; border-radius: 6px; color: #111827; background: linear-gradient(135deg,#fde68a,#f59e0b); font-weight: 900; }
+.card-create-form { display: grid; grid-template-columns: repeat(auto-fit,minmax(130px,1fr)); gap: 10px; }
+.card-create-form label { display: grid; gap: 5px; color: #8998ae; font-size: 11px; font-weight: 750; }
+.card-create-form input, .card-create-form select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid rgba(148,163,184,.22); border-radius: 9px; background: rgba(3,6,11,.72); color: #f8fafc; font-size: 12px; }
+.card-create-form input:focus, .card-create-form select:focus { outline: none; border-color: rgba(245,158,11,.65); box-shadow: 0 0 0 3px rgba(245,158,11,.1); }
+.card-primary-action { width: 100%; margin-top: 14px; }
+.card-details-alert { display: grid; gap: 13px; padding: 18px; border-color: rgba(34,197,94,.35); background: linear-gradient(120deg,rgba(34,197,94,.09),rgba(15,23,42,.7)); }
+.card-details-alert strong { color: #86efac; }
+.card-details-alert p { margin: 5px 0 0; color: #a8b3c7; font-size: 12px; line-height: 1.5; }
+.issued-card-details { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+.issued-card-details > div { display: grid; gap: 5px; padding: 10px; border-radius: 9px; background: rgba(3,6,11,.4); }
+.issued-card-details span { color: #71809a; font-size: 10px; text-transform: uppercase; letter-spacing: .7px; }
+.issued-card-details code { color: #f8fafc; font-size: 13px; word-break: break-all; }
+.cards-section-heading { display: flex; justify-content: space-between; align-items: end; gap: 12px; }
+.cards-section-heading h3 { margin: 4px 0 0; }
+.cards-count { color: #71809a; font-size: 11px; }
+.cards-empty { display: grid; place-items: center; min-height: 120px; color: #71809a; text-align: center; }
+.cards-empty span { font-size: 28px; color: #f59e0b; }
+.cards-empty p { margin: 8px 0; }
+.card-tile { min-height: 190px; padding: 20px; }
+.card-tile-top { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; }
+.card-brand-mark { color: #f8fafc; font-size: 12px; font-weight: 900; letter-spacing: 1px; }
+.card-brand-mark b { margin-left: 12px; color: #fbbf24; font-size: 15px; font-style: italic; }
+.card-tile-number { position: relative; z-index: 1; margin: 14px 0 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: clamp(17px, 3vw, 22px); letter-spacing: 2px; }
+.card-tile-number strong { color: #fbbf24; }
+.card-tile-bottom { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 18px; }
+.card-tile-bottom div { display: grid; gap: 4px; }
+.card-tile-bottom small { color: #71809a; font-size: 8px; letter-spacing: .8px; }
+.card-tile-bottom strong { font-size: 11px; font-weight: 700; }
+.card-tile-footer { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid rgba(148,163,184,.14); padding-top: 10px; color: #a8b3c7; font-size: 10px; }
+.transaction-list { display: grid; gap: 2px; margin-top: 10px; }
+.transaction-row { display: grid; grid-template-columns: 24px minmax(0,1fr) auto auto; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid rgba(148,163,184,.11); }
+.transaction-row > div { min-width: 0; }
+.transaction-row strong, .transaction-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transaction-row strong { font-size: 12px; }
+.transaction-row small { margin-top: 3px; color: #71809a; font-size: 10px; }
+.transaction-row > b { color: #e2e8f0; font-size: 11px; white-space: nowrap; }
+.transaction-row > span:last-child { font-size: 10px; }
+.transaction-icon { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; background: rgba(34,197,94,.13); color: #86efac; font-weight: 900; }
+.transaction-icon.authorized { background: rgba(96,165,250,.13); color: #93c5fd; }
+.transaction-icon.refunded { background: rgba(251,191,36,.13); color: #fde68a; }
+@media (max-width: 680px) {
+  .cards-hero { align-items: flex-start; flex-direction: column; padding: 18px; }
+  .cards-hero-badge { align-self: stretch; text-align: left; }
+  .cards-overview-grid, .cards-lower-grid { grid-template-columns: minmax(0,1fr); }
+  .issued-card-details { grid-template-columns: minmax(0,1fr); }
+  .card-tile-number { font-size: 17px; }
+  .transaction-row { grid-template-columns: 24px minmax(0,1fr) auto; }
+  .transaction-row > span:last-child { grid-column: 2 / -1; }
+}
+
+/* Legacy simulator controls retained for compatibility with older card records. */
+.cards-page .row { display: flex; flex-wrap: wrap; gap: 8px; }
 .cards-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between; }
 .cards-balance {
   font-size: 26px; font-weight: 800; letter-spacing: 0.4px;
@@ -1436,6 +1507,7 @@ button, a, select {
   border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 700; cursor: pointer;
 }
 .mini-button:hover:not(:disabled) { border-color: rgba(251,191,36,0.5); color: #fde68a; }
+.mini-button-primary { border-color: rgba(245,158,11,.55); color: #fde68a; background: rgba(245,158,11,.12); }
 .mini-button:disabled { opacity: 0.45; cursor: not-allowed; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
 .form-grid label { display: grid; gap: 5px; font-size: 11px; color: var(--muted-2); font-weight: 700; }
