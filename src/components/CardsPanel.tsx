@@ -114,13 +114,13 @@ export function CardsPanel() {
           <div className='docs-kicker'>ARCOX CARD CONTROL · {shortProvider(issuer)} sandbox</div>
           <h2>{t('cards.title')}</h2>
           <p>{isRealSandbox
-            ? 'Buat kartu Visa virtual sandbox langsung dari ARCOX. Kartu diterbitkan oleh Lithic untuk pengujian, sedangkan saldo dan kebijakan tetap dikontrol oleh ARCOX.'
+            ? t('cards.realSubtitle')
             : t('cards.subtitle')}</p>
         </div>
         <div className='cards-hero-badge'>
           <span className='cards-status-dot' />
-          <strong>{isRealSandbox ? 'TEST MODE' : 'SIMULATOR'}</strong>
-          <small>Arc Testnet · USDC</small>
+          <strong>{isRealSandbox ? t('cards.testMode') : t('cards.simulator')}</strong>
+          <small>{t('cards.arcUsdc')}</small>
         </div>
       </section>
 
@@ -130,51 +130,51 @@ export function CardsPanel() {
       {revealedCard && (
         <section className='glass card-details-alert'>
           <div>
-            <strong>Card issued successfully</strong>
-            <p>Save these details now. PAN and CVV are shown only in this session and will not be shown again from the card list.</p>
+            <strong>{t('cards.issuedTitle')}</strong>
+            <p>{t('cards.issuedCopy')}</p>
           </div>
           <div className='issued-card-details'>
             <div><span>Card number</span><code>{revealedCard.pan}</code></div>
             <div><span>CVV</span><code>{revealedCard.cvv || '—'}</code></div>
             <div><span>Expires</span><code>{revealedCard.expMonth}/{revealedCard.expYear}</code></div>
           </div>
-          <button type='button' className='mini-button' onClick={() => setRevealedCard(null)}>Hide details</button>
+          <button type='button' className='mini-button' onClick={() => setRevealedCard(null)}>{t('cards.hideDetails')}</button>
         </section>
       )}
 
       <section className='cards-overview-grid'>
         <div className='glass cards-balance-panel'>
-          <div className='section-eyebrow'>AVAILABLE BALANCE</div>
+          <div className='section-eyebrow'>{t('cards.availableBalance')}</div>
           <div className='cards-balance'>{balance?.balance || '—'} <small>USDC</small></div>
           <div className='cards-balance-source'>
             <span className='cards-status-dot' />
-            {balance?.source === 'onchain' ? 'Synced from MSCA on Arc Testnet' : 'Local test balance'}
+            {balance?.source === 'onchain' ? t('cards.syncSource') : t('cards.localBalance')}
           </div>
           <button type='button' className='text-button' disabled={busy !== ''} onClick={() => run('sync', () => syncCardBalance(), 'MSCA balance synced')}>
-            {busy === 'sync' ? 'Syncing…' : '↻ Sync MSCA balance'}
+            {busy === 'sync' ? 'Syncing…' : `↻ ${t('cards.syncMsca')}`}
           </button>
         </div>
 
         <div className='glass card-create-panel'>
-          <div className='section-eyebrow'>{isRealSandbox ? 'ISSUE A VISA TEST CARD' : 'CREATE A TEST CARD'}</div>
+          <div className='section-eyebrow'>{isRealSandbox ? t('cards.issueTitle') : t('cards.createTitle')}</div>
           <div className='card-create-title'>
             <span className='card-chip-icon'>▦</span>
-            <div><strong>{isRealSandbox ? 'New virtual card' : 'Local virtual card'}</strong><small>{isRealSandbox ? 'Powered by Lithic Sandbox' : 'Enable issuer for network card'}</small></div>
+            <div><strong>{isRealSandbox ? t('cards.newVirtual') : t('cards.localVirtual')}</strong><small>{isRealSandbox ? t('cards.poweredLithic') : t('cards.enableIssuer')}</small></div>
           </div>
           <div className='card-create-form'>
-            <label>Card name<input value={label} onChange={e => setLabel(e.target.value)} maxLength={60} /></label>
-            <label>Per transaction<input value={perTx} onChange={e => setPerTx(e.target.value)} inputMode='decimal' /></label>
-            <label>Daily limit<input value={daily} onChange={e => setDaily(e.target.value)} inputMode='decimal' /></label>
+            <label>{t('cards.cardName')}<input value={label} onChange={e => setLabel(e.target.value)} maxLength={60} /></label>
+            <label>{t('cards.cardLimit')}<input value={perTx} onChange={e => setPerTx(e.target.value)} inputMode='decimal' /></label>
+            <label>{t('cards.dailyLimit')}<input value={daily} onChange={e => setDaily(e.target.value)} inputMode='decimal' /></label>
           </div>
           <button type='button' className='action-button card-primary-action' disabled={busy !== ''} onClick={() => run('create', createAndIssue, isRealSandbox ? 'Visa sandbox card issued' : 'Test card created')}>
-            {busy === 'create' ? 'Issuing card…' : isRealSandbox ? '＋ Issue Visa test card' : t('cards.create')}
+            {busy === 'create' ? 'Issuing card…' : isRealSandbox ? `＋ ${t('cards.issueCard')}` : t('cards.create')}
           </button>
         </div>
       </section>
 
       <section className='glass cards-section'>
         <div className='cards-section-heading'>
-          <div><div className='section-eyebrow'>YOUR WALLET</div><h3>{t('cards.myCards')}</h3></div>
+          <div><div className='section-eyebrow'>{t('cards.yourWallet')}</div><h3>{t('cards.myCards')}</h3></div>
           <span className='cards-count'>{cards.length} / {config?.maxCardsPerOwner || 10}</span>
         </div>
         {cards.length === 0 && <div className='cards-empty'><span>▣</span><p>{t('cards.noCards')}</p></div>}
@@ -184,14 +184,14 @@ export function CardsPanel() {
               <div className='card-tile-top'><span className='card-brand-mark'>ARCOX <b>VISA</b></span><span className={`status-chip ${card.status}`}>{card.status}</span></div>
               <div className='card-tile-number'>•••• <span>••••</span> <span>••••</span> <strong>{card.last4}</strong></div>
               <div className='card-tile-bottom'>
-                <div><small>CARD NAME</small><strong>{card.label}</strong></div>
-                <div><small>VALID THRU</small><strong>{card.expMonth}/{card.expYear}</strong></div>
-                <div><small>ISSUER</small><strong>{shortProvider(card.provider)}</strong></div>
+                <div><small>{t('cards.cardName')}</small><strong>{card.label}</strong></div>
+                <div><small>{t('cards.validThru')}</small><strong>{card.expMonth}/{card.expYear}</strong></div>
+                <div><small>{t('cards.issuer')}</small><strong>{shortProvider(card.provider)}</strong></div>
               </div>
               <div className='card-tile-footer'>
                 <span>{card.limits.perTx || '∞'} / tx · {card.limits.daily || '∞'} / day</span>
                 <div className='card-actions'>
-                  {isRealSandbox && card.provider === 'simulator' && card.status === 'active' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== ''} onClick={() => run('provision', () => issueExistingCard(card), 'Visa sandbox card issued')}>Issue Visa</button>}
+                  {isRealSandbox && card.provider === 'simulator' && card.status === 'active' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== ''} onClick={() => run('provision', () => issueExistingCard(card), 'Visa sandbox card issued')}>{t('cards.issueVisa')}</button>}
                   <button type='button' className='mini-button' disabled={busy !== '' || card.status === 'closed'} onClick={() => run('status', () => setCardStatus(card.cardId, card.status === 'frozen' ? 'active' : 'frozen'), card.status === 'frozen' ? 'Card activated' : 'Card frozen')}>
                     {card.status === 'frozen' ? '▶ Activate' : '⏸ Freeze'}
                   </button>
@@ -205,21 +205,21 @@ export function CardsPanel() {
 
       <section className='cards-lower-grid'>
         <div className='glass cards-section spend-panel'>
-          <div className='section-eyebrow'>AGENT SPEND</div><h3>{t('cards.spend')}</h3>
+          <div className='section-eyebrow'>{t('cards.agentSpend')}</div><h3>{t('cards.spend')}</h3>
           <div className='card-create-form'>
             <label>{t('cards.card')}<select value={activeCardId} onChange={e => setSpendCardId(e.target.value)}>{cards.map(card => <option key={card.cardId} value={card.cardId}>{card.label} ···· {card.last4}</option>)}</select></label>
             <label>{t('cards.merchant')}<select value={spendMerchant} onChange={e => setSpendMerchant(e.target.value)}>{merchants.map(m => <option key={m.merchantId} value={m.merchantId}>{m.emoji} {m.name}</option>)}</select></label>
             <label>{t('cards.amount')}<input value={spendAmount} onChange={e => setSpendAmount(e.target.value)} inputMode='decimal' /></label>
             <label>{t('cards.description')}<input value={spendDescription} onChange={e => setSpendDescription(e.target.value)} placeholder='Software subscription' /></label>
           </div>
-          <p className='muted'>{balance?.source === 'onchain' ? 'Settlement debits USDC from the MSCA wallet on Arc Testnet.' : 'Test mode: no real funds move.'}</p>
+          <p className='muted'>{balance?.source === 'onchain' ? t('cards.mscaSettlement') : t('cards.noRealFunds')}</p>
           <button type='button' className='action-button' disabled={busy !== '' || !activeCardId} onClick={() => run('spend', () => spendWithCard(activeCardId, { merchantId: spendMerchant, amount: spendAmount, description: spendDescription }), 'Payment settled')}>
             {busy === 'spend' ? 'Processing…' : '💳 Pay with card'}
           </button>
         </div>
 
         <div className='glass cards-section transactions-panel'>
-          <div className='section-eyebrow'>ACTIVITY</div><h3>{t('cards.transactions')}</h3>
+          <div className='section-eyebrow'>{t('cards.activity')}</div><h3>{t('cards.transactions')}</h3>
           {transactions.length === 0 ? <p className='muted'>{t('cards.noTx')}</p> : <div className='transaction-list'>{transactions.slice(0, 8).map(tx => <div className='transaction-row' key={tx.id}><span className={`transaction-icon ${tx.status}`}>{tx.status === 'settled' ? '✓' : tx.status === 'refunded' ? '↩' : '•'}</span><div><strong>{tx.merchantName}</strong><small>{formatDate(tx.createdAt)}</small></div><b>{tx.amount} USDC</b><span className={`badge-${tx.status}`}>{tx.status}</span>{tx.status === 'settled' && <button type='button' className='mini-button' disabled={busy !== ''} onClick={() => run('refund', () => refundCardTx(tx.cardId, tx.id), 'Refunded')}>{t('cards.refund')}</button>}</div>)}</div>}
         </div>
       </section>
