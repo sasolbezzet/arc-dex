@@ -58,27 +58,39 @@ export function cardConfigPublic() {
   }
 }
 
+function getPasskeyToken() {
+  try { return localStorage.getItem('arx_passkey_vault_token') || '' } catch { return '' }
+}
+
 function getCardAuthToken() {
   // Card endpoints are MSCA-gated. The normal DEX login token proves EOA
   // ownership, while the Passkey vault token proves an active MSCA session.
-  try {
-    const passkey = localStorage.getItem('arx_passkey_vault_token')
-    if (passkey) return passkey
-  } catch { /* storage may be unavailable */ }
-  return getAuthToken()
+  return getPasskeyToken() || getAuthToken()
 }
 
-const HEADERS = (extra?: Record<string, string>) => ({
+const HEADERS = (extra?: Record<string, string>, token = getCardAuthToken()) => ({
   'Content-Type': 'application/json',
-  ...(getCardAuthToken() ? { Authorization: `Bearer ${getCardAuthToken()}` } : {}),
+  ...(token ? { Authorization: `Bearer ${token}` } : {}),
   ...extra,
 })
 
 async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(path, {
+  const primaryToken = getCardAuthToken()
+  let resp = await fetch(path, {
     ...init,
-    headers: HEADERS(init?.headers as Record<string, string> | undefined),
+    headers: HEADERS(init?.headers as Record<string, string> | undefined, primaryToken),
   })
+  // A stale Passkey token can survive a browser restart while the regular
+  // wallet login token is still valid. Retry the read/mutation with that token;
+  // the backend will still enforce active MSCA access, but the UI can now
+  // receive the structured `setup_required` preflight instead of a blind 401.
+  const fallbackToken = getAuthToken()
+  if (resp.status === 401 && fallbackToken && fallbackToken !== primaryToken) {
+    resp = await fetch(path, {
+      ...init,
+      headers: HEADERS(init?.headers as Record<string, string> | undefined, fallbackToken),
+    })
+  }
   const text = await resp.text()
   let data: any = {}
   try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
