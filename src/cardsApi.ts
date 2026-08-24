@@ -58,9 +58,19 @@ export function cardConfigPublic() {
   }
 }
 
+function getCardAuthToken() {
+  // Card endpoints are MSCA-gated. The normal DEX login token proves EOA
+  // ownership, while the Passkey vault token proves an active MSCA session.
+  try {
+    const passkey = localStorage.getItem('arx_passkey_vault_token')
+    if (passkey) return passkey
+  } catch { /* storage may be unavailable */ }
+  return getAuthToken()
+}
+
 const HEADERS = (extra?: Record<string, string>) => ({
   'Content-Type': 'application/json',
-  ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+  ...(getCardAuthToken() ? { Authorization: `Bearer ${getCardAuthToken()}` } : {}),
   ...extra,
 })
 
@@ -78,6 +88,18 @@ async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
 
 export function getCardConfig() {
   return api('/api/cards/config')
+}
+
+export type CardAccess = {
+  ok: boolean
+  active: boolean
+  walletAddress?: string | null
+  statusReason?: string
+  requiresPasskey?: boolean
+}
+
+export function getCardAccess(): Promise<CardAccess> {
+  return api('/api/cards/access')
 }
 export function getMerchants(): Promise<{ ok: boolean; merchants: SimMerchant[] }> {
   return api('/api/cards/merchants')

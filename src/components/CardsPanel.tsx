@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 import {
   getCardConfig,
+  getCardAccess,
   getMerchants,
   getCardBalance,
   syncCardBalance,
@@ -16,6 +17,7 @@ import {
   type SimMerchant,
   type CardTx,
   type CardBalance,
+  type CardAccess,
   type ProvisionedCard,
 } from '../cardsApi'
 
@@ -30,6 +32,7 @@ function formatDate(value: string) {
 export function CardsPanel() {
   const { t } = useI18n()
   const [config, setConfig] = useState<any>(null)
+  const [access, setAccess] = useState<CardAccess | null>(null)
   const [merchants, setMerchants] = useState<SimMerchant[]>([])
   const [cards, setCards] = useState<SimCard[]>([])
   const [balance, setBalance] = useState<CardBalance | null>(null)
@@ -49,14 +52,16 @@ export function CardsPanel() {
 
   const refresh = useCallback(async () => {
     setError('')
-    const [cfg, merch, bal, cs, txs] = await Promise.all([
+    const [cfg, cardAccess, merch, bal, cs, txs] = await Promise.all([
       getCardConfig().catch(() => null),
+      getCardAccess().catch(() => null),
       getMerchants().catch(() => ({ merchants: [] as SimMerchant[] })),
       getCardBalance().catch(() => null),
       listCards().catch(() => ({ cards: [] as SimCard[] })),
       listMyCardTransactions().catch(() => ({ transactions: [] as CardTx[] })),
     ])
     setConfig(cfg)
+    setAccess(cardAccess)
     setMerchants(merch.merchants || [])
     setBalance(bal && bal.ok ? bal : null)
     setCards(cs.cards || [])
@@ -79,7 +84,11 @@ export function CardsPanel() {
       await refresh()
       return result
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const message = e instanceof Error ? e.message : String(e)
+      if (/Active authenticated MSCA session required/i.test(message)) {
+        setAccess(current => ({ ...(current || { ok: true }), active: false, requiresPasskey: true, statusReason: 'setup_required' }))
+      }
+      setError(message)
     } finally {
       setBusy('')
     }
@@ -104,6 +113,7 @@ export function CardsPanel() {
 
   const issuer = config?.issuer?.configured ? config.issuer.provider : 'simulator'
   const isRealSandbox = issuer !== 'simulator'
+  const mscaActive = access?.active === true
   const selectedCard = cards.find(c => c.cardId === spendCardId) || cards[0]
   const activeCardId = spendCardId || selectedCard?.cardId || ''
 
@@ -126,6 +136,17 @@ export function CardsPanel() {
 
       {error && <div className='inline-error'>{error}</div>}
       {notice && <div className='inline-notice'>{notice}</div>}
+      {access && !access.active && (
+        <section className='glass cards-access-gate'>
+          <div className='cards-access-icon'>!</div>
+          <div className='cards-access-copy'>
+            <strong>{t('cards.sessionTitle')}</strong>
+            <p>{t('cards.sessionCopy')}</p>
+            <small>{t('cards.sessionStatus')}: {access.statusReason || 'inactive'}</small>
+          </div>
+          <button type='button' className='action-button' onClick={() => { window.location.assign('/arc-dex/plugin') }}>{t('cards.activateSession')}</button>
+        </section>
+      )}
 
       {revealedCard && (
         <section className='glass card-details-alert'>
@@ -148,9 +169,9 @@ export function CardsPanel() {
           <div className='cards-balance'>{balance?.balance || '—'} <small>USDC</small></div>
           <div className='cards-balance-source'>
             <span className='cards-status-dot' />
-            {balance?.source === 'onchain' ? t('cards.syncSource') : t('cards.localBalance')}
+            {access === null ? t('cards.sessionChecking') : balance?.source === 'onchain' ? t('cards.syncSource') : t('cards.localBalance')}
           </div>
-          <button type='button' className='text-button' disabled={busy !== ''} onClick={() => run('sync', () => syncCardBalance(), 'MSCA balance synced')}>
+          <button type='button' className='text-button' disabled={busy !== '' || !mscaActive} onClick={() => run('sync', () => syncCardBalance(), 'MSCA balance synced')}>
             {busy === 'sync' ? 'Syncing…' : `↻ ${t('cards.syncMsca')}`}
           </button>
         </div>
@@ -166,7 +187,7 @@ export function CardsPanel() {
             <label>{t('cards.cardLimit')}<input value={perTx} onChange={e => setPerTx(e.target.value)} inputMode='decimal' /></label>
             <label>{t('cards.dailyLimit')}<input value={daily} onChange={e => setDaily(e.target.value)} inputMode='decimal' /></label>
           </div>
-          <button type='button' className='action-button card-primary-action' disabled={busy !== ''} onClick={() => run('create', createAndIssue, isRealSandbox ? 'Visa sandbox card issued' : 'Test card created')}>
+          <button type='button' className='action-button card-primary-action' disabled={busy !== '' || !mscaActive} onClick={() => run('create', createAndIssue, isRealSandbox ? 'Visa sandbox card issued' : 'Test card created')}>
             {busy === 'create' ? 'Issuing card…' : isRealSandbox ? `＋ ${t('cards.issueCard')}` : t('cards.create')}
           </button>
         </div>
