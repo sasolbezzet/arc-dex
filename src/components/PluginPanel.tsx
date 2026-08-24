@@ -365,13 +365,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         vaultFetch('/api/vault/credentials'),
         vaultFetch('/api/vault/limits'),
         vaultFetch('/api/vault/approvals'),
-        vaultFetch('/api/vault/activity?limit=20'),
+        vaultFetch('/api/vault/activity?limit=5'),
         vaultFetch('/api/vault/sessions'),
       ])
       setCredentials(creds.credentials || [])
       setLimits(lim.limits || { maxPerTx: 100, dailyLimit: 500, autoApprove: true, whitelist: [] })
       setApprovals(appr.approvals || [])
-      setActivity(act.activity || [])
+      setActivity((act.activity || []).slice(0, 5))
       setMcpSessions(sess.sessions || [])
     } catch (e: any) {
       if (e?.message !== '__SESSION_EXPIRED__') setError(e?.message || t('plugin.vaultLoadFailed'))
@@ -390,12 +390,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         const [s, appr, act, txs] = await Promise.all([
           vaultFetch('/api/vault/sessions'),
           vaultFetch('/api/vault/approvals'),
-          vaultFetch('/api/vault/activity?limit=20'),
+          vaultFetch('/api/vault/activity?limit=5'),
           vaultFetch('/api/pending-txs').catch(() => ({ txs: [] })),
         ])
         setMcpSessions(s.sessions || [])
         setApprovals(appr.approvals || [])
-        setActivity(act.activity || [])
+        setActivity((act.activity || []).slice(0, 5))
         setPendingTxs((txs.txs || []).filter((t: PendingTx) => t.status === 'pending'))
       } catch {}
     }, 8000)
@@ -1205,13 +1205,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       )}
 
       {/* Activity */}
-      <Section title={t('plugin.activity')}>
+      <Section title={t('plugin.activityAgent')} badge={<span style={{ fontSize: 11, color: '#64748b' }}>{t('plugin.latestFive')}</span>}>
         {activity.length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noActivity')}</div>
         ) : (
-          activity.map(a => (
+          activity.slice(0, 5).map(a => (
             <div key={a.id} style={{ fontSize: 11, color: '#94a3b8', padding: '4px 0', borderBottom: '1px solid #1e1e2e' }}>
-              <span style={{ color: '#e2e8f0' }}>{a.type.replace(/_/g, ' ')}</span> · {fmtTime(a.ts)}
+              <span style={{ color: '#e2e8f0' }}>{a.type.replace(/_/g, ' ')}</span>
+              {a.data?.amount && <span> · {String(a.data.amount)} {String(a.data.token || 'USDC')}</span>}
+              {a.data?.txHash && <span style={{ fontFamily: 'monospace' }}> · tx {String(a.data.txHash).slice(0, 10)}…</span>}
+              <span> · {fmtTime(a.ts)}</span>
             </div>
           ))
         )}

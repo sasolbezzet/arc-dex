@@ -39,7 +39,7 @@ const NAV = [
   { id: 'agentic', path: '/agent-jobs', label: 'Jobs', labelKey: 'nav.jobs', icon: 'AI' },
   { id: 'intel', path: '/intel', label: 'x402', labelKey: 'nav.x402', icon: 'IX' },
   { id: 'cards', path: '/cards', label: 'Cards', labelKey: 'nav.cards', icon: 'CC' },
-  { id: 'connect', path: '/connect', label: 'Market', labelKey: 'nav.connect', icon: 'MK' },
+  { id: 'connect', path: '/connect', label: 'Merchant', labelKey: 'nav.connect', icon: 'MK' },
   { id: 'info', path: '/info', label: 'Info', labelKey: 'tab.info', icon: 'IF' },
   { id: 'docs', path: '/docs', label: 'Docs', labelKey: 'nav.docs', icon: 'DX' },
 ] as const

@@ -570,7 +570,13 @@ button, a, select {
 
 .drawer-panel {
   width: min(88vw, 336px);
+  max-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
   padding: 18px;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom));
   border-radius: 0 14px 14px 0;
   background:
     linear-gradient(180deg, rgba(245,158,11,0.08), transparent 26%),
@@ -597,6 +603,7 @@ button, a, select {
 
 .side-nav nav, .drawer-panel nav {
   gap: 7px;
+  padding-bottom: 8px;
 }
 
 .side-nav nav button,
@@ -1595,3 +1602,54 @@ button, a, select {
 .store-card h4 { margin: 0; font-size: 14px; }
 .store-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+
+/* Premium card surface: sensitive values stay inside the authenticated card. */
+.card-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); }
+.card-tile-premium {
+  min-height: 284px;
+  padding: 22px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 88% 8%, rgba(255, 221, 128, .24), transparent 25%),
+    radial-gradient(circle at 6% 94%, rgba(93, 57, 179, .24), transparent 36%),
+    linear-gradient(135deg, #20232a 0%, #0b0e14 46%, #17120a 100%);
+  border: 1px solid rgba(238, 197, 92, .55);
+  box-shadow: 0 24px 55px rgba(0,0,0,.58), inset 0 1px 0 rgba(255,255,255,.12), inset 0 -1px 0 rgba(245,158,11,.12);
+}
+.card-tile-premium::before {
+  opacity: .2;
+  background-image:
+    linear-gradient(118deg, transparent 0 38%, rgba(255,255,255,.25) 39%, transparent 40%),
+    repeating-linear-gradient(137deg, transparent 0 17px, rgba(238,197,92,.16) 18px, transparent 19px);
+}
+.card-tile-premium::after { width: 210px; height: 210px; right: -72px; top: -75px; background: radial-gradient(circle, rgba(255,220,125,.34), transparent 66%); }
+.card-tile-premium .card-tile-glow { position: absolute; inset: 1px; border-radius: 19px; background: linear-gradient(115deg, transparent 35%, rgba(255,255,255,.07) 48%, transparent 61%); pointer-events: none; }
+.card-brand-mark { display: inline-flex; align-items: center; gap: 7px; }
+.card-brand-orbit { display: inline-grid; place-items: center; width: 23px; height: 23px; border: 1px solid rgba(255,224,137,.75); border-radius: 50%; color: #ffe08a; font-size: 12px; box-shadow: 0 0 14px rgba(245,158,11,.22); }
+.card-tile-premium .card-tile-art { height: 43px; gap: 14px; }
+.card-tile-premium .card-emv-chip { width: 38px; height: 29px; grid-template-columns: repeat(2, 15px); grid-template-rows: repeat(2, 10px); gap: 2px; padding: 5px; border-radius: 7px; background: linear-gradient(135deg,#fff4bd,#bd8a27 54%,#f7dda0); }
+.card-tile-premium .card-contactless { font-size: 20px; }
+.card-tile-premium .card-tile-number { margin: 11px 0 7px; font-size: clamp(18px, 2.3vw, 24px); letter-spacing: 2.8px; text-shadow: 0 2px 8px rgba(0,0,0,.72); }
+.card-tile-premium.revealed .card-tile-number { color: #fff7d6; font-size: clamp(17px, 2.1vw, 22px); letter-spacing: 2px; }
+.card-tile-premium .card-tile-sensitive { position: relative; z-index: 1; display: grid; grid-template-columns: .8fr .9fr 1.5fr; gap: 9px; margin: 2px 0 4px; }
+.card-tile-sensitive > div { display: grid; gap: 4px; min-width: 0; padding: 7px 9px; border: 1px solid rgba(255,224,137,.2); border-radius: 8px; background: rgba(0,0,0,.23); }
+.card-tile-sensitive small { color: rgba(255,235,177,.62); font-size: 8px; letter-spacing: .8px; text-transform: uppercase; }
+.card-tile-sensitive strong { color: #fff7d6; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.card-tile-premium.revealed { border-color: rgba(255,224,137,.82); box-shadow: 0 24px 60px rgba(0,0,0,.62), 0 0 0 1px rgba(255,224,137,.12), inset 0 1px 0 rgba(255,255,255,.15); }
+.card-tile-premium.revealed .card-tile-footer { border-top-color: rgba(255,224,137,.26); }
+.card-tile-premium .card-tile-footer { margin-top: auto; }
+.card-tile-premium .card-tile-footer > span { color: rgba(255,235,177,.68); }
+.card-tile-premium .card-actions { justify-content: flex-end; flex-wrap: wrap; }
+.connect-access-gate { display: flex; align-items: center; gap: 13px; padding: 15px 18px; margin-bottom: 14px; border: 1px solid rgba(251,191,36,.38); border-radius: 12px; background: linear-gradient(120deg, rgba(251,191,36,.1), rgba(15,23,42,.72)); }
+.connect-access-gate > div:nth-child(2) { min-width: 0; flex: 1; }
+.connect-access-gate strong { color: #fde68a; font-size: 13px; }
+.connect-access-gate p { margin: 4px 0; color: #a8b3c7; font-size: 11px; line-height: 1.45; }
+.connect-access-gate small { color: #71809a; font-size: 10px; }
+.connect-access-icon { display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; background: rgba(251,191,36,.18); color: #fbbf24; font-weight: 900; }
+@media (max-width: 680px) {
+  .card-tile-premium { min-height: 300px; padding: 18px; }
+  .card-tile-premium .card-tile-sensitive { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card-tile-premium .card-tile-sensitive > div:last-child { grid-column: 1 / -1; }
+  .connect-access-gate { align-items: flex-start; flex-wrap: wrap; }
+  .connect-access-gate .action-button { width: 100%; }
+}

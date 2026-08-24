@@ -31,6 +31,11 @@ function formatDate(value: string) {
   try { return new Date(value).toLocaleString() } catch { return value }
 }
 
+function formatCardPan(value: string) {
+  const digits = String(value || '').replace(/\D/g, '')
+  return digits.replace(/(.{4})/g, '$1 ').trim() || value
+}
+
 export function CardsPanel() {
   const { t } = useI18n()
   const [config, setConfig] = useState<any>(null)
@@ -174,24 +179,6 @@ export function CardsPanel() {
         </section>
       )}
 
-      {revealedCard && (
-        <section className='glass card-details-alert'>
-          <div className='card-details-heading'>
-            <div className='card-details-lock'>⌁</div>
-            <div>
-              <strong>{t('cards.issuedTitle')}</strong>
-              <p>{t('cards.issuedCopy')}</p>
-            </div>
-          </div>
-          <div className='issued-card-details'>
-            <div><span>{t('cards.cardNumber')}</span><code>{revealedCard.pan}</code></div>
-            <div><span>{t('cards.cvv')}</span><code>{revealedCard.cvv || '—'}</code></div>
-            <div><span>{t('cards.expires')}</span><code>{revealedCard.expMonth}/{revealedCard.expYear}</code></div>
-          </div>
-          <button type='button' className='mini-button' onClick={() => setRevealedCard(null)}>{t('cards.hideDetails')}</button>
-        </section>
-      )}
-
       <section className='cards-overview-grid'>
         <div className='glass cards-balance-panel'>
           <div className='section-eyebrow'>{t('cards.availableBalance')}</div>
@@ -230,29 +217,50 @@ export function CardsPanel() {
         {cards.length === 0 && <div className='cards-empty'><span>▣</span><p>{t('cards.noCards')}</p></div>}
         <div className='card-list'>
           {cards.map(card => (
-            <article key={card.cardId} className={`card-tile ${card.status}`}>
-              <div className='card-tile-top'><span className='card-brand-mark'>ARCOX <b>VISA</b></span><span className={`status-chip ${card.status}`}>{card.status}</span></div>
-              <div className='card-tile-art' aria-hidden='true'>
-                <span className='card-emv-chip'><i /><i /><i /><i /></span>
-                <span className='card-contactless'>)))</span>
-              </div>
-              <div className='card-tile-number'>•••• <span>••••</span> <span>••••</span> <strong>{card.last4}</strong></div>
-              <div className='card-tile-bottom'>
-                <div><small>{t('cards.cardName')}</small><strong>{card.label}</strong></div>
-                <div><small>{t('cards.validThru')}</small><strong>{card.expMonth}/{card.expYear}</strong></div>
-                <div><small>{t('cards.issuer')}</small><strong>{shortProvider(card.provider)}</strong></div>
-              </div>
-              <div className='card-tile-footer'>
-                <span>{card.limits.perTx || '∞'} / tx · {card.limits.daily || '∞'} / day</span>
-                <div className='card-actions'>
-                  {card.status !== 'closed' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== '' || !mscaActive} onClick={() => run(`reveal-${card.cardId}`, () => authenticateAndReveal(card))}>{busy === `reveal-${card.cardId}` ? t('cards.authenticating') : `⌁ ${t('cards.viewDetails')}`}</button>}
-                  {isRealSandbox && card.provider === 'simulator' && card.status === 'active' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== '' || !mscaActive} onClick={() => run('provision', () => issueExistingCard(card), 'Visa sandbox card issued')}>{t('cards.issueVisa')}</button>}
-                  <button type='button' className='mini-button' disabled={busy !== '' || card.status === 'closed'} onClick={() => run('status', () => setCardStatus(card.cardId, card.status === 'frozen' ? 'active' : 'frozen'), card.status === 'frozen' ? 'Card activated' : 'Card frozen')}>
-                    {card.status === 'frozen' ? '▶ Activate' : '⏸ Freeze'}
-                  </button>
-                  {card.status !== 'closed' && <button type='button' className='mini-button' disabled={busy !== ''} onClick={() => { if (window.confirm('Close this test card?')) run('status', () => setCardStatus(card.cardId, 'closed'), 'Card closed') }}>Close</button>}
-                </div>
-              </div>
+            <article key={card.cardId} className={`card-tile card-tile-premium ${card.status} ${revealedCard?.cardId === card.cardId ? 'revealed' : ''}`}>
+              {(() => {
+                const isRevealed = revealedCard?.cardId === card.cardId
+                return <>
+                  <div className='card-tile-glow' aria-hidden='true' />
+                  <div className='card-tile-top'>
+                    <span className='card-brand-mark'><span className='card-brand-orbit'>◈</span> ARCOX <b>VISA</b></span>
+                    <span className={`status-chip ${card.status}`}>{card.status}</span>
+                  </div>
+                  <div className='card-tile-art' aria-hidden='true'>
+                    <span className='card-emv-chip'><i /><i /><i /><i /></span>
+                    <span className='card-contactless'>)))</span>
+                  </div>
+                  <div className='card-tile-number' aria-label={isRevealed ? t('cards.cardNumber') : undefined}>
+                    {isRevealed ? formatCardPan(revealedCard.pan) : <>•••• <span>••••</span> <span>••••</span> <strong>{card.last4}</strong></>}
+                  </div>
+                  {isRevealed ? (
+                    <div className='card-tile-sensitive' role='status'>
+                      <div><small>{t('cards.cvv')}</small><strong>{revealedCard.cvv || '—'}</strong></div>
+                      <div><small>{t('cards.validThru')}</small><strong>{revealedCard.expMonth}/{revealedCard.expYear}</strong></div>
+                      <div><small>{t('cards.cardName')}</small><strong>{card.label}</strong></div>
+                    </div>
+                  ) : (
+                    <div className='card-tile-bottom'>
+                      <div><small>{t('cards.cardName')}</small><strong>{card.label}</strong></div>
+                      <div><small>{t('cards.validThru')}</small><strong>{card.expMonth}/{card.expYear}</strong></div>
+                      <div><small>{t('cards.issuer')}</small><strong>{shortProvider(card.provider)}</strong></div>
+                    </div>
+                  )}
+                  <div className='card-tile-footer'>
+                    <span>{isRevealed ? `⌁ ${t('cards.issuedTitle')}` : `${card.limits.perTx || '∞'} / tx · ${card.limits.daily || '∞'} / day`}</span>
+                    <div className='card-actions'>
+                      {card.status !== 'closed' && (isRevealed
+                        ? <button type='button' className='mini-button mini-button-primary' onClick={() => setRevealedCard(null)}>{t('cards.hideDetails')}</button>
+                        : <button type='button' className='mini-button mini-button-primary' disabled={busy !== '' || !mscaActive} onClick={() => run(`reveal-${card.cardId}`, () => authenticateAndReveal(card))}>{busy === `reveal-${card.cardId}` ? t('cards.authenticating') : `⌁ ${t('cards.viewDetails')}`}</button>)}
+                      {isRealSandbox && card.provider === 'simulator' && card.status === 'active' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== '' || !mscaActive} onClick={() => run('provision', () => issueExistingCard(card), 'Visa sandbox card issued')}>{t('cards.issueVisa')}</button>}
+                      <button type='button' className='mini-button' disabled={busy !== '' || card.status === 'closed'} onClick={() => run('status', () => setCardStatus(card.cardId, card.status === 'frozen' ? 'active' : 'frozen'), card.status === 'frozen' ? 'Card activated' : 'Card frozen')}>
+                        {card.status === 'frozen' ? '▶ Activate' : '⏸ Freeze'}
+                      </button>
+                      {card.status !== 'closed' && <button type='button' className='mini-button' disabled={busy !== ''} onClick={() => { if (window.confirm('Close this test card?')) run('status', () => setCardStatus(card.cardId, 'closed'), 'Card closed') }}>Close</button>}
+                    </div>
+                  </div>
+                </>
+              })()}
             </article>
           ))}
         </div>

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
+import { loginPasskey } from '../services/modularWallet'
 import {
   getConnectConfig,
+  getConnectAccess,
   getConnectAccount,
   onboardConnect,
   createConnectProduct,
@@ -11,7 +13,7 @@ import {
   subscribeConnect,
   openConnectPortal,
 } from '../connectApi'
-import type { ConnectConfig, ConnectAccount, ConnectProduct } from '../connectApi'
+import type { ConnectConfig, ConnectAccess, ConnectAccount, ConnectProduct } from '../connectApi'
 
 type Mode = 'dashboard' | 'storefront'
 
@@ -19,6 +21,7 @@ export function ConnectPanel() {
   const { t } = useI18n()
   const [mode, setMode] = useState<Mode>('dashboard')
   const [config, setConfig] = useState<ConnectConfig | null>(null)
+  const [access, setAccess] = useState<ConnectAccess | null>(null)
   const [account, setAccount] = useState<ConnectAccount | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -39,8 +42,12 @@ export function ConnectPanel() {
     try {
       const cfg = await getConnectConfig()
       setConfig(cfg)
-      const acc = await getConnectAccount()
-      setAccount(acc.account)
+      const [accessResult, accountResult] = await Promise.all([
+        getConnectAccess().catch(() => null),
+        getConnectAccount().catch(() => null),
+      ])
+      setAccess(accessResult)
+      setAccount(accountResult?.account || null)
     } catch (e: any) {
       setError(e?.message || 'load failed')
     } finally {
@@ -53,11 +60,22 @@ export function ConnectPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  async function authenticateMerchant() {
+    const fresh = await loginPasskey()
+    localStorage.setItem('arx_vault_token', fresh.sessionToken)
+    localStorage.setItem('arx_passkey_vault_token', fresh.sessionToken)
+    const current = await getConnectAccess()
+    if (!current.active) throw new Error('Active authenticated MSCA session required')
+    setAccess(current)
+    return fresh.sessionToken
+  }
+
   async function handleOnboard() {
     setBusy(true)
     setError('')
     try {
-      const res = await onboardConnect({ displayName, contactEmail })
+      const token = await authenticateMerchant()
+      const res = await onboardConnect({ displayName, contactEmail }, token)
       // Open the Stripe-hosted onboarding link in a new tab.
       window.open(res.url, '_blank', 'noopener,noreferrer')
       await load()
@@ -74,7 +92,8 @@ export function ConnectPanel() {
     try {
       const priceCents = Math.round(Number(productPrice) * 100)
       if (!productName || !priceCents) throw new Error('name and price required')
-      await createConnectProduct({ name: productName, description: productDesc, priceCents })
+      const token = await authenticateMerchant()
+      await createConnectProduct({ name: productName, description: productDesc, priceCents }, token)
       setProductName(''); setProductDesc(''); setProductPrice('')
       await refreshProducts()
     } catch (e: any) {
@@ -95,7 +114,8 @@ export function ConnectPanel() {
     setBusy(true)
     setError('')
     try {
-      const res = await subscribeConnect()
+      const token = await authenticateMerchant()
+      const res = await subscribeConnect(token)
       if (res.url) window.open(res.url, '_blank', 'noopener,noreferrer')
     } catch (e: any) {
       setError(e?.message || 'subscribe failed')
@@ -108,7 +128,8 @@ export function ConnectPanel() {
     setBusy(true)
     setError('')
     try {
-      const res = await openConnectPortal()
+      const token = await authenticateMerchant()
+      const res = await openConnectPortal(token)
       if (res.url) window.open(res.url, '_blank', 'noopener,noreferrer')
     } catch (e: any) {
       setError(e?.message || 'portal failed')
@@ -152,6 +173,7 @@ export function ConnectPanel() {
   if (loading) return <div className="panel-card">{t('loading')}</div>
 
   const feePct = config ? (config.appFeeBasisPoints / 100).toFixed(1) : '0'
+  const mscaActive = access?.active === true
 
   return (
     <div className="panel-card connect-panel">
@@ -168,6 +190,20 @@ export function ConnectPanel() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {access && !access.active && (
+        <section className="connect-access-gate">
+          <div className="connect-access-icon">!</div>
+          <div>
+            <strong>{t('connect.sessionTitle')}</strong>
+            <p>{t('connect.sessionCopy')}</p>
+            <small>{t('connect.sessionStatus')}: {access.statusReason || 'inactive'}</small>
+          </div>
+          <button className="action-button" type="button" onClick={() => window.location.assign('/arc-dex/plugin')}>
+            {t('connect.activateSession')}
+          </button>
+        </section>
+      )}
 
       {config && (
         <div className="connect-config-bar">
@@ -194,7 +230,7 @@ export function ConnectPanel() {
                 value={contactEmail}
                 onChange={(e) => setContactEmail(e.target.value)}
               />
-              <button className="action-button" disabled={busy} onClick={handleOnboard}>
+              <button className="action-button" disabled={busy || !mscaActive} onClick={handleOnboard}>
                 {t('connect.onboardButton')}
               </button>
             </div>
@@ -221,13 +257,13 @@ export function ConnectPanel() {
                   </div>
                 </div>
                 <div className="row-actions">
-                  <button className="action-button" disabled={busy} onClick={handleOnboard}>
+                  <button className="action-button" disabled={busy || !mscaActive} onClick={handleOnboard}>
                     {t('connect.reOnboard')}
                   </button>
-                  <button className="action-button secondary" disabled={busy} onClick={handleSubscribe}>
+                  <button className="action-button secondary" disabled={busy || !mscaActive} onClick={handleSubscribe}>
                     {t('connect.subscribe')}
                   </button>
-                  <button className="action-button secondary" disabled={busy} onClick={handlePortal}>
+                  <button className="action-button secondary" disabled={busy || !mscaActive} onClick={handlePortal}>
                     {t('connect.portal')}
                   </button>
                 </div>
@@ -239,7 +275,7 @@ export function ConnectPanel() {
                   <input placeholder={t('connect.productName')} value={productName} onChange={(e) => setProductName(e.target.value)} />
                   <input placeholder={t('connect.productDesc')} value={productDesc} onChange={(e) => setProductDesc(e.target.value)} />
                   <input placeholder={t('connect.productPrice')} type="number" value={productPrice} onChange={(e) => setProductPrice(e.target.value)} />
-                  <button className="action-button" disabled={busy} onClick={handleCreateProduct}>
+                  <button className="action-button" disabled={busy || !mscaActive} onClick={handleCreateProduct}>
                     {t('connect.createButton')}
                   </button>
                 </div>
