@@ -1448,8 +1448,10 @@ button, a, select {
 .card-create-form input, .card-create-form select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid rgba(148,163,184,.22); border-radius: 9px; background: rgba(3,6,11,.72); color: #f8fafc; font-size: 12px; }
 .card-create-form input:focus, .card-create-form select:focus { outline: none; border-color: rgba(245,158,11,.65); box-shadow: 0 0 0 3px rgba(245,158,11,.1); }
 .card-primary-action { width: 100%; margin-top: 14px; }
-.card-details-alert { display: grid; gap: 13px; padding: 18px; border-color: rgba(34,197,94,.35); background: linear-gradient(120deg,rgba(34,197,94,.09),rgba(15,23,42,.7)); }
-.card-details-alert strong { color: #86efac; }
+.card-details-alert { display: grid; gap: 13px; padding: 18px; border-color: rgba(212,175,55,.42); background: linear-gradient(120deg,rgba(212,175,55,.12),rgba(15,23,42,.82)); }
+.card-details-heading { display: flex; align-items: center; gap: 11px; }
+.card-details-lock { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(212,175,55,.45); border-radius: 50%; color: #f8d477; background: rgba(212,175,55,.12); font-size: 20px; }
+.card-details-alert strong { color: #f8d477; }
 .card-details-alert p { margin: 5px 0 0; color: #a8b3c7; font-size: 12px; line-height: 1.5; }
 .issued-card-details { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
 .issued-card-details > div { display: grid; gap: 5px; padding: 10px; border-radius: 9px; background: rgba(3,6,11,.4); }
@@ -1462,6 +1464,10 @@ button, a, select {
 .cards-empty span { font-size: 28px; color: #f59e0b; }
 .cards-empty p { margin: 8px 0; }
 .card-tile { min-height: 190px; padding: 20px; }
+.card-tile-art { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; height: 35px; }
+.card-emv-chip { display: grid; grid-template-columns: repeat(2, 11px); grid-template-rows: repeat(2, 8px); gap: 2px; width: 27px; height: 21px; padding: 4px; box-sizing: border-box; border-radius: 5px; border: 1px solid rgba(255,237,175,.72); background: linear-gradient(135deg,#fff1b8,#bf8d2c 52%,#f8df8a); box-shadow: 0 2px 7px rgba(0,0,0,.35); }
+.card-emv-chip i { display: block; border: 1px solid rgba(111,75,16,.46); border-radius: 2px; }
+.card-contactless { color: rgba(255,237,175,.9); font-size: 17px; letter-spacing: -5px; transform: rotate(-90deg); }
 .card-tile-top { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; }
 .card-brand-mark { color: #f8fafc; font-size: 12px; font-weight: 900; letter-spacing: 1px; }
 .card-brand-mark b { margin-left: 12px; color: #fbbf24; font-size: 15px; font-style: italic; }
@@ -1526,13 +1532,14 @@ button, a, select {
 .card-list { display: grid; gap: 14px; margin-top: 10px; }
 .card-tile {
   position: relative; border-radius: 16px; padding: 18px 18px 14px; overflow: hidden; color: #fff;
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 55%, #111827 100%);
-  border: 1px solid rgba(148,163,184,0.28); box-shadow: 0 14px 34px rgba(0,0,0,0.4);
+  background: radial-gradient(circle at 88% 12%, rgba(248,211,105,.24), transparent 24%), radial-gradient(circle at 10% 105%, rgba(124,58,237,.18), transparent 35%), linear-gradient(125deg, #171717 0%, #080b12 48%, #17120b 100%);
+  border: 1px solid rgba(212,175,55,.42); box-shadow: 0 18px 42px rgba(0,0,0,0.52), inset 0 1px 0 rgba(255,255,255,.07);
   min-height: 150px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px;
 }
+.card-tile::before { content: ''; position: absolute; inset: 0; opacity: .22; background-image: linear-gradient(115deg, transparent 0 42%, rgba(255,255,255,.18) 43%, transparent 44%), repeating-linear-gradient(145deg, transparent 0 12px, rgba(212,175,55,.12) 13px, transparent 14px); pointer-events: none; }
 .card-tile::after {
   content: ''; position: absolute; right: -36px; top: -46px; width: 150px; height: 150px;
-  background: radial-gradient(circle, rgba(251,191,36,0.28), transparent 62%); pointer-events: none;
+  background: radial-gradient(circle, rgba(248,211,105,0.3), transparent 62%); pointer-events: none;
 }
 .card-tile.frozen { filter: grayscale(0.55); opacity: 0.78; }
 .card-tile.closed { filter: grayscale(0.85); opacity: 0.5; }

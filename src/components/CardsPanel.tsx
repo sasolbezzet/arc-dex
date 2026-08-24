@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
+import { loginPasskey } from '../services/modularWallet'
 import {
   getCardConfig,
   getCardAccess,
@@ -13,6 +14,7 @@ import {
   spendWithCard,
   refundCardTx,
   listMyCardTransactions,
+  revealCardDetails,
   type SimCard,
   type SimMerchant,
   type CardTx,
@@ -73,6 +75,12 @@ export function CardsPanel() {
     return () => clearTimeout(timer)
   }, [refresh])
 
+  useEffect(() => {
+    if (!revealedCard) return
+    const timer = setTimeout(() => setRevealedCard(null), 60_000)
+    return () => clearTimeout(timer)
+  }, [revealedCard])
+
   async function run(action: string, fn: () => Promise<any>, message?: string) {
     try {
       setBusy(action)
@@ -95,9 +103,20 @@ export function CardsPanel() {
   }
 
   async function issueExistingCard(card: SimCard) {
-    const issued = await provisionCard(card.cardId, card.label)
-    if (issued.sensitive && issued.card?.pan) setRevealedCard(issued.card)
-    return issued
+    // Provisioning never returns PAN/CVV. Details are revealed only after the
+    // owner completes a fresh biometric/passkey assertion below.
+    return provisionCard(card.cardId, card.label)
+  }
+
+  async function authenticateAndReveal(card: SimCard) {
+    const fresh = await loginPasskey()
+    // Keep the newly issued short-lived vault session for subsequent Card API
+    // calls. The backend still requires an active MSCA session for every read.
+    localStorage.setItem('arx_vault_token', fresh.sessionToken)
+    localStorage.setItem('arx_passkey_vault_token', fresh.sessionToken)
+    const result = await revealCardDetails(card.cardId, fresh.sessionToken)
+    setRevealedCard(result.card)
+    return result
   }
 
   async function createAndIssue() {
@@ -150,14 +169,17 @@ export function CardsPanel() {
 
       {revealedCard && (
         <section className='glass card-details-alert'>
-          <div>
-            <strong>{t('cards.issuedTitle')}</strong>
-            <p>{t('cards.issuedCopy')}</p>
+          <div className='card-details-heading'>
+            <div className='card-details-lock'>⌁</div>
+            <div>
+              <strong>{t('cards.issuedTitle')}</strong>
+              <p>{t('cards.issuedCopy')}</p>
+            </div>
           </div>
           <div className='issued-card-details'>
-            <div><span>Card number</span><code>{revealedCard.pan}</code></div>
-            <div><span>CVV</span><code>{revealedCard.cvv || '—'}</code></div>
-            <div><span>Expires</span><code>{revealedCard.expMonth}/{revealedCard.expYear}</code></div>
+            <div><span>{t('cards.cardNumber')}</span><code>{revealedCard.pan}</code></div>
+            <div><span>{t('cards.cvv')}</span><code>{revealedCard.cvv || '—'}</code></div>
+            <div><span>{t('cards.expires')}</span><code>{revealedCard.expMonth}/{revealedCard.expYear}</code></div>
           </div>
           <button type='button' className='mini-button' onClick={() => setRevealedCard(null)}>{t('cards.hideDetails')}</button>
         </section>
@@ -203,6 +225,10 @@ export function CardsPanel() {
           {cards.map(card => (
             <article key={card.cardId} className={`card-tile ${card.status}`}>
               <div className='card-tile-top'><span className='card-brand-mark'>ARCOX <b>VISA</b></span><span className={`status-chip ${card.status}`}>{card.status}</span></div>
+              <div className='card-tile-art' aria-hidden='true'>
+                <span className='card-emv-chip'><i /><i /><i /><i /></span>
+                <span className='card-contactless'>)))</span>
+              </div>
               <div className='card-tile-number'>•••• <span>••••</span> <span>••••</span> <strong>{card.last4}</strong></div>
               <div className='card-tile-bottom'>
                 <div><small>{t('cards.cardName')}</small><strong>{card.label}</strong></div>
@@ -212,7 +238,8 @@ export function CardsPanel() {
               <div className='card-tile-footer'>
                 <span>{card.limits.perTx || '∞'} / tx · {card.limits.daily || '∞'} / day</span>
                 <div className='card-actions'>
-                  {isRealSandbox && card.provider === 'simulator' && card.status === 'active' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== ''} onClick={() => run('provision', () => issueExistingCard(card), 'Visa sandbox card issued')}>{t('cards.issueVisa')}</button>}
+                  {card.status !== 'closed' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== '' || !mscaActive} onClick={() => run(`reveal-${card.cardId}`, () => authenticateAndReveal(card))}>{busy === `reveal-${card.cardId}` ? t('cards.authenticating') : `⌁ ${t('cards.viewDetails')}`}</button>}
+                  {isRealSandbox && card.provider === 'simulator' && card.status === 'active' && <button type='button' className='mini-button mini-button-primary' disabled={busy !== '' || !mscaActive} onClick={() => run('provision', () => issueExistingCard(card), 'Visa sandbox card issued')}>{t('cards.issueVisa')}</button>}
                   <button type='button' className='mini-button' disabled={busy !== '' || card.status === 'closed'} onClick={() => run('status', () => setCardStatus(card.cardId, card.status === 'frozen' ? 'active' : 'frozen'), card.status === 'frozen' ? 'Card activated' : 'Card frozen')}>
                     {card.status === 'frozen' ? '▶ Activate' : '⏸ Freeze'}
                   </button>

@@ -74,8 +74,8 @@ const HEADERS = (extra?: Record<string, string>, token = getCardAuthToken()) => 
   ...extra,
 })
 
-async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
-  const primaryToken = getCardAuthToken()
+async function api<T = any>(path: string, init?: RequestInit, authToken?: string): Promise<T> {
+  const primaryToken = authToken || getCardAuthToken()
   let resp = await fetch(path, {
     ...init,
     headers: HEADERS(init?.headers as Record<string, string> | undefined, primaryToken),
@@ -85,7 +85,7 @@ async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
   // the backend will still enforce active MSCA access, but the UI can now
   // receive the structured `setup_required` preflight instead of a blind 401.
   const fallbackToken = getAuthToken()
-  if (resp.status === 401 && fallbackToken && fallbackToken !== primaryToken) {
+  if (!authToken && resp.status === 401 && fallbackToken && fallbackToken !== primaryToken) {
     resp = await fetch(path, {
       ...init,
       headers: HEADERS(init?.headers as Record<string, string> | undefined, fallbackToken),
@@ -147,7 +147,7 @@ export type ProvisionedCard = SimCard & {
 
 export function provisionCard(cardId: string, label?: string): Promise<{
   ok: boolean
-  card: ProvisionedCard
+  card: SimCard
   provider: string
   providerCardId: string
   sensitive: boolean
@@ -156,6 +156,19 @@ export function provisionCard(cardId: string, label?: string): Promise<{
     method: 'POST',
     body: JSON.stringify({ label }),
   })
+}
+
+/**
+ * Reveal PAN/CVV only after the caller has completed a fresh WebAuthn
+ * assertion. The short-lived token is intentionally passed explicitly so a
+ * stale browser session cannot be used for a card-details request.
+ */
+export function revealCardDetails(cardId: string, freshPasskeyToken: string): Promise<{
+  ok: boolean
+  sensitive: true
+  card: ProvisionedCard
+}> {
+  return api(`/api/cards/${encodeURIComponent(cardId)}/reveal`, undefined, freshPasskeyToken)
 }
 export function updateCardLimits(cardId: string, input: Record<string, unknown>) {
   return api(`/api/cards/${encodeURIComponent(cardId)}/limits`, { method: 'PATCH', body: JSON.stringify(input) })
