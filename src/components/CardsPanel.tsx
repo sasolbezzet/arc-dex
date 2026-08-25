@@ -223,12 +223,16 @@ export function CardsPanel() {
                 return <>
                   <div className='card-tile-glow' aria-hidden='true' />
                   <div className='card-tile-top'>
-                    <span className='card-brand-mark'><span className='card-brand-orbit'>◈</span> ARCOX <b>VISA</b></span>
+                    <span className='card-brand-mark' aria-label='ARCOX Visa card'>
+                      <span className='card-brand-orbit' aria-hidden='true'><i /><i /><i /></span>
+                      <span className='card-brand-name'>ARCOX</span>
+                      <b>VISA</b>
+                    </span>
                     <span className={`status-chip ${card.status}`}>{card.status}</span>
                   </div>
                   <div className='card-tile-art' aria-hidden='true'>
-                    <span className='card-emv-chip'><i /><i /><i /><i /></span>
-                    <span className='card-contactless'>)))</span>
+                    <span className='card-emv-chip' aria-label='EMV chip'><i /><i /><i /><i /></span>
+                    <span className='card-contactless' aria-label='Contactless payment' />
                   </div>
                   <div className='card-tile-number' aria-label={isRevealed ? t('cards.cardNumber') : undefined}>
                     {isRevealed ? formatCardPan(revealedCard.pan) : <>•••• <span>••••</span> <span>••••</span> <strong>{card.last4}</strong></>}
