@@ -14,6 +14,7 @@ import {
 import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
 import { isSuccessfulUserOpReceipt } from './mscaPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
+import { parsePublicKey } from 'webauthn-p256'
 import { arcTestnet } from 'viem/chains'
 
 // Circle's documented Modular Wallet endpoint and credential names.
@@ -428,6 +429,50 @@ async function userOpOutcome(client: any, userOpHash?: string, submittedAt?: num
   }
 }
 
+// ── WebAuthn sender mapping for destination chains ──
+// Circle's WeightedWebAuthnMultisig plugin resolves the WebAuthn validation
+// entry by the sender = keccak(publicKeyX, publicKeyY). That resolution must
+// exist on EVERY chain the wallet is used on. Registration on Arc testnet
+// creates the mapping on Arc only; Base Sepolia / Arbitrum Sepolia have no
+// mapping and the plugin then reverts with `InvalidValidationFunctionId`
+// during UserOperation simulation (the exact production error).
+//
+// `circle_createAddressMapping` is an off-chain Circle API call (no tx, no
+// gas) and is what the official SDK's executeRecovery does before addOwners.
+// It is idempotent: a duplicate mapping returns an ALREADY_KNOWN error that
+// we swallow.
+async function ensureWebAuthnOwnerMapping(chainKey: string): Promise<void> {
+  if (chainKey === 'arc-testnet' || chainKey === 'ethereum-sepolia') return
+  const state = loadState()
+  if (!state.walletAddress || !state.credential?.publicKey) return
+  const config = chainConfig(chainKey)
+  // Backend stores the passkey public key as a compressed SEC1 point
+  // (serializePublicKey(..., { compressed: true })). Extract x/y the same
+  // way the official SDK's executeRecovery does before createAddressMapping.
+  const { x, y } = parsePublicKey(state.credential.publicKey)
+  const body = {
+    jsonrpc: '2.0',
+    id: Date.now(),
+    method: 'circle_createAddressMapping',
+    params: [{
+      walletAddress: state.walletAddress,
+      owners: [{ type: 'WEBAUTHOWNER', identifier: { publicKeyX: x.toString(), publicKeyY: y.toString() } }],
+    }],
+  }
+  const res = await fetch(`/api/circle-modular/w3s/buidl/${config.slug}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || data.error) {
+    const message = String(data?.error?.message || res.statusText || 'unknown')
+    // ALREADY_KNOWN = duplicate mapping; that is the desired end state.
+    if (/already|ALREADY|exists|duplicate|known/i.test(message)) return
+    throw new Error(`${chainKey}: sender mapping gagal (${message})`)
+  }
+}
+
 function mergeAuthorizationStatus(chainKey: string, userOpHash: string, delegateAddress: string) {
   const state = loadState()
   const previous = state.deploymentStatus?.[chainKey]
@@ -633,6 +678,9 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
     saveDeploymentStatus(chainKey, { ...(previousStatus as DeploymentStatus), status: 'deployed', userOpHash: previousHash, updatedAt: Date.now() })
     return { walletAddress: state.walletAddress, deployed: true, userOpHash: previousHash }
   }
+  // Destination chains do not inherit the WebAuthn sender mapping from Arc;
+  // create it (idempotent, off-chain) so the plugin can validate the UserOp.
+  await ensureWebAuthnOwnerMapping(chainKey)
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
     paymaster: true,
@@ -908,6 +956,12 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     authorizationStatus: 'pending',
     updatedAt: Date.now(),
   })
+
+  // Destination chains (Base/Arbitrum) do not inherit the WebAuthn sender
+  // mapping that registration created on Arc. Without it the plugin reverts
+  // with InvalidValidationFunctionId during simulation. Create it first
+  // (off-chain API call, idempotent).
+  await ensureWebAuthnOwnerMapping(chainKey)
 
   const callData = encodeFunctionData({ abi: ADD_OWNERS_ABI, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
   const fees = await circleGasFees(chainKey)
