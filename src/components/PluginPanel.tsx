@@ -121,6 +121,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const oauthAttempt = useRef(0)
+  // Device pairing: keep the SIWE challenge + MSCA binding in refs so the
+  // "Sudah tanda tangan? Lanjutkan" button can re-drive the wallet signature
+  // without re-running the passkey/session phases.
+  const deviceMessageRef = useRef('')
+  const deviceMessageHexRef = useRef('')
+  const deviceMscaWalletRef = useRef('')
+  const deviceMscaTokenRef = useRef('')
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
@@ -919,23 +926,70 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const msgData = await withTimeout(msgResp.json(), 10_000, t('plugin.challengeResponseTimeout'))
       if (!msgData.message) throw new Error(t('plugin.challengeFailed'))
 
-      setOauthStatus('wallet')
-      const provider = await withTimeout(findConnectedWalletProvider(address), 20_000, t('plugin.providerTimeout'))
-      if (!provider) throw new Error(t('plugin.walletMainMissing'))
-      const messageHex = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
-      const signature = await Promise.race([
-        provider.request({ method: 'personal_sign', params: [messageHex, address] }) as Promise<string>,
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Wallet signature response timeout')), 90_000)),
-      ])
-      setOauthStatus('approving')
+      // Keep the SIWE challenge + MSCA binding in refs so the recovery button
+      // can re-finish the exact same approval without re-running passkey.
+      deviceMessageRef.current = msgData.message
+      deviceMessageHexRef.current = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
+      deviceMscaWalletRef.current = oauthMscaWalletAddress
+      deviceMscaTokenRef.current = oauthMscaSessionToken
+      await signAndApproveDevice()
+    } catch (e: any) {
+      setOauthStatus('error')
+      setError(e?.message || t('plugin.oauthFailed'))
+    }
+  }
 
+  // Wallet signature for device pairing. WalletConnect relays routinely drop
+  // the response right after the wallet signs, leaving the request promise
+  // pending forever (UI stuck at "Menunggu tanda tangan wallet…"). Rebuild
+  // the connection between attempts and cap each try so it can never hang.
+  const requestWalletSignature = async (): Promise<string> => {
+    if (!address || !deviceMessageHexRef.current) throw new Error(t('plugin.walletMainMissing'))
+    const messageHex = deviceMessageHexRef.current
+    let lastError: unknown = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const provider = await withTimeout(findConnectedWalletProvider(address), 20_000, t('plugin.providerTimeout'))
+        if (!provider) throw new Error(t('plugin.walletMainMissing'))
+        const signature = await Promise.race([
+          provider.request({ method: 'personal_sign', params: [messageHex, address] }) as Promise<string>,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Wallet signature response timeout')), 60_000)),
+        ])
+        if (typeof signature === 'string' && /^0x[0-9a-fA-F]+$/.test(signature)) return signature
+        throw new Error('Wallet signature tidak valid')
+      } catch (e: any) {
+        lastError = e
+        if (attempt < 2) {
+          // WalletConnect relay is usually the part that hung; disconnect it so
+          // the next attempt starts with a fresh session.
+          cleanupWalletConnectInBackground(t)
+          await new Promise(resolve => setTimeout(resolve, 800))
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Wallet signature gagal')
+  }
+
+  // Finishes device pairing: signature → backend approve. Also callable from
+  // the recovery button once the user has already signed in the wallet.
+  const signAndApproveDevice = async (): Promise<void> => {
+    if (!address || !deviceUserCode || !deviceMscaWalletRef.current || !deviceMscaTokenRef.current || !deviceMessageRef.current) {
+      throw new Error(t('plugin.agentWalletInactive'))
+    }
+    setOauthStatus('wallet')
+    setError(null)
+    try {
+      const signature = await requestWalletSignature()
+      setOauthStatus('approving')
       const approveResp = await withTimeout(fetch(`${API}/api/auth/device/approve`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          address, message: msgData.message, signature,
+          address,
+          message: deviceMessageRef.current,
+          signature,
           user_code: deviceUserCode,
-          mscaWalletAddress: oauthMscaWalletAddress,
-          mscaSessionToken: oauthMscaSessionToken,
+          mscaWalletAddress: deviceMscaWalletRef.current,
+          mscaSessionToken: deviceMscaTokenRef.current,
           approve: true,
         }),
       }), 20_000, t('plugin.verifyTimeout'))
@@ -995,7 +1049,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           )}
           {oauthStatus === 'passkey' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
           {oauthStatus === 'checking' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
-          {oauthStatus === 'wallet' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menunggu tanda tangan wallet…</div>}
+          {oauthStatus === 'wallet' && (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Menunggu tanda tangan wallet…</div>
+              <div style={{ color: '#64748b', fontSize: 11, marginBottom: 10 }}>Sudah menandatangani di aplikasi wallet? Jika layar masih menggantung, lanjutkan untuk meminta tanda tangan sekali lagi.</div>
+              <button type='button' onClick={() => void signAndApproveDevice()} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #6366f1', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>
+                Sudah tanda tangan — Lanjutkan
+              </button>
+            </div>
+          )}
           {oauthStatus === 'approving' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menyetujui…</div>}
           {oauthStatus === 'done' && (
             <div style={{ textAlign: 'center', color: '#4ade80', fontSize: 13, fontWeight: 600 }}>
