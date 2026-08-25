@@ -108,6 +108,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const { t } = useI18n()
   // ── OAuth callback params (from ChatGPT/Claude redirect) ──
   const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
+  // RFC 8628 device pairing (Hermes on a headless VPS): the agent shows a
+  // short user code that the user enters here; approval binds the same SIWE +
+  // passkey identity as the loopback flow without any redirect URL.
+  const [deviceUserCode, setDeviceUserCode] = useState<string | null>(null)
+  const [deviceClientName, setDeviceClientName] = useState<string>('')
   // OAuth approval has two deliberate signing steps: the passkey binds the
   // Agent Wallet, then the connected EOA signs SIWE for the MCP identity. Keep
   // these phases separate so the UI never says "wallet" while WebAuthn is open.
@@ -127,6 +132,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         state: p.get('state') || '',
         code_challenge: p.get('code_challenge') || '',
       })
+    }
+    if (p.get('auth') === 'device' && p.get('user_code')) {
+      const userCode = p.get('user_code') || ''
+      setDeviceUserCode(userCode)
+      fetch(`${API}/api/auth/device/status?user_code=${encodeURIComponent(userCode)}`)
+        .then(r => r.json())
+        .then(d => { if (d?.clientName) setDeviceClientName(String(d.clientName)) })
+        .catch(() => { /* status is cosmetic; approve reports real errors */ })
     }
     // Deep-link from the AI agent: /plugin?tab=approvals&approval=<id>
     // Highlight the referenced approval so the user lands right on it.
@@ -859,6 +872,82 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
+  // ── Device pairing approval: same identity proof as approveOAuth, but the
+  // grant is approved server-side by user_code and no redirect happens. ──
+  const approveDevice = async (passkeyMode: 'Login' | 'Register' = 'Login') => {
+    if (!address || !deviceUserCode) return
+    setOauthStatus('checking')
+    setError(null)
+    try {
+      // Fresh WebAuthn ceremony every pairing — never trust stale localStorage.
+      let oauthMscaWalletAddress = ''
+      let oauthMscaSessionToken = ''
+      let sessionVerified = false
+      for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
+        setOauthStatus('passkey')
+        if (passkeyAttempt > 0) {
+          localStorage.removeItem('arx_vault_token')
+          localStorage.removeItem('arx_passkey_vault_token')
+        }
+        const passkey = await withTimeout(
+          passkeyMode === 'Register' ? registerPasskey() : loginPasskey(),
+          60_000,
+          passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
+        )
+        oauthMscaWalletAddress = passkey.walletAddress
+        oauthMscaSessionToken = passkey.sessionToken
+        await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken)
+        setOauthStatus('checking')
+        const sessionResponse = await withTimeout(
+          fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${oauthMscaSessionToken}` } }),
+          20_000,
+          t('plugin.passkeySessionTimeout'),
+        )
+        const sessionData = await sessionResponse.json().catch(() => ({}))
+        sessionVerified = sessionResponse.ok
+          && sessionData?.session?.active === true
+          && String(sessionData?.session?.walletAddress || '').toLowerCase() === oauthMscaWalletAddress.toLowerCase()
+      }
+      if (!sessionVerified) throw new Error(t('plugin.agentWalletInactive'))
+
+      // SIWE challenge bound to the device grant.
+      const msgResp = await withTimeout(fetch(`${API}/api/auth/device/message`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address, user_code: deviceUserCode }),
+      }), 20_000, t('plugin.challengeTimeout'))
+      if (!msgResp.ok) throw new Error(`Gagal mendapat challenge (${msgResp.status})`)
+      const msgData = await withTimeout(msgResp.json(), 10_000, t('plugin.challengeResponseTimeout'))
+      if (!msgData.message) throw new Error(t('plugin.challengeFailed'))
+
+      setOauthStatus('wallet')
+      const provider = await withTimeout(findConnectedWalletProvider(address), 20_000, t('plugin.providerTimeout'))
+      if (!provider) throw new Error(t('plugin.walletMainMissing'))
+      const messageHex = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
+      const signature = await Promise.race([
+        provider.request({ method: 'personal_sign', params: [messageHex, address] }) as Promise<string>,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Wallet signature response timeout')), 90_000)),
+      ])
+      setOauthStatus('approving')
+
+      const approveResp = await withTimeout(fetch(`${API}/api/auth/device/approve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address, message: msgData.message, signature,
+          user_code: deviceUserCode,
+          mscaWalletAddress: oauthMscaWalletAddress,
+          mscaSessionToken: oauthMscaSessionToken,
+          approve: true,
+        }),
+      }), 20_000, t('plugin.verifyTimeout'))
+      const approveData = await withTimeout(approveResp.json().catch(() => ({})), 10_000, t('plugin.verificationIncomplete'))
+      if (!approveResp.ok || !approveData.ok) throw new Error(approveData.error_description || approveData.error || t('plugin.oauthFailed'))
+      setOauthStatus('done')
+    } catch (e: any) {
+      setOauthStatus('error')
+      setError(e?.message || t('plugin.oauthFailed'))
+    }
+  }
+
   // Wallet utama adalah identitas Plugin. Tidak ada login kedua di sini.
   if (!address) return (
     <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
@@ -871,6 +960,50 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {error && <div style={{ color: '#f87171', fontSize: 12, padding: 10, background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>{error}</div>}
+
+      {/* RFC 8628 device pairing approval (Hermes headless agent) */}
+      {deviceUserCode && (
+        <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+          <div style={{ textAlign: 'center', marginBottom: 16 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🖥️</div>
+            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Hubungkan Agent (Device Code)</div>
+            <div style={{ color: '#94a3b8', fontSize: 12 }}>Perangkat lain ingin terhubung ke ARCOX Anda</div>
+          </div>
+          <div style={{ background: 'rgba(18,18,26,0.6)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>Kode perangkat:</div>
+            <div style={{ color: '#e2e8f0', fontSize: 18, fontWeight: 700, letterSpacing: 2 }}>{deviceUserCode}</div>
+            {deviceClientName && (
+              <>
+                <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 10, marginBottom: 4 }}>Agent:</div>
+                <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{deviceClientName}</div>
+              </>
+            )}
+          </div>
+          <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
+            ⚠️ Setujui hanya jika Anda sendiri yang meminta kode ini di terminal.
+          </div>
+          {error && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+          {(oauthStatus === 'idle' || oauthStatus === 'error') && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type='button' onClick={() => approveDevice('Login')} style={{ flex: 1, padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
+                Setujui dengan Passkey
+              </button>
+              <button type='button' onClick={() => approveDevice('Register')} style={{ flex: 1, padding: 12, borderRadius: 8, border: '1px solid #6366f1', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>
+                Passkey Baru
+              </button>
+            </div>
+          )}
+          {oauthStatus === 'passkey' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
+          {oauthStatus === 'checking' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
+          {oauthStatus === 'wallet' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menunggu tanda tangan wallet…</div>}
+          {oauthStatus === 'approving' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menyetujui…</div>}
+          {oauthStatus === 'done' && (
+            <div style={{ textAlign: 'center', color: '#4ade80', fontSize: 13, fontWeight: 600 }}>
+              ✓ Perangkat terhubung. Kembali ke terminal Hermes.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* OAuth approval modal (from ChatGPT/Claude) */}
       {oauthParams && (
