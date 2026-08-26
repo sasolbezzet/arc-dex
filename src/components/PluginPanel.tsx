@@ -424,7 +424,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const token = issued.token || ''
       setConnectionToken({
         ...issued,
-        setupMessage: `Hubungkan ARCOX ke ${agentName} saya.\\nURL server: ${MCP_URL}\\nToken: ${token}\\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
+        setupMessage: `Hubungkan ARCOX ke ${agentName} saya.\nURL server: ${MCP_URL}\nToken: ${token}\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
       })
     } catch (e: any) {
       setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
@@ -435,7 +435,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const revokeAgent = async (agent: VaultAgent) => {
     if (!agent.agentKey || !sessionToken) return
-    if (!window.confirm(`${t('plugin.agentRevokeConfirm')}\\n\\n${agent.clientName || t('plugin.mcpAgent')}`)) return
+    if (!window.confirm(`${t('plugin.agentRevokeConfirm')}\n\n${agent.clientName || t('plugin.mcpAgent')}`)) return
     setAgentAction(`revoke:${agent.agentKey}`)
     setError(null)
     try {
