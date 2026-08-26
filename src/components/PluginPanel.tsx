@@ -491,7 +491,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const token = issued.token || ''
       setConnectionToken({
         ...issued,
-        setupMessage: `Hubungkan ARCOX ke ${agentName} saya.\nURL server: ${MCP_URL}\nToken: ${token}\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
+        setupMessage: `Hubungkan ARCOX ke ${agentName} saya.\nURL server: ${MCP_URL}\nToken: ${token}\nToken expires: ${issued.expiresAt || ''}\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
       })
     } catch (e: any) {
       setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
