@@ -18,10 +18,12 @@ export type VaultAgent = {
 }
 
 export type AgentActivityEntry = {
+  id?: string
   at: string | number
   type: string
   amount?: number | string
   detail?: string
+  data?: Record<string, unknown>
 }
 
 export type AgentConnectionToken = {
@@ -42,6 +44,14 @@ export type LinkedAgentCard = {
   maxPerTx?: number | string
   daily?: number | string
   linkedAt?: string
+}
+
+export type OwnerAgentCard = {
+  cardId: string
+  label?: string
+  last4?: string
+  maxPerTx?: number | string
+  daily?: number | string
 }
 
 function getPasskeyToken() {
@@ -86,6 +96,11 @@ function normalizeList<T>(data: any, field: string): T[] {
 /** Owner-scoped list of agents connected to this Agent Wallet. */
 export function listVaultAgents(authToken?: string): Promise<VaultAgent[]> {
   return api('/api/vault/agents', { method: 'GET' }, authToken).then(d => normalizeList<VaultAgent>(d, 'agents'))
+}
+
+/** Owner-visible masked cards available for manual agent linking. */
+export function listVaultCards(authToken?: string): Promise<OwnerAgentCard[]> {
+  return api('/api/vault/cards', { method: 'GET' }, authToken).then(d => normalizeList<OwnerAgentCard>(d, 'cards'))
 }
 
 /** Recent activity for one agent connection. */

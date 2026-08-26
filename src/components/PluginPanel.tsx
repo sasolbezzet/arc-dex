@@ -6,13 +6,15 @@ import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
-import { createAgentConnectionToken, listVaultAgents, revokeVaultAgent, type AgentConnectionToken, type VaultAgent } from '../vaultAgentsApi'
+import { createAgentConnectionToken, getAgentActivity, getAgentCards, linkCardToAgent, listVaultAgents, listVaultCards, revokeVaultAgent, unlinkCardFromAgent, type AgentActivityEntry, type AgentConnectionToken, type LinkedAgentCard, type OwnerAgentCard, type VaultAgent } from '../vaultAgentsApi'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
 type Limits = { maxPerTx: number; dailyLimit: number; autoApprove: boolean; whitelist: string[] }
 type Activity = { id: string; type: string; data: any; ts: number }
 type McpSession = { clientId: string; agent: string; connectedAt: number; lastActivity: number; active: boolean }
+type AgentDetails = { activity: AgentActivityEntry[]; cards: LinkedAgentCard[] }
+type AgentCardDraft = { cardId: string; maxPerTx: string; daily: string }
 type PendingTx = { txId: string; walletAddress: string; calls: Array<{ to: string; data: string; value: string }>; chainKey: string; paymaster: boolean; status: string; createdAt: number }
 
 const API = ''
@@ -179,6 +181,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [busy, setBusy] = useState<string | null>(null)
   const [destinationReady, setDestinationReady] = useState(false)
   const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([])
+  const [ownerCards, setOwnerCards] = useState<OwnerAgentCard[]>([])
+  const [agentDetails, setAgentDetails] = useState<Record<string, AgentDetails>>({})
+  const [agentCardDrafts, setAgentCardDrafts] = useState<Record<string, AgentCardDraft>>({})
   const [expandedAgentKey, setExpandedAgentKey] = useState<string | null>(null)
   const [connectionToken, setConnectionToken] = useState<AgentConnectionToken | null>(null)
   const [agentAction, setAgentAction] = useState<string | null>(null)
@@ -407,9 +412,71 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const refreshVaultAgents = async () => {
     if (!sessionToken) return
     try {
-      setVaultAgents(await listVaultAgents(sessionToken))
+      const [agents, cards] = await Promise.all([listVaultAgents(sessionToken), listVaultCards(sessionToken)])
+      setVaultAgents(agents)
+      setOwnerCards(cards)
     } catch (e: any) {
       if (!String(e?.message || '').includes('401')) setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    }
+  }
+
+  const refreshAgentDetails = async (agentKey: string) => {
+    if (!sessionToken) return
+    try {
+      const [activityRows, cards] = await Promise.all([getAgentActivity(agentKey, sessionToken), getAgentCards(agentKey, sessionToken)])
+      setAgentDetails(prev => ({ ...prev, [agentKey]: { activity: activityRows, cards } }))
+      setAgentCardDrafts(prev => {
+        if (prev[agentKey]) return prev
+        const first = ownerCards.find(card => !cards.some(link => link.cardId === card.cardId)) || ownerCards[0]
+        return {
+          ...prev,
+          [agentKey]: {
+            cardId: first?.cardId || '',
+            maxPerTx: String(first?.maxPerTx || ''),
+            daily: String(first?.daily || ''),
+          },
+        }
+      })
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    }
+  }
+
+  const toggleAgentDetails = (agentKey: string) => {
+    const next = expandedAgentKey === agentKey ? null : agentKey
+    setExpandedAgentKey(next)
+    if (next && !agentDetails[next]) void refreshAgentDetails(next)
+  }
+
+  const updateAgentCardDraft = (agentKey: string, patch: Partial<AgentCardDraft>) => {
+    setAgentCardDrafts(prev => ({ ...prev, [agentKey]: { ...(prev[agentKey] || { cardId: '', maxPerTx: '', daily: '' }), ...patch } }))
+  }
+
+  const linkAgentCard = async (agent: VaultAgent) => {
+    const draft = agentCardDrafts[agent.agentKey]
+    if (!draft?.cardId || !sessionToken) return
+    setAgentAction(`link:${agent.agentKey}`)
+    try {
+      await linkCardToAgent(agent.agentKey, { cardId: draft.cardId, maxPerTx: draft.maxPerTx, daily: draft.daily }, sessionToken)
+      await refreshAgentDetails(agent.agentKey)
+      await refreshVaultAgents()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const unlinkAgentCard = async (agent: VaultAgent, cardId: string) => {
+    if (!sessionToken) return
+    setAgentAction(`unlink:${agent.agentKey}:${cardId}`)
+    try {
+      await unlinkCardFromAgent(cardId, sessionToken)
+      await refreshAgentDetails(agent.agentKey)
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
     }
   }
 
@@ -454,6 +521,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (sessionToken) refreshVaultAgents()
     else {
       setVaultAgents([])
+      setOwnerCards([])
+      setAgentDetails({})
+      setAgentCardDrafts({})
       setExpandedAgentKey(null)
       setConnectionToken(null)
     }
@@ -1264,7 +1334,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             const expanded = expandedAgentKey === agent.agentKey
             return (
               <div key={agent.agentKey} style={{ padding: 10, background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 8, border: expanded ? '1px solid rgba(99,102,241,0.45)' : '1px solid transparent' }}>
-                <button type='button' onClick={() => setExpandedAgentKey(expanded ? null : agent.agentKey)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', background: 'transparent', border: 'none', color: '#e2e8f0', padding: 0, cursor: 'pointer' }}>
+                <button type='button' onClick={() => toggleAgentDetails(agent.agentKey)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', background: 'transparent', border: 'none', color: '#e2e8f0', padding: 0, cursor: 'pointer' }}>
                   <span>
                     <span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{agent.clientName || t('plugin.mcpAgent')}</span>
                     <span style={{ display: 'block', color: '#64748b', fontSize: 10, fontFamily: 'monospace', marginTop: 3 }}>{agent.walletAddress?.slice(0, 10)}...{agent.walletAddress?.slice(-6)}</span>
@@ -1275,6 +1345,46 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
                     <Row label={t('plugin.agentLastUsed')} value={agent.lastUsedAt ? fmtTime(Number(agent.lastUsedAt)) : '-'} />
                     <Row label={t('plugin.agentSpentToday')} value={agent.spentToday ?? '-'} />
+                    {agentDetails[agent.agentKey] ? (
+                      <>
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>{t('plugin.agentActivityTitle')}</div>
+                          {agentDetails[agent.agentKey].activity.length === 0 ? (
+                            <div style={{ color: '#64748b', fontSize: 11 }}>{t('plugin.agentNoActivity')}</div>
+                          ) : agentDetails[agent.agentKey].activity.map((entry, index) => (
+                            <div key={entry.id || `${entry.at}-${index}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 0', borderBottom: '1px solid rgba(30,30,46,0.7)', fontSize: 10 }}>
+                              <span style={{ color: '#cbd5e1' }}>{entry.type}{entry.detail ? ` · ${entry.detail}` : ''}</span>
+                              <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>{entry.amount ? `${entry.amount} USDC · ` : ''}{fmtTime(Number(entry.at))}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>{t('plugin.agentLinkedCardsTitle')}</div>
+                          {agentDetails[agent.agentKey].cards.length === 0 ? (
+                            <div style={{ color: '#64748b', fontSize: 11 }}>{t('plugin.agentNoLinkedCards')}</div>
+                          ) : agentDetails[agent.agentKey].cards.map(card => (
+                            <div key={card.cardId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 10 }}>
+                              <span style={{ color: '#cbd5e1' }}>{card.label || t('plugin.agentCardsTitle')} ···· {card.last4 || '????'}<br /><small style={{ color: '#64748b' }}>{card.maxPerTx || '∞'} / tx · {card.daily || '∞'} / day</small></span>
+                              <button type='button' className='mini-button' disabled={agentAction !== null} onClick={() => void unlinkAgentCard(agent, card.cardId)}>{agentAction === `unlink:${agent.agentKey}:${card.cardId}` ? '…' : t('plugin.unlink')}</button>
+                            </div>
+                          ))}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 5, marginTop: 6 }}>
+                            <select value={agentCardDrafts[agent.agentKey]?.cardId || ''} onChange={e => updateAgentCardDraft(agent.agentKey, { cardId: e.target.value })} style={{ minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px', fontSize: 10 }}>
+                              <option value=''>{t('plugin.agentPickCard')}</option>
+                              {ownerCards.map(card => <option key={card.cardId} value={card.cardId}>{card.label || t('plugin.agentCardsTitle')} ···· {card.last4 || '????'}</option>)}
+                            </select>
+                            <input value={agentCardDrafts[agent.agentKey]?.maxPerTx || ''} onChange={e => updateAgentCardDraft(agent.agentKey, { maxPerTx: e.target.value })} placeholder={t('plugin.agentMaxPerTxInput')} inputMode='decimal' style={{ minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px', fontSize: 10 }} />
+                            <input value={agentCardDrafts[agent.agentKey]?.daily || ''} onChange={e => updateAgentCardDraft(agent.agentKey, { daily: e.target.value })} placeholder={t('plugin.agentDailyInput')} inputMode='decimal' style={{ minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px', fontSize: 10 }} />
+                          </div>
+                          {ownerCards.length === 0 && <div style={{ color: '#64748b', fontSize: 10, marginTop: 5 }}>{t('plugin.agentNoOwnerCards')}</div>}
+                          <button type='button' onClick={() => void linkAgentCard(agent)} disabled={agentAction !== null || !agentCardDrafts[agent.agentKey]?.cardId} style={{ width: '100%', marginTop: 6, padding: 6, borderRadius: 6, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 10 }}>
+                            {agentAction === `link:${agent.agentKey}` ? t('plugin.agentLinkingCard') : t('plugin.agentLinkCardBtn')}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ color: '#64748b', fontSize: 10, marginTop: 8 }}>{t('plugin.pluginLoading')}</div>
+                    )}
                     <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                       <button type='button' onClick={() => void createConnectionToken(agent)} disabled={agentAction !== null} style={{ flex: 1, padding: 8, borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
                         {agentAction === `token:${agent.agentKey}` ? t('plugin.agentCreatingToken') : t('plugin.agentCreateToken')}
