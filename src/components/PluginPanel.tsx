@@ -6,6 +6,7 @@ import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
+import { createAgentConnectionToken, listVaultAgents, revokeVaultAgent, type AgentConnectionToken, type VaultAgent } from '../vaultAgentsApi'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
@@ -177,6 +178,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   })
   const [busy, setBusy] = useState<string | null>(null)
   const [destinationReady, setDestinationReady] = useState(false)
+  const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([])
+  const [expandedAgentKey, setExpandedAgentKey] = useState<string | null>(null)
+  const [connectionToken, setConnectionToken] = useState<AgentConnectionToken | null>(null)
+  const [agentAction, setAgentAction] = useState<string | null>(null)
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
 
@@ -398,6 +403,61 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     setLoading(false)
   }
+
+  const refreshVaultAgents = async () => {
+    if (!sessionToken) return
+    try {
+      setVaultAgents(await listVaultAgents(sessionToken))
+    } catch (e: any) {
+      if (!String(e?.message || '').includes('401')) setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    }
+  }
+
+  const createConnectionToken = async (agent: VaultAgent) => {
+    if (!agent.agentKey || !sessionToken) return
+    setAgentAction(`token:${agent.agentKey}`)
+    setConnectionToken(null)
+    setError(null)
+    try {
+      const issued = await createAgentConnectionToken(agent.agentKey, 90, sessionToken)
+      const agentName = issued.agentName || agent.clientName || t('plugin.mcpAgent')
+      const token = issued.token || ''
+      setConnectionToken({
+        ...issued,
+        setupMessage: `Hubungkan ARCOX ke ${agentName} saya.\\nURL server: ${MCP_URL}\\nToken: ${token}\\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
+      })
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const revokeAgent = async (agent: VaultAgent) => {
+    if (!agent.agentKey || !sessionToken) return
+    if (!window.confirm(`${t('plugin.agentRevokeConfirm')}\\n\\n${agent.clientName || t('plugin.mcpAgent')}`)) return
+    setAgentAction(`revoke:${agent.agentKey}`)
+    setError(null)
+    try {
+      await revokeVaultAgent(agent.agentKey, sessionToken)
+      if (expandedAgentKey === agent.agentKey) setExpandedAgentKey(null)
+      if (connectionToken) setConnectionToken(null)
+      await refreshVaultAgents()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  useEffect(() => {
+    if (sessionToken) refreshVaultAgents()
+    else {
+      setVaultAgents([])
+      setExpandedAgentKey(null)
+      setConnectionToken(null)
+    }
+  }, [sessionToken])
 
   // Auto-poll MCP sessions + approvals + pending txs every 8s for live status.
   // Approvals must be polled: an agent (ChatGPT/Claude) can create a pending
@@ -1191,6 +1251,59 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))
         )}
       </Section>
+
+      {/* Per-agent wallet connections: owner-only controls for token issuance and revoke. */}
+      <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : undefined}>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.agentConnectionsCopy')}</div>
+        {vaultAgents.length === 0 ? (
+          <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noVaultAgents')}</div>
+        ) : (
+          vaultAgents.map(agent => {
+            const clientId = agent.agentKey.split('|')[0]
+            const live = mcpSessions.some(session => session.active && session.clientId === clientId)
+            const expanded = expandedAgentKey === agent.agentKey
+            return (
+              <div key={agent.agentKey} style={{ padding: 10, background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 8, border: expanded ? '1px solid rgba(99,102,241,0.45)' : '1px solid transparent' }}>
+                <button type='button' onClick={() => setExpandedAgentKey(expanded ? null : agent.agentKey)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', background: 'transparent', border: 'none', color: '#e2e8f0', padding: 0, cursor: 'pointer' }}>
+                  <span>
+                    <span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{agent.clientName || t('plugin.mcpAgent')}</span>
+                    <span style={{ display: 'block', color: '#64748b', fontSize: 10, fontFamily: 'monospace', marginTop: 3 }}>{agent.walletAddress?.slice(0, 10)}...{agent.walletAddress?.slice(-6)}</span>
+                  </span>
+                  <StatusDot on={live} label={live ? t('plugin.agentStatusConnected') : t('plugin.idle')} />
+                </button>
+                {expanded && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+                    <Row label={t('plugin.agentLastUsed')} value={agent.lastUsedAt ? fmtTime(Number(agent.lastUsedAt)) : '-'} />
+                    <Row label={t('plugin.agentSpentToday')} value={agent.spentToday ?? '-'} />
+                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                      <button type='button' onClick={() => void createConnectionToken(agent)} disabled={agentAction !== null} style={{ flex: 1, padding: 8, borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                        {agentAction === `token:${agent.agentKey}` ? t('plugin.agentCreatingToken') : t('plugin.agentCreateToken')}
+                      </button>
+                      <button type='button' onClick={() => void revokeAgent(agent)} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                        {agentAction === `revoke:${agent.agentKey}` ? t('plugin.agentRevoking') : t('plugin.agentRevoke')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })
+        )}
+      </Section>
+
+      {connectionToken && (
+        <div role='dialog' aria-label={t('plugin.agentCreateToken')} className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14, border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.06)' }}>
+          <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{t('plugin.agentCreateToken')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>{t('plugin.agentTokenOnceNote')}</div>
+          <code style={{ display: 'block', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', padding: 8, borderRadius: 6, fontSize: 10, wordBreak: 'break-all', marginBottom: 8 }}>{connectionToken.token}</code>
+          <textarea readOnly value={connectionToken.setupMessage || ''} rows={5} style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', borderRadius: 6, padding: 8, fontSize: 11, lineHeight: 1.4 }} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button type='button' onClick={() => navigator.clipboard?.writeText(connectionToken.setupMessage || '').catch(() => setError(t('plugin.agentCopyFailed')))} style={{ flex: 1, padding: 8, borderRadius: 6, border: 'none', background: '#10b981', color: '#052e16', fontWeight: 700, cursor: 'pointer', fontSize: 11 }}>{t('common.copy')}</button>
+            <button type='button' onClick={() => setConnectionToken(null)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#cbd5e1', cursor: 'pointer', fontSize: 11 }}>{t('plugin.agentTokenDone')}</button>
+          </div>
+          {connectionToken.expiresAt && <div style={{ color: '#64748b', fontSize: 10, marginTop: 8 }}>{t('plugin.agentTokenExpires', { date: fmtTime(new Date(connectionToken.expiresAt).getTime()) })}</div>}
+        </div>
+      )}
 
       {/* Approvals — pending only */}
       <Section title={t('plugin.approvals')} badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{t('plugin.waitingCount', { count: approvals.filter(a => a.status === 'pending').length })}</span> : undefined}>
