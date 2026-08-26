@@ -93,6 +93,14 @@ function normalizeList<T>(data: any, field: string): T[] {
   return Array.isArray(data?.[field]) ? data[field] : []
 }
 
+/** Create the first owner-scoped connection-token agent from an active MSCA session. */
+export function createBootstrapConnectionToken(clientName = 'Hermes Agent', ttlDays = 90, authToken?: string): Promise<AgentConnectionToken & { agentKey: string }> {
+  return api('/api/vault/agents/bootstrap-connection-token', {
+    method: 'POST',
+    body: JSON.stringify({ clientName, ttlDays }),
+  }, authToken)
+}
+
 /** Owner-scoped list of agents connected to this Agent Wallet. */
 export function listVaultAgents(authToken?: string): Promise<VaultAgent[]> {
   return api('/api/vault/agents', { method: 'GET' }, authToken).then(d => normalizeList<VaultAgent>(d, 'agents'))

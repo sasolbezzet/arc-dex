@@ -6,7 +6,7 @@ import { MultiChainBalances } from './MultiChainBalances'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
-import { createAgentConnectionToken, getAgentActivity, getAgentCards, linkCardToAgent, listVaultAgents, listVaultCards, revokeVaultAgent, unlinkCardFromAgent, type AgentActivityEntry, type AgentConnectionToken, type LinkedAgentCard, type OwnerAgentCard, type VaultAgent } from '../vaultAgentsApi'
+import { createAgentConnectionToken, createBootstrapConnectionToken, getAgentActivity, getAgentCards, linkCardToAgent, listVaultAgents, listVaultCards, revokeVaultAgent, unlinkCardFromAgent, type AgentActivityEntry, type AgentConnectionToken, type LinkedAgentCard, type OwnerAgentCard, type VaultAgent } from '../vaultAgentsApi'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
@@ -116,6 +116,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // passkey identity as the loopback flow without any redirect URL.
   const [deviceUserCode, setDeviceUserCode] = useState<string | null>(null)
   const [deviceClientName, setDeviceClientName] = useState<string>('')
+  // Device approval must make the wallet target explicit. The Passkey result
+  // is still the source of truth; this choice is checked against it below.
+  const [deviceWalletChoice, setDeviceWalletChoice] = useState<string>('new')
   // OAuth approval has two deliberate signing steps: the passkey binds the
   // Agent Wallet, then the connected EOA signs SIWE for the MCP identity. Keep
   // these phases separate so the UI never says "wallet" while WebAuthn is open.
@@ -131,6 +134,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const deviceMessageHexRef = useRef('')
   const deviceMscaWalletRef = useRef('')
   const deviceMscaTokenRef = useRef('')
+  const deviceWalletChoiceInitialized = useRef(false)
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
@@ -187,6 +191,33 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [expandedAgentKey, setExpandedAgentKey] = useState<string | null>(null)
   const [connectionToken, setConnectionToken] = useState<AgentConnectionToken | null>(null)
   const [agentAction, setAgentAction] = useState<string | null>(null)
+  const [bootstrapAgentName, setBootstrapAgentName] = useState('Hermes Agent')
+
+  // Load owner-visible bindings when a device approval is opened in a fresh
+  // tab. This is cosmetic discovery only; every selected wallet is verified by
+  // the Passkey ceremony and backend session check before approval.
+  useEffect(() => {
+    if (!deviceUserCode) {
+      deviceWalletChoiceInitialized.current = false
+      setDeviceWalletChoice('new')
+      return
+    }
+    if (!deviceWalletChoiceInitialized.current) {
+      deviceWalletChoiceInitialized.current = true
+      setDeviceWalletChoice(mscaState.walletAddress || 'new')
+    }
+    const token = localStorage.getItem('arx_passkey_vault_token') || localStorage.getItem('arx_vault_token') || ''
+    if (token) void listVaultAgents(token).then(setVaultAgents).catch(() => {})
+  }, [deviceUserCode, mscaState.walletAddress])
+
+  const deviceWalletOptions = Array.from(new Map([
+    ...(mscaState.walletAddress ? [{ walletAddress: mscaState.walletAddress, agents: [] as VaultAgent[] }] : []),
+    ...vaultAgents.map(agent => ({ walletAddress: agent.walletAddress, agents: [agent] })),
+  ].filter(item => item.walletAddress).map(item => {
+    const key = item.walletAddress.toLowerCase()
+    const existing = (vaultAgents.filter(agent => agent.walletAddress.toLowerCase() === key))
+    return [key, { walletAddress: item.walletAddress, agents: existing }]
+  })).values())
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
 
@@ -493,6 +524,26 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         ...issued,
         setupMessage: `Hubungkan ARCOX ke ${agentName} saya.\nURL server: ${MCP_URL}\nToken: ${token}\nToken expires: ${issued.expiresAt || ''}\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
       })
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const createBootstrapToken = async () => {
+    if (!sessionToken) return
+    const clientName = bootstrapAgentName.trim() || 'Hermes Agent'
+    setAgentAction('bootstrap-token')
+    setConnectionToken(null)
+    setError(null)
+    try {
+      const issued = await createBootstrapConnectionToken(clientName, 90, sessionToken)
+      setConnectionToken({
+        ...issued,
+        setupMessage: `Hubungkan ARCOX ke ${clientName}.\nURL server: ${MCP_URL}\nToken: ${issued.token}\nToken expires: ${issued.expiresAt || ''}\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
+      })
+      await refreshVaultAgents()
     } catch (e: any) {
       setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
     } finally {
@@ -1019,6 +1070,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // Fresh WebAuthn ceremony every pairing — never trust stale localStorage.
       let oauthMscaWalletAddress = ''
       let oauthMscaSessionToken = ''
+      let deviceSessionData: any = null
       let sessionVerified = false
       for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
         setOauthStatus('passkey')
@@ -1033,6 +1085,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         )
         oauthMscaWalletAddress = passkey.walletAddress
         oauthMscaSessionToken = passkey.sessionToken
+        const selectedWallet = deviceWalletChoice !== 'new' ? deviceWalletChoice.toLowerCase() : ''
+        if (selectedWallet && oauthMscaWalletAddress.toLowerCase() !== selectedWallet) {
+          throw new Error(`Passkey memilih wallet ${oauthMscaWalletAddress.slice(0, 10)}...${oauthMscaWalletAddress.slice(-6)}, bukan wallet yang dipilih.`)
+        }
         await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken)
         setOauthStatus('checking')
         const sessionResponse = await withTimeout(
@@ -1041,11 +1097,25 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           t('plugin.passkeySessionTimeout'),
         )
         const sessionData = await sessionResponse.json().catch(() => ({}))
+        deviceSessionData = sessionData
         sessionVerified = sessionResponse.ok
           && sessionData?.session?.active === true
           && String(sessionData?.session?.walletAddress || '').toLowerCase() === oauthMscaWalletAddress.toLowerCase()
       }
       if (!sessionVerified) throw new Error(t('plugin.agentWalletInactive'))
+
+      // Device approval is a full Agent Wallet login too. Persist the exact
+      // passkey/MSCA token before completing SIWE so the owner page can reload,
+      // list the new binding, and manage it after the approval card disappears.
+      localStorage.setItem('arx_vault_token', oauthMscaSessionToken)
+      localStorage.setItem('arx_passkey_vault_token', oauthMscaSessionToken)
+      setSessionToken(oauthMscaSessionToken)
+      persistMscaState(prev => ({
+        walletAddress: oauthMscaWalletAddress,
+        delegateAddress: deviceSessionData?.session?.delegateAddress || prev.delegateAddress || '',
+        sessionActive: true,
+        deployed: true,
+      }))
 
       // SIWE challenge bound to the device grant.
       const msgResp = await withTimeout(fetch(`${API}/api/auth/device/message`, {
@@ -1132,6 +1202,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
+  const approveSelectedDevice = () => {
+    const selectedOption = deviceWalletChoice === 'new'
+      ? null
+      : deviceWalletOptions.find(option => option.walletAddress.toLowerCase() === deviceWalletChoice.toLowerCase())
+    const usedBy = selectedOption?.agents.map(agent => agent.clientName || t('plugin.mcpAgent')).filter(Boolean) || []
+    const target = deviceWalletChoice === 'new'
+      ? 'Agent Wallet baru dengan Passkey baru'
+      : `Agent Wallet ${deviceWalletChoice.slice(0, 10)}...${deviceWalletChoice.slice(-6)}`
+    const warning = usedBy.length ? `\nWallet ini sudah dipakai oleh: ${usedBy.join(', ')}.` : ''
+    if (!window.confirm(`Setujui ${deviceClientName || t('plugin.mcpAgent')} memakai ${target}?${warning}\n\nPastikan kode device berasal dari agent yang Anda minta.`)) return
+    void approveDevice(deviceWalletChoice === 'new' ? 'Register' : 'Login')
+  }
+
   // Wallet utama adalah identitas Plugin. Tidak ada login kedua di sini.
   if (!address) return (
     <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
@@ -1168,14 +1251,33 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
           {error && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 10 }}>{error}</div>}
           {(oauthStatus === 'idle' || oauthStatus === 'error') && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type='button' onClick={() => approveDevice('Login')} style={{ flex: 1, padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
-                Setujui dengan Passkey
+            <>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 6 }}>Pilih Agent Wallet untuk agent ini:</div>
+              <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+                {deviceWalletOptions.map(option => {
+                  const usedBy = option.agents.map(agent => agent.clientName || t('plugin.mcpAgent')).filter(Boolean)
+                  const selected = deviceWalletChoice.toLowerCase() === option.walletAddress.toLowerCase()
+                  return (
+                    <label key={option.walletAddress} style={{ display: 'block', padding: 8, borderRadius: 7, border: `1px solid ${selected ? 'rgba(99,102,241,0.7)' : '#1e1e2e'}`, background: selected ? 'rgba(99,102,241,0.12)' : 'rgba(18,18,26,0.45)', cursor: 'pointer' }}>
+                      <input type='radio' name='device-agent-wallet' checked={selected} onChange={() => setDeviceWalletChoice(option.walletAddress)} />
+                      <span style={{ marginLeft: 6, color: '#e2e8f0', fontSize: 11 }}>Agent Wallet {option.walletAddress.slice(0, 10)}...{option.walletAddress.slice(-6)}</span>
+                      <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px', fontFamily: 'monospace' }}>{usedBy.length ? `Dipakai oleh: ${usedBy.join(', ')}` : 'Belum dipakai agent lain'}</span>
+                    </label>
+                  )
+                })}
+                <label style={{ display: 'block', padding: 8, borderRadius: 7, border: `1px solid ${deviceWalletChoice === 'new' ? 'rgba(16,185,129,0.7)' : '#1e1e2e'}`, background: deviceWalletChoice === 'new' ? 'rgba(16,185,129,0.1)' : 'rgba(18,18,26,0.45)', cursor: 'pointer' }}>
+                  <input type='radio' name='device-agent-wallet' checked={deviceWalletChoice === 'new'} onChange={() => setDeviceWalletChoice('new')} />
+                  <span style={{ marginLeft: 6, color: '#e2e8f0', fontSize: 11 }}>Buat Agent Wallet baru</span>
+                  <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px' }}>Passkey baru, alamat baru, dana tidak berpindah otomatis.</span>
+                </label>
+              </div>
+              {deviceWalletChoice !== 'new' && deviceWalletOptions.find(option => option.walletAddress.toLowerCase() === deviceWalletChoice.toLowerCase())?.agents.length ? (
+                <div style={{ color: '#f59e0b', fontSize: 10, marginBottom: 10, padding: '6px 8px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>Wallet ini sudah dipakai agent lain. Pastikan itu memang pilihan Anda.</div>
+              ) : null}
+              <button type='button' onClick={approveSelectedDevice} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
+                {deviceWalletChoice === 'new' ? 'Buat Agent Wallet baru + Setujui' : 'Setujui wallet terpilih dengan Passkey'}
               </button>
-              <button type='button' onClick={() => approveDevice('Register')} style={{ flex: 1, padding: 12, borderRadius: 8, border: '1px solid #6366f1', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>
-                Passkey Baru
-              </button>
-            </div>
+            </>
           )}
           {oauthStatus === 'passkey' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
           {oauthStatus === 'checking' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
@@ -1326,7 +1428,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : undefined}>
         <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.agentConnectionsCopy')}</div>
         {vaultAgents.length === 0 ? (
-          <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noVaultAgents')}</div>
+          <div>
+            <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>{t('plugin.noVaultAgents')}</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input value={bootstrapAgentName} onChange={e => setBootstrapAgentName(e.target.value)} placeholder='Nama agent' aria-label='Nama agent' style={{ flex: 1, minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '8px', fontSize: 11 }} />
+              <button type='button' onClick={() => void createBootstrapToken()} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                {agentAction === 'bootstrap-token' ? t('plugin.agentCreatingToken') : t('plugin.agentCreateToken')}
+              </button>
+            </div>
+          </div>
         ) : (
           vaultAgents.map(agent => {
             const clientId = agent.agentKey.split('|')[0]

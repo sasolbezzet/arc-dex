@@ -35,3 +35,5 @@ arcox-agent/solana-router/target/
 arcox-agent/solana-router/programs/*/target/
 arcox-agent/.arcox-auto-mint/
 arcox-agent/.arcox-agent-history.json
+debug-wallet*.mjs
+arcox-e2e.mjs
