@@ -551,6 +551,25 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
+  const loginAgent = async (agent: VaultAgent) => {
+    if (!agent.agentKey) return
+    setAgentAction(`login:${agent.agentKey}`)
+    setError(null)
+    try {
+      const result = await loginPasskey(agent.agentKey)
+      setSessionToken(result.sessionToken)
+      localStorage.setItem('arx_vault_token', result.sessionToken)
+      localStorage.setItem('arx_passkey_vault_token', result.sessionToken)
+      setMscaState(prev => ({ ...prev, walletAddress: result.walletAddress, sessionActive: false }))
+      await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
+      await refreshVaultAgents()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultLoginFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
   const revokeAgent = async (agent: VaultAgent) => {
     if (!agent.agentKey || !sessionToken) return
     if (!window.confirm(`${t('plugin.agentRevokeConfirm')}\n\n${agent.clientName || t('plugin.mcpAgent')}`)) return
@@ -1498,6 +1517,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                     <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                       <button type='button' onClick={() => void createConnectionToken(agent)} disabled={agentAction !== null} style={{ flex: 1, padding: 8, borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
                         {agentAction === `token:${agent.agentKey}` ? t('plugin.agentCreatingToken') : t('plugin.agentCreateToken')}
+                      </button>
+                      <button type='button' onClick={() => void loginAgent(agent)} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(16,185,129,0.35)', background: 'rgba(16,185,129,0.1)', color: '#86efac', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                        {agentAction === `login:${agent.agentKey}` ? '…' : 'Login Passkey'}
                       </button>
                       <button type='button' onClick={() => void revokeAgent(agent)} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
                         {agentAction === `revoke:${agent.agentKey}` ? t('plugin.agentRevoking') : t('plugin.agentRevoke')}

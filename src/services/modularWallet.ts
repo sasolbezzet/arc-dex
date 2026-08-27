@@ -232,13 +232,13 @@ function registrationUsername() {
  * browser assertion is sent to the backend, which performs the one and only
  * rp_get*Verification call and returns the verified public key.
  */
-async function freshPasskeyOptions(mode: PasskeyMode) {
+async function freshPasskeyOptions(mode: PasskeyMode, agentKey = '') {
   ensurePasskeyEnvironment()
   const username = mode === 'Register' ? registrationUsername() : ''
   const response = await fetch(`${API}/api/auth/passkey-options`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, username }),
+    body: JSON.stringify({ mode, username, ...(agentKey ? { agentKey } : {}) }),
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok || !data.success || !data.flowId || !data.options?.challenge) {
@@ -305,11 +305,11 @@ function registrationPublicKeyOptions(options: any) {
   }
 }
 
-async function verifyPasskeyWithBackend(rawCredential: any, mode: PasskeyMode, flowId: string) {
+async function verifyPasskeyWithBackend(rawCredential: any, mode: PasskeyMode, flowId: string, agentKey = '') {
   const response = await fetch(`${API}/api/auth/passkey-login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ credential: serializeWebAuthnCredential(rawCredential), mode, flowId }),
+    body: JSON.stringify({ credential: serializeWebAuthnCredential(rawCredential), mode, flowId, ...(agentKey ? { agentKey } : {}) }),
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok || !data.success || !data.token || !data.credential?.publicKey || !data.address) {
@@ -705,17 +705,17 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
 }
 
 // ── Login with existing passkey ──
-export async function loginPasskey(): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
+export async function loginPasskey(agentKey = ''): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
   const state = loadState()
   return runPasskeyOperation(async () => {
     try {
-      const { options, flowId } = await freshPasskeyOptions('Login')
+      const { options, flowId } = await freshPasskeyOptions('Login', agentKey)
       const rawCredential = await navigator.credentials.get({
         publicKey: loginPublicKeyOptions(options),
       }) as any
       if (!rawCredential) throw new Error('No credential available.')
-      const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId)
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId, agentKey)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
