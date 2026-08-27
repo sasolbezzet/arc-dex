@@ -48,8 +48,8 @@ function cleanupWalletConnectInBackground(t: ReturnType<typeof useI18n>['t']) {
   ).catch(() => {})
 }
 
-const Section = ({ title, children, badge }: { title: string; children: React.ReactNode; badge?: React.ReactNode }) => (
-  <div className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14 }}>
+const Section = ({ title, children, badge, style }: { title: string; children: React.ReactNode; badge?: React.ReactNode; style?: React.CSSProperties }) => (
+  <div className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14, ...style }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
       <span style={{ fontWeight: 600, fontSize: 14, color: '#e2e8f0' }}>{title}</span>
       {badge}
@@ -851,6 +851,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const chatgptConnected = mcpSessions.some(s => s.active && s.agent?.includes('chatgpt'))
   const claudeConnected = mcpSessions.some(s => s.active && s.agent?.includes('claude'))
   const anyConnected = mcpSessions.some(s => s.active)
+  // Onboarding progress: brand-new users need wallet first, then an agent,
+  // then live MCP traffic — same three states drive the stepper card.
+  const walletReady = Boolean(mscaState.walletAddress)
+  const agentsReady = vaultAgents.length > 0
+  const scrollToAgentConnect = () => document.getElementById('arx-agent-connect')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   // ── OAuth approve flow: passkey → sign SIWE → get auth code → redirect ──
   // The caller chooses Login for an existing user or Register for a new user;
   // WebAuthn must never guess which browser ceremony the user intended.
@@ -1239,8 +1244,55 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {error && <div style={{ color: '#f87171', fontSize: 12, padding: 10, background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>{error}</div>}
 
+      {/* Onboarding stepper — guides a brand-new user until the first live MCP session */}
+      {!anyConnected && (
+        <div className='glass' style={{ borderRadius: 12, padding: 16, marginBottom: 14, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.06)', order: -50 }}>
+          <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700 }}>🚀 Mulai di sini</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 12px' }}>Tiga langkah sampai agent-mu bisa memakai Agent Wallet.</div>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 14 }}>{walletReady ? '✅' : '1️⃣'}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>Aktifkan Agent Wallet</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
+                {walletReady
+                  ? <>Wallet aktif: <code style={{ fontFamily: 'monospace', fontSize: 10 }}>{mscaState.walletAddress?.slice(0, 10)}…{mscaState.walletAddress?.slice(-6)}</code></>
+                  : 'Passkey pribadimu menjadi kunci Agent Wallet pintar (MSCA) — tanpa seed phrase.'}
+              </div>
+            </div>
+            {!walletReady && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button className='btn btn-primary' disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>🆕 Buat Wallet</button>
+                <button className='btn' disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>🔑 Masuk Passkey</button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 14 }}>{agentsReady ? '✅' : '2️⃣'}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>Daftarkan agent di Agent Terhubung</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
+                {agentsReady
+                  ? `${vaultAgents.length} agent terdaftar — setiap agent punya wallet sendiri.`
+                  : 'Satu agent = satu wallet terpisah: Hermes, Claude, ChatGPT, dll.'}
+              </div>
+            </div>
+            <button type='button' onClick={scrollToAgentConnect} style={{ alignSelf: 'center', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: 11 }}>↓ Buka daftar agent</button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8 }}>
+            <span style={{ fontSize: 14 }}>3️⃣</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>Hubungkan MCP</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>Hermes: tempel token koneksi di konfigurasi MCP-nya. Claude / ChatGPT: setujui OAuth saat mereka membuka halaman ini.</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Claude/ChatGPT OAuth approval remains available only for an OAuth callback. */}
-      {oauthParams ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+      {oauthParams ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)', order: -69 }}>
         <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🔐 Otorisasi Claude / ChatGPT</div>
         <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>Setujui koneksi yang diminta oleh Claude atau ChatGPT. Flow ini terpisah dari token koneksi Hermes.</div>
         {(oauthStatus === 'idle' || oauthStatus === 'error') && <button type='button' onClick={() => void approveOAuth()} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Setujui koneksi Claude / ChatGPT</button>}
@@ -1252,7 +1304,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </div> : null}
 
       {/* Legacy device authorization UI disabled. */}
-      {deviceUserCode ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+      {deviceUserCode ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)', order: -70 }}>
           <div style={{ textAlign: 'center', marginBottom: 16 }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>🖥️</div>
             <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Hubungkan Agent (Device Code)</div>
@@ -1403,8 +1455,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
       {/* Per-agent wallet connections: owner-only controls for token issuance and revoke. */}
       <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : undefined}>
+        <div id='arx-agent-connect'></div>
         <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.agentConnectionsCopy')}</div>
         {vaultAgents.length === 0 ? (
+          !walletReady ? (
+            <div>
+              <div style={{ color: '#fbbf24', fontSize: 12, lineHeight: 1.5, padding: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, marginBottom: 10 }}>
+                Belum ada Agent Wallet aktif. Selesaikan langkah 1 dulu — tanpa wallet aktif, token koneksi tidak bisa dibuat.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>🆕 Buat Agent Wallet</button>
+                <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>🔑 Masuk Passkey</button>
+              </div>
+            </div>
+          ) : (
           <div>
             <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>{t('plugin.noVaultAgents')}</div>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -1414,8 +1478,21 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               </button>
             </div>
           </div>
-        ) : (
-          vaultAgents.map(agent => {
+          )
+        ) : ([
+          <div key='arx-wallet-list' style={{ padding: '8px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8, marginBottom: 10 }}>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>Daftar wallet agent</div>
+            {deviceWalletOptions.map(option => {
+              const names = option.agents.map(a => a.clientName || t('plugin.mcpAgent'))
+              return (
+                <div key={option.walletAddress} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid rgba(30,30,46,0.7)' }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#cbd5e1' }}>{option.walletAddress.slice(0, 10)}…{option.walletAddress.slice(-6)}</span>
+                  <span style={{ color: '#64748b', fontSize: 10, textAlign: 'right' }}>{names.length ? names.join(', ') : 'aktif di browser ini'}</span>
+                </div>
+              )
+            })}
+          </div>,
+          ...vaultAgents.map(agent => {
             const clientId = agent.agentKey.split('|')[0]
             const live = mcpSessions.some(session => session.active && session.clientId === clientId)
             const expanded = expandedAgentKey === agent.agentKey
@@ -1424,12 +1501,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 <button type='button' onClick={() => toggleAgentDetails(agent.agentKey)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', background: 'transparent', border: 'none', color: '#e2e8f0', padding: 0, cursor: 'pointer' }}>
                   <span>
                     <span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{agent.clientName || t('plugin.mcpAgent')}</span>
-                    <span style={{ display: 'block', color: '#64748b', fontSize: 10, fontFamily: 'monospace', marginTop: 3 }}>{agent.walletAddress?.slice(0, 10)}...{agent.walletAddress?.slice(-6)}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
+                      <span style={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace' }}>{agent.walletAddress?.slice(0, 8)}…{agent.walletAddress?.slice(-6)}</span>
+                      <span role='button' aria-label='Salin alamat wallet agent' onClick={e => { e.stopPropagation(); navigator.clipboard?.writeText(agent.walletAddress || '').catch(() => {}) }} style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>📋</span>
+                    </span>
                   </span>
                   <StatusDot on={live} label={live ? t('plugin.agentStatusConnected') : t('plugin.idle')} />
                 </button>
                 {expanded && (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+                    <Row label='Agent Wallet' value={<span style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>{agent.walletAddress}</span>} />
                     <Row label={t('plugin.agentLastUsed')} value={agent.lastUsedAt ? fmtTime(Number(agent.lastUsedAt)) : '-'} />
                     <Row label={t('plugin.agentSpentToday')} value={agent.spentToday ?? '-'} />
                     {agentDetails[agent.agentKey] ? (
@@ -1487,8 +1568,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 )}
               </div>
             )
-          })
-        )}
+          }),
+          ])}
       </Section>
 
       {connectionToken && (
@@ -1579,7 +1660,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Agent Wallet (MSCA + Passkey) */}
-      <Section title={t('plugin.agentWallet')} badge={
+      <Section title={t('plugin.agentWallet')} style={{ order: -40 }} badge={
         mscaState.walletAddress
           ? (mscaState.sessionActive ? <StatusDot on={true} label={mscaState.deployed ? t('plugin.deployedActive') : t('plugin.sessionActive')} /> : <StatusDot on={false} label={t('plugin.sessionInactive')} />)
           : undefined
@@ -1674,7 +1755,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
       {/* Multi-chain Agent Wallet Balances */}
       {mscaState.walletAddress && (
-        <Section title={t('plugin.multiBalances')}>
+        <Section title={t('plugin.multiBalances')} style={{ order: -39 }}>
           <MultiChainBalances walletAddress={mscaState.walletAddress} />
         </Section>
       )}
