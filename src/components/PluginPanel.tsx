@@ -21,8 +21,6 @@ const API = ''
 // Use the public web origin in the user-facing setup instructions. Vercel
 // forwards this route to the non-Vercel backend without exposing its VPS URL.
 const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
-const SERVER_URL = 'https://arcoxdex.vercel.app'
-const AUTH_URL = `${SERVER_URL}/api/auth/authorize`
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -109,13 +107,13 @@ async function siweLogin(address: string, t: ReturnType<typeof useI18n>['t']): P
 
 export function PluginPanel({ address, circleWallet, solanaAddress }: { address: string | null; circleWallet: { id: string; address: string } | null; solanaAddress: string | null }) {
   const { t } = useI18n()
-  // ── OAuth callback params (from ChatGPT/Claude redirect) ──
-  const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
+  // OAuth/device authorization is intentionally hidden from the user-facing Hermes flow; connection tokens are the supported path.
+  const [oauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
   // RFC 8628 device pairing (Hermes on a headless VPS): the agent shows a
   // short user code that the user enters here; approval binds the same SIWE +
   // passkey identity as the loopback flow without any redirect URL.
-  const [deviceUserCode, setDeviceUserCode] = useState<string | null>(null)
-  const [deviceClientName, setDeviceClientName] = useState<string>('')
+  const [deviceUserCode] = useState<string | null>(null)
+  const [deviceClientName] = useState<string>('')
   // Device approval must make the wallet target explicit. The Passkey result
   // is still the source of truth; this choice is checked against it below.
   const [deviceWalletChoice, setDeviceWalletChoice] = useState<string>('new')
@@ -123,7 +121,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Agent Wallet, then the connected EOA signs SIWE for the MCP identity. Keep
   // these phases separate so the UI never says "wallet" while WebAuthn is open.
   const [oauthStatus, setOauthStatus] = useState<'idle' | 'passkey' | 'checking' | 'wallet' | 'approving' | 'done' | 'error'>('idle')
-  const [oauthPasskeyMode, setOauthPasskeyMode] = useState<'Login' | 'Register'>('Login')
+  const [, setOauthPasskeyMode] = useState<'Login' | 'Register'>('Login')
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const oauthAttempt = useRef(0)
@@ -138,23 +136,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
-    if (p.get('auth') === 'mcp' && p.get('request_id') && p.get('client_id') && p.get('redirect_uri')) {
-      setOauthParams({
-        request_id: p.get('request_id') || '',
-        client_id: p.get('client_id') || '',
-        redirect_uri: p.get('redirect_uri') || '',
-        state: p.get('state') || '',
-        code_challenge: p.get('code_challenge') || '',
-      })
-    }
-    if (p.get('auth') === 'device' && p.get('user_code')) {
-      const userCode = p.get('user_code') || ''
-      setDeviceUserCode(userCode)
-      fetch(`${API}/api/auth/device/status?user_code=${encodeURIComponent(userCode)}`)
-        .then(r => r.json())
-        .then(d => { if (d?.clientName) setDeviceClientName(String(d.clientName)) })
-        .catch(() => { /* status is cosmetic; approve reports real errors */ })
-    }
     // Deep-link from the AI agent: /plugin?tab=approvals&approval=<id>
     // Highlight the referenced approval so the user lands right on it.
     if (p.get('approval')) {
@@ -522,7 +503,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const token = issued.token || ''
       setConnectionToken({
         ...issued,
-        setupMessage: `Hubungkan ARCOX ke ${agentName} saya.\nURL server: ${MCP_URL}\nToken: ${token}\nToken expires: ${issued.expiresAt || ''}\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
+        setupMessage: `Hubungkan Hermes ke Agent Wallet ${agentName} saya.\nURL MCP: ${MCP_URL}\nToken akses Hermes: ${token}\nToken ini hanya memberi akses ke agent/wallet ini dan berlaku sampai: ${issued.expiresAt || ''}\nDi Hermes jalankan: hermes mcp add arcox --url ${MCP_URL} --auth header\nSaat diminta, tempel Token akses Hermes ini. Lalu jalankan: hermes mcp test arcox\nJangan gunakan token ini untuk agent lain.`,
       })
     } catch (e: any) {
       setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
@@ -541,7 +522,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const issued = await createBootstrapConnectionToken(clientName, 90, sessionToken)
       setConnectionToken({
         ...issued,
-        setupMessage: `Hubungkan ARCOX ke ${clientName}.\nURL server: ${MCP_URL}\nToken: ${issued.token}\nToken expires: ${issued.expiresAt || ''}\nSetelah menambahkan, verifikasi dengan list tools lalu beri tahu saya untuk mulai sesi baru.`,
+        setupMessage: `Hubungkan Hermes ke Agent Wallet saya (${clientName}).\nURL MCP: ${MCP_URL}\nToken akses Hermes: ${issued.token}\nToken ini hanya memberi akses ke agent/wallet ini dan berlaku sampai: ${issued.expiresAt || ''}\nDi Hermes jalankan: hermes mcp add arcox --url ${MCP_URL} --auth header\nSaat diminta, tempel Token akses Hermes ini. Lalu jalankan: hermes mcp test arcox\nJangan gunakan token ini untuk agent lain.`,
       })
       await refreshVaultAgents()
     } catch (e: any) {
@@ -577,6 +558,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setError(null)
     try {
       await revokeVaultAgent(agent.agentKey, sessionToken)
+      // Revoke is scoped to the selected agent. If this browser is currently
+      // using that exact Agent Wallet, clear its local session too so the UI
+      // cannot appear active after the backend has revoked it.
+      if (agent.walletAddress && mscaState.walletAddress && agent.walletAddress.toLowerCase() === mscaState.walletAddress.toLowerCase()) {
+        localStorage.removeItem('arx_vault_token')
+        localStorage.removeItem('arx_passkey_vault_token')
+        setSessionToken(null)
+        setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '' }))
+      }
       if (expandedAgentKey === agent.agentKey) setExpandedAgentKey(null)
       if (connectionToken) setConnectionToken(null)
       await refreshVaultAgents()
@@ -864,6 +854,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // ── OAuth approve flow: passkey → sign SIWE → get auth code → redirect ──
   // The caller chooses Login for an existing user or Register for a new user;
   // WebAuthn must never guess which browser ceremony the user intended.
+  /* Legacy OAuth callback handler retained for protocol compatibility; user-facing Hermes onboarding uses Agent Terhubung tokens. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const approveOAuth = async (passkeyMode: 'Login' | 'Register' = 'Login') => {
     setOauthPasskeyMode(passkeyMode)
     if (!address || !oauthParams) return
@@ -1247,9 +1239,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {error && <div style={{ color: '#f87171', fontSize: 12, padding: 10, background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>{error}</div>}
 
-      {/* RFC 8628 device pairing approval (Hermes headless agent) */}
-      {deviceUserCode && (
-        <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+      {/* Claude/ChatGPT OAuth approval remains available only for an OAuth callback. */}
+      {oauthParams ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+        <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🔐 Otorisasi Claude / ChatGPT</div>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>Setujui koneksi yang diminta oleh Claude atau ChatGPT. Flow ini terpisah dari token koneksi Hermes.</div>
+        {(oauthStatus === 'idle' || oauthStatus === 'error') && <button type='button' onClick={() => void approveOAuth()} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Setujui koneksi Claude / ChatGPT</button>}
+        {oauthStatus === 'passkey' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
+        {oauthStatus === 'checking' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
+        {oauthStatus === 'wallet' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menunggu tanda tangan wallet…</div>}
+        {oauthStatus === 'approving' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menyetujui…</div>}
+        {oauthStatus === 'done' && <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 600 }}>✓ Claude/ChatGPT terhubung. Kembali ke aplikasi agent.</div>}
+      </div> : null}
+
+      {/* Legacy device authorization UI disabled. */}
+      {deviceUserCode ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
           <div style={{ textAlign: 'center', marginBottom: 16 }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>🖥️</div>
             <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Hubungkan Agent (Device Code)</div>
@@ -1315,63 +1318,25 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               ✓ Perangkat terhubung. Kembali ke terminal Hermes.
             </div>
           )}
-        </div>
-      )}
+        </div> : null}
 
-      {/* OAuth approval modal (from ChatGPT/Claude) */}
-      {oauthParams && (
-        <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
-          <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>🔌</div>
-            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{t('plugin.mcpConnectionRequest')}</div>
-            <div style={{ color: '#94a3b8', fontSize: 12 }}>{t('plugin.agentConnectionRequest')}</div>
-          </div>
-          <div style={{ background: 'rgba(18,18,26,0.6)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>{t('plugin.agent')}:</div>
-            <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{oauthParams.client_id.startsWith('arcox_') ? 'ChatGPT / Claude' : oauthParams.client_id}</div>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 8, marginBottom: 4 }}>{t('plugin.requestedAccess')}:</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.viewBalance')}</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.requestApproval')}</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.viewCredentials')}</div>
-          </div>
-          <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            ⚠️ {t('plugin.oauthNotice')}
-          </div>
-          {(['passkey', 'checking', 'wallet', 'approving', 'done'].includes(oauthStatus)) ? (
-            <button disabled style={{
-              width: '100%', padding: 14, borderRadius: 10, border: 'none',
-              background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-              color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'wait',
-            }}>
-              {oauthStatus === 'passkey' ? (oauthPasskeyMode === 'Register' ? `✨ ${t('plugin.creatingPasskeyWallet')}` : `🔐 ${t('plugin.waitingPasskey')}`) :
-               oauthStatus === 'checking' ? `⏳ ${t('plugin.checkingAgentSession')}` :
-               oauthStatus === 'wallet' ? `👛 ${t('plugin.openingWallet')}` :
-               oauthStatus === 'approving' ? `⏳ ${t('plugin.verifyingMcp')}` :
-               `✅ ${t('plugin.connectedRedirecting')}`}
-            </button>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <button onClick={() => approveOAuth('Login')} disabled={oauthStatus === 'done'} style={{
-                width: '100%', padding: 12, borderRadius: 10, border: 'none',
-                background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-                color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              }}>
-                {t('plugin.oldUser')}<br />{t('plugin.loginPasskey')}
-              </button>
-              <button onClick={() => approveOAuth('Register')} disabled={oauthStatus === 'done'} style={{
-                width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(16,185,129,0.4)',
-                background: 'rgba(16,185,129,0.12)',
-                color: '#4ade80', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              }}>
-                ✨ {t('plugin.newUser')}<br />{t('plugin.newWalletButton')}
-              </button>
-            </div>
-          )}
-          {oauthStatus === 'error' && (
-            <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>{t('plugin.chooseFlow')}</button>
-          )}
+      {/* Connection methods: keep Hermes token and Claude/ChatGPT OAuth distinct. */}
+      <div style={{ display: 'grid', gap: 10, marginBottom: 14 }}>
+        <div className='glass' style={{ borderRadius: 12, padding: 16, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+          <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700, marginBottom: 6 }}>🤖 Hermes</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. Buka <strong>Agent Terhubung</strong>.</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. Pilih agent, lalu klik <strong>Buat Token Koneksi</strong>.</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. Tempel token ke konfigurasi MCP Hermes dengan autentikasi header/Bearer.</div>
+          <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 8 }}>Token ini hanya untuk agent Hermes yang dipilih.</div>
         </div>
-      )}
+        <div className='glass' style={{ borderRadius: 12, padding: 16, border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.05)' }}>
+          <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700, marginBottom: 6 }}>💬 Claude / ChatGPT</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. Tambahkan URL MCP di pengaturan MCP Claude atau ChatGPT.</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. Ikuti halaman otorisasi yang dibuka otomatis.</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. Login, setujui akses, lalu kembali ke Claude atau ChatGPT.</div>
+          <div style={{ color: '#4ade80', fontSize: 11, marginTop: 8 }}>Tidak perlu membuat atau menempel Token Koneksi Hermes.</div>
+        </div>
+      </div>
 
       {/* Connection status bar */}
       <div className='glass' style={{ borderRadius: 12, padding: 10, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1383,22 +1348,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>{t('plugin.logout')}</button>
       </div>
 
-      {/* Setup MCP */}
-      <Section title={t('plugin.setupTitle')} badge={anyConnected ? <StatusDot on={true} label={t('plugin.connected')} /> : undefined}>
-        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.setupCopy')}</div>
+      <Section title='🔗 URL MCP' badge={anyConnected ? <StatusDot on={true} label={t('plugin.connected')} /> : undefined}>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Salin URL ini ke pengaturan MCP Hermes, Claude, atau ChatGPT.</div>
         <Row label='MCP URL' value={
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <code style={{ background: 'rgba(99,102,241,0.1)', padding: '4px 8px', borderRadius: 6, color: '#818cf8' }}>{MCP_URL}</code>
             <button onClick={() => navigator.clipboard.writeText(MCP_URL)} style={{ background: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>{t('plugin.copy')}</button>
           </div>
         } />
-        <ol style={{ color: '#94a3b8', fontSize: 11, paddingLeft: 16, marginTop: 8 }}>
-          <li>{t('plugin.setupStep1')}</li>
-          <li>{t('plugin.setupStep2')}</li>
-          <li>{t('plugin.setupStep3')}</li>
-          <li>{t('plugin.setupStep4Prefix')}<code style={{fontSize:10,color:'#818cf8'}}>{AUTH_URL}</code>{t('plugin.setupStep4Middle')}<code style={{fontSize:10,color:'#818cf8'}}>{SERVER_URL}/api/auth/token</code></li>
-          <li>{t('plugin.setupStep5')}</li>
-        </ol>
+        <div style={{ color: '#64748b', fontSize: 11, marginTop: 8 }}>Cara autentikasi dijelaskan pada kartu Hermes dan Claude/ChatGPT di atas.</div>
       </Section>
 
       {/* Credentials */}
@@ -1535,8 +1493,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
       {connectionToken && (
         <div role='dialog' aria-label={t('plugin.agentCreateToken')} className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14, border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.06)' }}>
-          <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{t('plugin.agentCreateToken')}</div>
-          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>{t('plugin.agentTokenOnceNote')}</div>
+          <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Token akses Hermes</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>Ini adalah kredensial akses MCP untuk agent yang dipilih — bukan Passkey dan bukan token login website. Token hanya berlaku untuk satu Agent Wallet, tampil sekali, dan harus ditempel saat Hermes meminta autentikasi header.</div>
+          <div style={{ color: '#94a3b8', fontSize: 10, marginBottom: 4 }}>Token yang ditempel ke Hermes:</div>
           <code style={{ display: 'block', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', padding: 8, borderRadius: 6, fontSize: 10, wordBreak: 'break-all', marginBottom: 8 }}>{connectionToken.token}</code>
           <textarea readOnly value={connectionToken.setupMessage || ''} rows={5} style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', borderRadius: 6, padding: 8, fontSize: 11, lineHeight: 1.4 }} />
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
