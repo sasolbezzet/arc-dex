@@ -285,6 +285,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const token = existingToken
     if (!token) throw new Error(t('plugin.passkeyTokenFailed'))
 
+    // Already-active shortcut: re-running setup revokes and re-authorizes the
+    // delegate, leaving a window where MCP tools fail with no_session (and a
+    // failed UserOp could even deactivate a working wallet). If this exact
+    // wallet already has an active Arc session, just adopt it.
+    try {
+      const st = await fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json())
+      const sess = st?.session
+      if (sess?.active && sess.delegateAddress && String(sess.walletAddress || '').toLowerCase() === String(walletAddress).toLowerCase()) {
+        setMscaState(prev => ({ ...prev, walletAddress, delegateAddress: sess.delegateAddress, sessionActive: true, deployed: true }))
+        return token
+      }
+    } catch { /* fall through to the full setup flow */ }
+
     // Binding an EOA is optional. Only send ownerAddress when this browser has
     // a separate SIWE proof; the passkey/MSCA token is never an EOA proof.
     const ownerSessionToken = eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined
@@ -781,6 +794,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   // Fetch data when token changes
   useEffect(() => { if (sessionToken) fetchAll() }, [sessionToken])
+
+  // Restore the vault session across page reloads. Without this, Connected
+  // Agents (and every vault panel) vanished on refresh until the next passkey
+  // login, because sessionToken only lived in React memory.
+  useEffect(() => {
+    const stored = localStorage.getItem('arx_passkey_vault_token') || localStorage.getItem('arx_vault_token') || ''
+    if (!stored || sessionTokenRef.current) return
+    setSessionToken(stored)
+    void listVaultAgents(stored).then(setVaultAgents).catch(() => {})
+  }, [])
 
   async function syncWalletCredentials() {
     if (!address || !sessionToken) return
