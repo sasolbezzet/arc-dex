@@ -112,14 +112,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // redirected here with ?auth=mcp&…; only the ambient Hermes guidance was
   // removed. Without parsing these params the connector approval never shows.
   const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
-  // RFC 8628 device pairing (Hermes on a headless VPS): the agent shows a
-  // short user code that the user enters here; approval binds the same SIWE +
-  // passkey identity as the loopback flow without any redirect URL.
-  const [deviceUserCode, setDeviceUserCode] = useState<string | null>(null)
-  const [deviceClientName, setDeviceClientName] = useState<string>('')
-  // Device approval must make the wallet target explicit. The Passkey result
-  // is still the source of truth; this choice is checked against it below.
-  const [deviceWalletChoice, setDeviceWalletChoice] = useState<string>('new')
   // OAuth approval has two deliberate signing steps: the passkey binds the
   // Agent Wallet, then the connected EOA signs SIWE for the MCP identity. Keep
   // these phases separate so the UI never says "wallet" while WebAuthn is open.
@@ -128,14 +120,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const oauthAttempt = useRef(0)
-  // Device pairing: keep the SIWE challenge + MSCA binding in refs so the
-  // "Sudah tanda tangan? Lanjutkan" button can re-drive the wallet signature
-  // without re-running the passkey/session phases.
-  const deviceMessageRef = useRef('')
-  const deviceMessageHexRef = useRef('')
-  const deviceMscaWalletRef = useRef('')
-  const deviceMscaTokenRef = useRef('')
-  const deviceWalletChoiceInitialized = useRef(false)
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
@@ -149,14 +133,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         state: p.get('state') || '',
         code_challenge: p.get('code_challenge') || '',
       })
-    }
-    if (p.get('auth') === 'device' && p.get('user_code')) {
-      const userCode = p.get('user_code') || ''
-      setDeviceUserCode(userCode)
-      fetch(`${API}/api/auth/device/status?user_code=${encodeURIComponent(userCode)}`)
-        .then(r => r.json())
-        .then(d => { if (d?.clientName) setDeviceClientName(String(d.clientName)) })
-        .catch(() => { /* status is cosmetic; approve reports real errors */ })
     }
     // Deep-link from the AI agent: /plugin?tab=approvals&approval=<id>
     // Highlight the referenced approval so the user lands right on it.
@@ -195,32 +171,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [connectionToken, setConnectionToken] = useState<AgentConnectionToken | null>(null)
   const [agentAction, setAgentAction] = useState<string | null>(null)
   const [bootstrapAgentName, setBootstrapAgentName] = useState('Hermes Agent')
-
-  // Load owner-visible bindings when a device approval is opened in a fresh
-  // tab. This is cosmetic discovery only; every selected wallet is verified by
-  // the Passkey ceremony and backend session check before approval.
-  useEffect(() => {
-    if (!deviceUserCode) {
-      deviceWalletChoiceInitialized.current = false
-      setDeviceWalletChoice('new')
-      return
-    }
-    if (!deviceWalletChoiceInitialized.current) {
-      deviceWalletChoiceInitialized.current = true
-      setDeviceWalletChoice(mscaState.walletAddress || 'new')
-    }
-    const token = localStorage.getItem('arx_passkey_vault_token') || localStorage.getItem('arx_vault_token') || ''
-    if (token) void listVaultAgents(token).then(setVaultAgents).catch(() => {})
-  }, [deviceUserCode, mscaState.walletAddress])
-
-  const deviceWalletOptions = Array.from(new Map([
-    ...(mscaState.walletAddress ? [{ walletAddress: mscaState.walletAddress, agents: [] as VaultAgent[] }] : []),
-    ...vaultAgents.map(agent => ({ walletAddress: agent.walletAddress, agents: [agent] })),
-  ].filter(item => item.walletAddress).map(item => {
-    const key = item.walletAddress.toLowerCase()
-    const existing = (vaultAgents.filter(agent => agent.walletAddress.toLowerCase() === key))
-    return [key, { walletAddress: item.walletAddress, agents: existing }]
-  })).values())
 
   // "1 wallet = 1 agent" overview: every Agent Wallet is labeled with the
   // agent that owns it and stays visible no matter which passkey session is
@@ -1134,161 +1084,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
-  // ── Device pairing approval: same identity proof as approveOAuth, but the
-  // grant is approved server-side by user_code and no redirect happens. ──
-  const approveDevice = async (passkeyMode: 'Login' | 'Register' = 'Login') => {
-    if (!address || !deviceUserCode) return
-    setOauthStatus('checking')
-    setError(null)
-    try {
-      // Fresh WebAuthn ceremony every pairing — never trust stale localStorage.
-      let oauthMscaWalletAddress = ''
-      let oauthMscaSessionToken = ''
-      let deviceSessionData: any = null
-      let sessionVerified = false
-      for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
-        setOauthStatus('passkey')
-        if (passkeyAttempt > 0) {
-          localStorage.removeItem('arx_vault_token')
-          localStorage.removeItem('arx_passkey_vault_token')
-        }
-        const passkey = await withTimeout(
-          passkeyMode === 'Register' ? registerPasskey() : loginPasskey(),
-          60_000,
-          passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
-        )
-        oauthMscaWalletAddress = passkey.walletAddress
-        oauthMscaSessionToken = passkey.sessionToken
-        const selectedWallet = deviceWalletChoice !== 'new' ? deviceWalletChoice.toLowerCase() : ''
-        if (selectedWallet && oauthMscaWalletAddress.toLowerCase() !== selectedWallet) {
-          throw new Error(`Passkey memilih wallet ${oauthMscaWalletAddress.slice(0, 10)}...${oauthMscaWalletAddress.slice(-6)}, bukan wallet yang dipilih.`)
-        }
-        await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken)
-        setOauthStatus('checking')
-        const sessionResponse = await withTimeout(
-          fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${oauthMscaSessionToken}` } }),
-          20_000,
-          t('plugin.passkeySessionTimeout'),
-        )
-        const sessionData = await sessionResponse.json().catch(() => ({}))
-        deviceSessionData = sessionData
-        sessionVerified = sessionResponse.ok
-          && sessionData?.session?.active === true
-          && String(sessionData?.session?.walletAddress || '').toLowerCase() === oauthMscaWalletAddress.toLowerCase()
-      }
-      if (!sessionVerified) throw new Error(t('plugin.agentWalletInactive'))
-
-      // Device approval is a full Agent Wallet login too. Persist the exact
-      // passkey/MSCA token before completing SIWE so the owner page can reload,
-      // list the new binding, and manage it after the approval card disappears.
-      localStorage.setItem('arx_vault_token', oauthMscaSessionToken)
-      localStorage.setItem('arx_passkey_vault_token', oauthMscaSessionToken)
-      setSessionToken(oauthMscaSessionToken)
-      persistMscaState(prev => ({
-        walletAddress: oauthMscaWalletAddress,
-        delegateAddress: deviceSessionData?.session?.delegateAddress || prev.delegateAddress || '',
-        sessionActive: true,
-        deployed: true,
-      }))
-
-      // SIWE challenge bound to the device grant.
-      const msgResp = await withTimeout(fetch(`${API}/api/auth/device/message`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address, user_code: deviceUserCode }),
-      }), 20_000, t('plugin.challengeTimeout'))
-      if (!msgResp.ok) throw new Error(`Gagal mendapat challenge (${msgResp.status})`)
-      const msgData = await withTimeout(msgResp.json(), 10_000, t('plugin.challengeResponseTimeout'))
-      if (!msgData.message) throw new Error(t('plugin.challengeFailed'))
-
-      // Keep the SIWE challenge + MSCA binding in refs so the recovery button
-      // can re-finish the exact same approval without re-running passkey.
-      deviceMessageRef.current = msgData.message
-      deviceMessageHexRef.current = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
-      deviceMscaWalletRef.current = oauthMscaWalletAddress
-      deviceMscaTokenRef.current = oauthMscaSessionToken
-      await signAndApproveDevice()
-    } catch (e: any) {
-      setOauthStatus('error')
-      setError(e?.message || t('plugin.oauthFailed'))
-    }
-  }
-
-  // Wallet signature for device pairing. WalletConnect relays routinely drop
-  // the response right after the wallet signs, leaving the request promise
-  // pending forever (UI stuck at "Menunggu tanda tangan wallet…"). Rebuild
-  // the connection between attempts and cap each try so it can never hang.
-  const requestWalletSignature = async (): Promise<string> => {
-    if (!address || !deviceMessageHexRef.current) throw new Error(t('plugin.walletMainMissing'))
-    const messageHex = deviceMessageHexRef.current
-    let lastError: unknown = null
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const provider = await withTimeout(findConnectedWalletProvider(address), 20_000, t('plugin.providerTimeout'))
-        if (!provider) throw new Error(t('plugin.walletMainMissing'))
-        const signature = await Promise.race([
-          provider.request({ method: 'personal_sign', params: [messageHex, address] }) as Promise<string>,
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Wallet signature response timeout')), 60_000)),
-        ])
-        if (typeof signature === 'string' && /^0x[0-9a-fA-F]+$/.test(signature)) return signature
-        throw new Error('Wallet signature tidak valid')
-      } catch (e: any) {
-        lastError = e
-        if (attempt < 2) {
-          // WalletConnect relay is usually the part that hung; disconnect it so
-          // the next attempt starts with a fresh session.
-          cleanupWalletConnectInBackground(t)
-          await new Promise(resolve => setTimeout(resolve, 800))
-        }
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error('Wallet signature gagal')
-  }
-
-  // Finishes device pairing: signature → backend approve. Also callable from
-  // the recovery button once the user has already signed in the wallet.
-  const signAndApproveDevice = async (): Promise<void> => {
-    if (!address || !deviceUserCode || !deviceMscaWalletRef.current || !deviceMscaTokenRef.current || !deviceMessageRef.current) {
-      throw new Error(t('plugin.agentWalletInactive'))
-    }
-    setOauthStatus('wallet')
-    setError(null)
-    try {
-      const signature = await requestWalletSignature()
-      setOauthStatus('approving')
-      const approveResp = await withTimeout(fetch(`${API}/api/auth/device/approve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          address,
-          message: deviceMessageRef.current,
-          signature,
-          user_code: deviceUserCode,
-          mscaWalletAddress: deviceMscaWalletRef.current,
-          mscaSessionToken: deviceMscaTokenRef.current,
-          approve: true,
-        }),
-      }), 20_000, t('plugin.verifyTimeout'))
-      const approveData = await withTimeout(approveResp.json().catch(() => ({})), 10_000, t('plugin.verificationIncomplete'))
-      if (!approveResp.ok || !approveData.ok) throw new Error(approveData.error_description || approveData.error || t('plugin.oauthFailed'))
-      setOauthStatus('done')
-    } catch (e: any) {
-      setOauthStatus('error')
-      setError(e?.message || t('plugin.oauthFailed'))
-    }
-  }
-
-  const approveSelectedDevice = () => {
-    const selectedOption = deviceWalletChoice === 'new'
-      ? null
-      : deviceWalletOptions.find(option => option.walletAddress.toLowerCase() === deviceWalletChoice.toLowerCase())
-    const usedBy = selectedOption?.agents.map(agent => agent.clientName || t('plugin.mcpAgent')).filter(Boolean) || []
-    const target = deviceWalletChoice === 'new'
-      ? 'Agent Wallet baru dengan Passkey baru'
-      : `Agent Wallet ${deviceWalletChoice.slice(0, 10)}...${deviceWalletChoice.slice(-6)}`
-    const warning = usedBy.length ? `\nWallet ini sudah dipakai oleh: ${usedBy.join(', ')}.` : ''
-    if (!window.confirm(`Setujui ${deviceClientName || t('plugin.mcpAgent')} memakai ${target}?${warning}\n\nPastikan kode device berasal dari agent yang Anda minta.`)) return
-    void approveDevice(deviceWalletChoice === 'new' ? 'Register' : 'Login')
-  }
-
   // Wallet utama adalah identitas Plugin. Tidak ada login kedua di sini.
   if (!address) return (
     <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
@@ -1366,75 +1161,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         {oauthStatus === 'approving' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menyetujui…</div>}
         {oauthStatus === 'done' && <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 600 }}>✓ Claude/ChatGPT terhubung. Kembali ke aplikasi agent.</div>}
       </div> : null}
-
-      {/* Legacy device authorization UI disabled. */}
-      {deviceUserCode ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)', order: -70 }}>
-          <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>🖥️</div>
-            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Hubungkan Agent (Device Code)</div>
-            <div style={{ color: '#94a3b8', fontSize: 12 }}>Perangkat lain ingin terhubung ke ARCOX Anda</div>
-          </div>
-          <div style={{ background: 'rgba(18,18,26,0.6)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>Kode perangkat:</div>
-            <div style={{ color: '#e2e8f0', fontSize: 18, fontWeight: 700, letterSpacing: 2 }}>{deviceUserCode}</div>
-            {deviceClientName && (
-              <>
-                <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 10, marginBottom: 4 }}>Agent:</div>
-                <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{deviceClientName}</div>
-              </>
-            )}
-          </div>
-          <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            {t('plugin.approveOnlySelf')}
-          </div>
-          {error && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 10 }}>{error}</div>}
-          {(oauthStatus === 'idle' || oauthStatus === 'error') && (
-            <>
-              <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 6 }}>{t('plugin.chooseWalletForAgent')}</div>
-              <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
-                {deviceWalletOptions.map(option => {
-                  const usedBy = option.agents.map(agent => agent.clientName || t('plugin.mcpAgent')).filter(Boolean)
-                  const selected = deviceWalletChoice.toLowerCase() === option.walletAddress.toLowerCase()
-                  return (
-                    <label key={option.walletAddress} style={{ display: 'block', padding: 8, borderRadius: 7, border: `1px solid ${selected ? 'rgba(99,102,241,0.7)' : '#1e1e2e'}`, background: selected ? 'rgba(99,102,241,0.12)' : 'rgba(18,18,26,0.45)', cursor: 'pointer' }}>
-                      <input type='radio' name='device-agent-wallet' checked={selected} onChange={() => setDeviceWalletChoice(option.walletAddress)} />
-                      <span style={{ marginLeft: 6, color: '#e2e8f0', fontSize: 11 }}>Agent Wallet {option.walletAddress.slice(0, 10)}...{option.walletAddress.slice(-6)}</span>
-                      <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px', fontFamily: 'monospace' }}>{usedBy.length ? t('plugin.usedBy', { agents: usedBy.join(', ') }) : t('plugin.notUsedByOthers')}</span>
-                    </label>
-                  )
-                })}
-                <label style={{ display: 'block', padding: 8, borderRadius: 7, border: `1px solid ${deviceWalletChoice === 'new' ? 'rgba(16,185,129,0.7)' : '#1e1e2e'}`, background: deviceWalletChoice === 'new' ? 'rgba(16,185,129,0.1)' : 'rgba(18,18,26,0.45)', cursor: 'pointer' }}>
-                  <input type='radio' name='device-agent-wallet' checked={deviceWalletChoice === 'new'} onChange={() => setDeviceWalletChoice('new')} />
-                  <span style={{ marginLeft: 6, color: '#e2e8f0', fontSize: 11 }}>{t('plugin.createNewAgentWallet')}</span>
-                  <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px' }}>{t('plugin.newWalletFundsNote')}</span>
-                </label>
-              </div>
-              {deviceWalletChoice !== 'new' && deviceWalletOptions.find(option => option.walletAddress.toLowerCase() === deviceWalletChoice.toLowerCase())?.agents.length ? (
-                <div style={{ color: '#f59e0b', fontSize: 10, marginBottom: 10, padding: '6px 8px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>{t('plugin.walletUsedWarning')}</div>
-              ) : null}
-              <button type='button' onClick={approveSelectedDevice} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
-                {deviceWalletChoice === 'new' ? t('plugin.createAndApprove') : t('plugin.approveSelectedWallet')}
-              </button>
-            </>
-          )}
-          {oauthStatus === 'passkey' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>{t('plugin.waitingPasskeyEllipsis')}</div>}
-          {oauthStatus === 'checking' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>{t('plugin.checkingAgentSessionEllipsis')}</div>}
-          {oauthStatus === 'wallet' && (
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Menunggu tanda tangan wallet…</div>
-              <div style={{ color: '#64748b', fontSize: 11, marginBottom: 10 }}>Sudah menandatangani di aplikasi wallet? Jika layar masih menggantung, lanjutkan untuk meminta tanda tangan sekali lagi.</div>
-              <button type='button' onClick={() => void signAndApproveDevice()} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #6366f1', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>
-                Sudah tanda tangan — Lanjutkan
-              </button>
-            </div>
-          )}
-          {oauthStatus === 'approving' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menyetujui…</div>}
-          {oauthStatus === 'done' && (
-            <div style={{ textAlign: 'center', color: '#4ade80', fontSize: 13, fontWeight: 600 }}>
-              ✓ Perangkat terhubung. Kembali ke terminal Hermes.
-            </div>
-          )}
-        </div> : null}
 
       {/* Connection methods: the two flows run in opposite order and must
           never be mixed. Hermes provisions the wallet first, then connects
