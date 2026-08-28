@@ -3,6 +3,7 @@ import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
+import { AgentWalletList, type AgentWalletEntry } from './AgentWalletList'
 import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
@@ -199,6 +200,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const existing = (vaultAgents.filter(agent => agent.walletAddress.toLowerCase() === key))
     return [key, { walletAddress: item.walletAddress, agents: existing }]
   })).values())
+
+  // "1 wallet = 1 agent" overview: every Agent Wallet is labeled with the
+  // agent that owns it and stays visible no matter which passkey session is
+  // active in this browser. The active browser wallet is appended when it is
+  // not bound to an agent yet (freshly created, awaiting first connection).
+  const agentWalletEntries: AgentWalletEntry[] = vaultAgents.map(agent => ({
+    address: agent.walletAddress,
+    label: agent.clientName || agent.agentKey.split('|')[0] || t('plugin.mcpAgent'),
+    live: mcpSessions.some(s => s.active && s.clientId === agent.agentKey.split('|')[0]),
+  }))
+  if (mscaState.walletAddress && !agentWalletEntries.some(w => w.address.toLowerCase() === mscaState.walletAddress!.toLowerCase())) {
+    agentWalletEntries.push({ address: mscaState.walletAddress, label: t('plugin.walletBrowserActive'), live: false })
+  }
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
 
@@ -1295,7 +1309,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       {oauthParams ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)', order: -69 }}>
         <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🔐 Otorisasi Claude / ChatGPT</div>
         <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>Setujui koneksi yang diminta oleh Claude atau ChatGPT. Flow ini terpisah dari token koneksi Hermes.</div>
-        {(oauthStatus === 'idle' || oauthStatus === 'error') && <button type='button' onClick={() => void approveOAuth()} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Setujui koneksi Claude / ChatGPT</button>}
+        {(oauthStatus === 'idle' || oauthStatus === 'error') && (
+          <>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>{t('plugin.oauthWalletChoiceCopy')}</div>
+            <button type='button' onClick={() => void approveOAuth('Register')} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer', marginBottom: 8 }}>{t('plugin.oauthApproveNewWallet')}</button>
+            <button type='button' onClick={() => void approveOAuth('Login')} style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid rgba(99,102,241,0.4)', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>{t('plugin.oauthApproveExistingWallet')}</button>
+          </>
+        )}
         {oauthStatus === 'passkey' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
         {oauthStatus === 'checking' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
         {oauthStatus === 'wallet' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menunggu tanda tangan wallet…</div>}
@@ -1372,21 +1392,30 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           )}
         </div> : null}
 
-      {/* Connection methods: keep Hermes token and Claude/ChatGPT OAuth distinct. */}
+      {/* Connection methods: the two flows run in opposite order and must
+          never be mixed. Hermes provisions the wallet first, then connects
+          with a token. Claude/ChatGPT connect first via OAuth and get their
+          own Agent Wallet created during approval (1 agent = 1 wallet). */}
       <div style={{ display: 'grid', gap: 10, marginBottom: 14 }}>
         <div className='glass' style={{ borderRadius: 12, padding: 16, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
-          <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700, marginBottom: 6 }}>🤖 Hermes</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. Buka <strong>Agent Terhubung</strong>.</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. Pilih agent, lalu klik <strong>Buat Token Koneksi</strong>.</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. Tempel token ke konfigurasi MCP Hermes dengan autentikasi header/Bearer.</div>
-          <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 8 }}>Token ini hanya untuk agent Hermes yang dipilih.</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+            <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700 }}>🤖 Hermes</div>
+            <div style={{ color: '#818cf8', fontSize: 10, fontWeight: 600 }}>{t('plugin.flowHermesBadge')}</div>
+          </div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. {t('plugin.flowHermesStep1')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. {t('plugin.flowHermesStep2')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. {t('plugin.flowHermesStep3')}</div>
+          <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 8 }}>{t('plugin.flowHermesNote')}</div>
         </div>
         <div className='glass' style={{ borderRadius: 12, padding: 16, border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.05)' }}>
-          <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700, marginBottom: 6 }}>💬 Claude / ChatGPT</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. Tambahkan URL MCP di pengaturan MCP Claude atau ChatGPT.</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. Ikuti halaman otorisasi yang dibuka otomatis.</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. Login, setujui akses, lalu kembali ke Claude atau ChatGPT.</div>
-          <div style={{ color: '#4ade80', fontSize: 11, marginTop: 8 }}>Tidak perlu membuat atau menempel Token Koneksi Hermes.</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+            <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700 }}>💬 Claude / ChatGPT</div>
+            <div style={{ color: '#4ade80', fontSize: 10, fontWeight: 600 }}>{t('plugin.flowClaudeBadge')}</div>
+          </div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. {t('plugin.flowClaudeStep1')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. {t('plugin.flowClaudeStep2')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. {t('plugin.flowClaudeStep3')}</div>
+          <div style={{ color: '#4ade80', fontSize: 11, marginTop: 8 }}>{t('plugin.flowClaudeNote')}</div>
         </div>
       </div>
 
@@ -1480,18 +1509,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
           )
         ) : ([
-          <div key='arx-wallet-list' style={{ padding: '8px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8, marginBottom: 10 }}>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>Daftar wallet agent</div>
-            {deviceWalletOptions.map(option => {
-              const names = option.agents.map(a => a.clientName || t('plugin.mcpAgent'))
-              return (
-                <div key={option.walletAddress} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid rgba(30,30,46,0.7)' }}>
-                  <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#cbd5e1' }}>{option.walletAddress.slice(0, 10)}…{option.walletAddress.slice(-6)}</span>
-                  <span style={{ color: '#64748b', fontSize: 10, textAlign: 'right' }}>{names.length ? names.join(', ') : 'aktif di browser ini'}</span>
-                </div>
-              )
-            })}
-          </div>,
+          <AgentWalletList key='arx-wallet-list' wallets={agentWalletEntries} />,
           ...vaultAgents.map(agent => {
             const clientId = agent.agentKey.split('|')[0]
             const live = mcpSessions.some(session => session.active && session.clientId === clientId)
