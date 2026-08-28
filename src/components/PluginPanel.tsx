@@ -108,13 +108,15 @@ async function siweLogin(address: string, t: ReturnType<typeof useI18n>['t']): P
 
 export function PluginPanel({ address, circleWallet, solanaAddress }: { address: string | null; circleWallet: { id: string; address: string } | null; solanaAddress: string | null }) {
   const { t } = useI18n()
-  // OAuth/device authorization is intentionally hidden from the user-facing Hermes flow; connection tokens are the supported path.
-  const [oauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
+  // OAuth approval for Claude/ChatGPT stays available whenever the browser was
+  // redirected here with ?auth=mcp&…; only the ambient Hermes guidance was
+  // removed. Without parsing these params the connector approval never shows.
+  const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
   // RFC 8628 device pairing (Hermes on a headless VPS): the agent shows a
   // short user code that the user enters here; approval binds the same SIWE +
   // passkey identity as the loopback flow without any redirect URL.
-  const [deviceUserCode] = useState<string | null>(null)
-  const [deviceClientName] = useState<string>('')
+  const [deviceUserCode, setDeviceUserCode] = useState<string | null>(null)
+  const [deviceClientName, setDeviceClientName] = useState<string>('')
   // Device approval must make the wallet target explicit. The Passkey result
   // is still the source of truth; this choice is checked against it below.
   const [deviceWalletChoice, setDeviceWalletChoice] = useState<string>('new')
@@ -137,6 +139,25 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
+    // Claude/ChatGPT connector: the agent redirects the user here with
+    // ?auth=mcp&request_id=… to run the passkey + SIWE approval.
+    if (p.get('auth') === 'mcp' && p.get('request_id') && p.get('client_id') && p.get('redirect_uri')) {
+      setOauthParams({
+        request_id: p.get('request_id') || '',
+        client_id: p.get('client_id') || '',
+        redirect_uri: p.get('redirect_uri') || '',
+        state: p.get('state') || '',
+        code_challenge: p.get('code_challenge') || '',
+      })
+    }
+    if (p.get('auth') === 'device' && p.get('user_code')) {
+      const userCode = p.get('user_code') || ''
+      setDeviceUserCode(userCode)
+      fetch(`${API}/api/auth/device/status?user_code=${encodeURIComponent(userCode)}`)
+        .then(r => r.json())
+        .then(d => { if (d?.clientName) setDeviceClientName(String(d.clientName)) })
+        .catch(() => { /* status is cosmetic; approve reports real errors */ })
+    }
     // Deep-link from the AI agent: /plugin?tab=approvals&approval=<id>
     // Highlight the referenced approval so the user lands right on it.
     if (p.get('approval')) {
@@ -1598,7 +1619,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <code style={{ display: 'block', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', padding: 8, borderRadius: 6, fontSize: 10, wordBreak: 'break-all', marginBottom: 8 }}>{connectionToken.token}</code>
           <textarea readOnly value={connectionToken.setupMessage || ''} rows={5} style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', borderRadius: 6, padding: 8, fontSize: 11, lineHeight: 1.4 }} />
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <button type='button' onClick={() => navigator.clipboard?.writeText(connectionToken.setupMessage || '').catch(() => setError(t('plugin.agentCopyFailed')))} style={{ flex: 1, padding: 8, borderRadius: 6, border: 'none', background: '#10b981', color: '#052e16', fontWeight: 700, cursor: 'pointer', fontSize: 11 }}>{t('common.copy')}</button>
+            <button type='button' onClick={() => navigator.clipboard?.writeText(connectionToken.setupMessage || '').catch(() => setError(t('plugin.agentCopyFailed')))} style={{ flex: 2, padding: 8, borderRadius: 6, border: 'none', background: '#10b981', color: '#052e16', fontWeight: 700, cursor: 'pointer', fontSize: 11 }}>{t('plugin.agentCopySetup')}</button>
+            <button type='button' onClick={() => navigator.clipboard?.writeText(connectionToken.token || '').catch(() => setError(t('plugin.agentCopyFailed')))} style={{ flex: 1, padding: 8, borderRadius: 6, border: '1px solid rgba(16,185,129,0.4)', background: 'transparent', color: '#4ade80', fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>{t('plugin.agentCopyTokenOnly')}</button>
             <button type='button' onClick={() => setConnectionToken(null)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#cbd5e1', cursor: 'pointer', fontSize: 11 }}>{t('plugin.agentTokenDone')}</button>
           </div>
           {connectionToken.expiresAt && <div style={{ color: '#64748b', fontSize: 10, marginTop: 8 }}>{t('plugin.agentTokenExpires', { date: fmtTime(new Date(connectionToken.expiresAt).getTime()) })}</div>}
