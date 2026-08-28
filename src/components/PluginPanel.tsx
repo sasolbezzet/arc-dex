@@ -322,8 +322,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const registerMsca = async () => {
     const existing = getMscaState()
     if (existing.walletAddress) {
-      // MSCA sudah terkunci — jangan buat baru tanpa konfirmasi eksplisit.
-      throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
+      // MSCA already locked — never create a new one without explicit confirmation.
+      throw new Error(t('plugin.walletExists'))
     }
     const { walletAddress, sessionToken } = await registerPasskey()
     // Publish the newly derived MSCA before setting the token. Token polling
@@ -1362,12 +1362,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             )}
           </div>
           <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            ⚠️ Setujui hanya jika Anda sendiri yang meminta kode ini di terminal.
+            {t('plugin.approveOnlySelf')}
           </div>
           {error && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 10 }}>{error}</div>}
           {(oauthStatus === 'idle' || oauthStatus === 'error') && (
             <>
-              <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 6 }}>Pilih Agent Wallet untuk agent ini:</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 6 }}>{t('plugin.chooseWalletForAgent')}</div>
               <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
                 {deviceWalletOptions.map(option => {
                   const usedBy = option.agents.map(agent => agent.clientName || t('plugin.mcpAgent')).filter(Boolean)
@@ -1376,26 +1376,26 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                     <label key={option.walletAddress} style={{ display: 'block', padding: 8, borderRadius: 7, border: `1px solid ${selected ? 'rgba(99,102,241,0.7)' : '#1e1e2e'}`, background: selected ? 'rgba(99,102,241,0.12)' : 'rgba(18,18,26,0.45)', cursor: 'pointer' }}>
                       <input type='radio' name='device-agent-wallet' checked={selected} onChange={() => setDeviceWalletChoice(option.walletAddress)} />
                       <span style={{ marginLeft: 6, color: '#e2e8f0', fontSize: 11 }}>Agent Wallet {option.walletAddress.slice(0, 10)}...{option.walletAddress.slice(-6)}</span>
-                      <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px', fontFamily: 'monospace' }}>{usedBy.length ? `Dipakai oleh: ${usedBy.join(', ')}` : 'Belum dipakai agent lain'}</span>
+                      <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px', fontFamily: 'monospace' }}>{usedBy.length ? t('plugin.usedBy', { agents: usedBy.join(', ') }) : t('plugin.notUsedByOthers')}</span>
                     </label>
                   )
                 })}
                 <label style={{ display: 'block', padding: 8, borderRadius: 7, border: `1px solid ${deviceWalletChoice === 'new' ? 'rgba(16,185,129,0.7)' : '#1e1e2e'}`, background: deviceWalletChoice === 'new' ? 'rgba(16,185,129,0.1)' : 'rgba(18,18,26,0.45)', cursor: 'pointer' }}>
                   <input type='radio' name='device-agent-wallet' checked={deviceWalletChoice === 'new'} onChange={() => setDeviceWalletChoice('new')} />
-                  <span style={{ marginLeft: 6, color: '#e2e8f0', fontSize: 11 }}>Buat Agent Wallet baru</span>
-                  <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px' }}>Passkey baru, alamat baru, dana tidak berpindah otomatis.</span>
+                  <span style={{ marginLeft: 6, color: '#e2e8f0', fontSize: 11 }}>{t('plugin.createNewAgentWallet')}</span>
+                  <span style={{ display: 'block', color: '#64748b', fontSize: 10, margin: '3px 0 0 22px' }}>{t('plugin.newWalletFundsNote')}</span>
                 </label>
               </div>
               {deviceWalletChoice !== 'new' && deviceWalletOptions.find(option => option.walletAddress.toLowerCase() === deviceWalletChoice.toLowerCase())?.agents.length ? (
-                <div style={{ color: '#f59e0b', fontSize: 10, marginBottom: 10, padding: '6px 8px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>Wallet ini sudah dipakai agent lain. Pastikan itu memang pilihan Anda.</div>
+                <div style={{ color: '#f59e0b', fontSize: 10, marginBottom: 10, padding: '6px 8px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>{t('plugin.walletUsedWarning')}</div>
               ) : null}
               <button type='button' onClick={approveSelectedDevice} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
-                {deviceWalletChoice === 'new' ? 'Buat Agent Wallet baru + Setujui' : 'Setujui wallet terpilih dengan Passkey'}
+                {deviceWalletChoice === 'new' ? t('plugin.createAndApprove') : t('plugin.approveSelectedWallet')}
               </button>
             </>
           )}
-          {oauthStatus === 'passkey' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
-          {oauthStatus === 'checking' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
+          {oauthStatus === 'passkey' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>{t('plugin.waitingPasskeyEllipsis')}</div>}
+          {oauthStatus === 'checking' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>{t('plugin.checkingAgentSessionEllipsis')}</div>}
           {oauthStatus === 'wallet' && (
             <div style={{ textAlign: 'center' }}>
               <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Menunggu tanda tangan wallet…</div>
@@ -1511,18 +1511,18 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           !walletReady ? (
             <div>
               <div style={{ color: '#fbbf24', fontSize: 12, lineHeight: 1.5, padding: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, marginBottom: 10 }}>
-                Belum ada Agent Wallet aktif. Selesaikan langkah 1 dulu — tanpa wallet aktif, token koneksi tidak bisa dibuat.
+                {t('plugin.agentWalletRequired')}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>🆕 Buat Agent Wallet</button>
-                <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>🔑 Masuk Passkey</button>
+                <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>{t('plugin.stepCreateWallet')}</button>
+                <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>{t('plugin.stepLoginPasskey')}</button>
               </div>
             </div>
           ) : (
           <div>
             <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>{t('plugin.noVaultAgents')}</div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <input value={bootstrapAgentName} onChange={e => setBootstrapAgentName(e.target.value)} placeholder='Nama agent' aria-label='Nama agent' style={{ flex: 1, minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '8px', fontSize: 11 }} />
+              <input value={bootstrapAgentName} onChange={e => setBootstrapAgentName(e.target.value)} placeholder={t('plugin.agentNamePlaceholder')} aria-label={t('plugin.agentNamePlaceholder')} style={{ flex: 1, minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '8px', fontSize: 11 }} />
               <button type='button' onClick={() => void createBootstrapToken()} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
                 {agentAction === 'bootstrap-token' ? t('plugin.agentCreatingToken') : t('plugin.agentCreateToken')}
               </button>
@@ -1542,7 +1542,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                     <span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{agent.clientName || t('plugin.mcpAgent')}</span>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
                       <span style={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace' }}>{agent.walletAddress?.slice(0, 8)}…{agent.walletAddress?.slice(-6)}</span>
-                      <span role='button' aria-label='Salin alamat wallet agent' onClick={e => { e.stopPropagation(); navigator.clipboard?.writeText(agent.walletAddress || '').catch(() => {}) }} style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>📋</span>
+                      <span role='button' aria-label={t('plugin.copyAgentWalletAddress')} onClick={e => { e.stopPropagation(); navigator.clipboard?.writeText(agent.walletAddress || '').catch(() => {}) }} style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>📋</span>
                     </span>
                   </span>
                   <StatusDot on={live} label={live ? t('plugin.agentStatusConnected') : t('plugin.idle')} />

@@ -72,7 +72,7 @@ export function AgentWalletList({ wallets }: { wallets: AgentWalletEntry[] }) {
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
               <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#94a3b8' }}>{shortAddress(wallet.address)}</span>
-              <span role='button' aria-label='Salin alamat wallet' onClick={() => navigator.clipboard?.writeText(wallet.address).catch(() => {})} style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>📋</span>
+              <span role='button' aria-label={t('plugin.copyWalletAddress')} onClick={() => navigator.clipboard?.writeText(wallet.address).catch(() => {})} style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>📋</span>
             </span>
           </div>
           <div style={{ paddingLeft: 13, marginTop: 1 }}>
