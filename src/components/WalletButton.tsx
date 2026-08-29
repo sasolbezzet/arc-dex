@@ -75,6 +75,9 @@ export function WalletButton({ address, onConnect, onDisconnect, onConnected }: 
   const connectWC = async () => {
     setError(''); setLoading(true); setShowOptions(false); setMobileSignHint(false)
     try {
+      // connectWalletConnect owns the WalletConnect modal/deep-link. Do not
+      // hide it behind an extra custom flow; it must foreground the wallet app
+      // and return to this page after approval.
       const addr = await connectWalletConnect()
       if (addr) {
         const wcProv = getWalletConnectProviderSync()

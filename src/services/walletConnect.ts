@@ -419,9 +419,10 @@ export async function connectWalletConnect(): Promise<string | null> {
     console.log('[WC] address:', address)
     hideQRModal()
 
-    // Switch ke Arc Testnet di background — jangan block login kalau wallet menolak
-    ensureArcChain(provider).catch(() => {})
-
+    // Complete the connection first. Chain switching is best-effort and must
+    // not block or redirect away from the wallet app before the caller can
+    // establish the authenticated ARCOX session.
+    try { await ensureArcChain(provider) } catch { /* wallet may decline switch */ }
     return address
   } catch (e: any) {
     hideQRModal()
