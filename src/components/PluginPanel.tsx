@@ -331,8 +331,35 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
   }
 
-  const retryMscaDeployments = async () => {
+  const retryMscaDeploymentsFor = async (walletAddress: string, token: string) => {
+    const previousAgentKey = localStorage.getItem('arx_active_agent_key')
+    localStorage.setItem('arx_active_agent_key', `hermes-mcp|${address || 'pending'}`)
     const deployment = await deployAllSmartAccounts()
+    if (previousAgentKey) localStorage.setItem('arx_active_agent_key', previousAgentKey)
+    if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal.')
+    const delegateAddress = getMscaState().delegateAddress
+    const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
+    const errors: string[] = []
+    if (delegateAddress) {
+      for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+        try {
+          await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token)
+          chainAuthorizationStatus[chainKey] = 'authorized'
+        } catch (error: any) {
+          chainAuthorizationStatus[chainKey] = 'failed'
+          errors.push(error?.message || `${chainKey}: authorization gagal`)
+        }
+      }
+    }
+    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    if (errors.length) throw new Error(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
+  }
+
+  const retryMscaDeployments = async () => {
+    const previousAgentKey = localStorage.getItem('arx_active_agent_key')
+    localStorage.setItem('arx_active_agent_key', `hermes-mcp|${address || 'pending'}`)
+    const deployment = await deployAllSmartAccounts()
+    if (previousAgentKey) localStorage.setItem('arx_active_agent_key', previousAgentKey)
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal. Periksa policy Gas Station dan coba lagi.')
     const walletAddress = mscaState.walletAddress
     const delegateAddress = mscaState.delegateAddress
@@ -568,11 +595,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setError(null)
     try {
       const result = await loginPasskey(agent.agentKey)
-      setSessionToken(result.sessionToken)
-      localStorage.setItem('arx_vault_token', result.sessionToken)
-      localStorage.setItem('arx_passkey_vault_token', result.sessionToken)
-      setMscaState(prev => ({ ...prev, walletAddress: result.walletAddress, sessionActive: false }))
+      const isHermes = /hermes/i.test(agent.clientName || agent.agentKey)
+      if (isHermes) {
+        setHermesWallet({ walletAddress: result.walletAddress, sessionToken: result.sessionToken })
+        localStorage.setItem('arx_hermes_vault_token', result.sessionToken)
+        localStorage.setItem('arx_hermes_wallet_address', result.walletAddress)
+      } else {
+        setSessionToken(result.sessionToken)
+        localStorage.setItem('arx_vault_token', result.sessionToken)
+        localStorage.setItem('arx_passkey_vault_token', result.sessionToken)
+        setMscaState(prev => ({ ...prev, walletAddress: result.walletAddress, sessionActive: false }))
+      }
       await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
+      await retryMscaDeploymentsFor(result.walletAddress, result.sessionToken)
       await refreshVaultAgents()
     } catch (e: any) {
       setError(e?.message || t('plugin.vaultLoginFailed'))
@@ -895,6 +930,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const anyConnected = mcpSessions.some(s => s.active)
   // Onboarding progress: brand-new users need wallet first, then an agent,
   // then live MCP traffic — same three states drive the stepper card.
+  // The generic Agent Wallet card is the Claude/GPT OAuth wallet. Hermes has
+  // its own wallet state and must never be represented by this global card.
   const walletReady = Boolean(mscaState.walletAddress)
   const agentsReady = vaultAgents.length > 0
   const scrollToAgentConnect = () => document.getElementById('arx-agent-connect')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
