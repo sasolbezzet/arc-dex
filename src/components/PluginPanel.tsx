@@ -185,11 +185,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // not bound to an agent yet (freshly created, awaiting first connection).
   const agentWalletEntries: AgentWalletEntry[] = Array.from(new Map(vaultAgents.map(agent => [agent.walletAddress.toLowerCase(), agent])).values()).map(agent => ({
     address: agent.walletAddress,
-    label: agent.clientName || agent.agentKey.split('|')[0] || t('plugin.mcpAgent'),
+    label: /claude/i.test(agent.clientName || agent.agentKey) ? 'Claude' : /chatgpt|gpt/i.test(agent.clientName || agent.agentKey) ? 'ChatGPT' : /hermes/i.test(agent.clientName || agent.agentKey) ? 'Hermes' : (agent.clientName || agent.agentKey.split('|')[0] || t('plugin.mcpAgent')),
     live: mcpSessions.some(s => s.active && s.clientId === agent.agentKey.split('|')[0]),
   }))
+  // Keep every backend binding visible. The active passkey wallet is only an
+  // unbound extra row; it must never replace or hide Claude/Hermes bindings.
   if (mscaState.walletAddress && !agentWalletEntries.some(w => w.address.toLowerCase() === mscaState.walletAddress!.toLowerCase())) {
     agentWalletEntries.push({ address: mscaState.walletAddress, label: t('plugin.walletBrowserActive'), live: false })
+  }
+  if (hermesWallet?.walletAddress && !agentWalletEntries.some(w => w.address.toLowerCase() === hermesWallet!.walletAddress.toLowerCase())) {
+    agentWalletEntries.push({ address: hermesWallet.walletAddress, label: 'Hermes', live: false })
   }
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
@@ -458,6 +463,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     try {
       // Do not let an optional cards failure hide the authoritative agent list.
       const agents = await listVaultAgents(sessionToken)
+      // Keep previously loaded bindings until the refresh succeeds; login of a
+      // different agent must not make Claude disappear during the request.
+
       setVaultAgents(agents)
       try {
         setOwnerCards(await listVaultCards(sessionToken))
