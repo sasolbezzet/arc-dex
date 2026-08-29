@@ -987,9 +987,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             oauthMscaWalletAddress = ''
             oauthMscaSessionToken = ''
           }
+          // Claude/GPT OAuth must authenticate the agent selected by the OAuth
+          // request, never whichever Hermes state was last active in storage.
+          const oauthAgentKey = `oauth:${oauthParams.client_id}|${address.toLowerCase()}`
           const passkey = await withTimeout(
-            passkeyMode === 'Register' ? registerPasskey() : loginPasskey(),
-            60_000,passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
+            passkeyMode === 'Register' ? registerPasskey(oauthAgentKey) : loginPasskey(oauthAgentKey),
+            60_000,
+            passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
           )
           oauthMscaWalletAddress = passkey.walletAddress
           oauthMscaSessionToken = passkey.sessionToken
@@ -1024,21 +1028,24 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         throw new Error(t('plugin.passkeySessionMismatch'))
       }
       if (hydratedPasskey) {
-        localStorage.setItem('arx_vault_token', oauthMscaSessionToken)
-        localStorage.setItem('arx_passkey_vault_token', oauthMscaSessionToken)
-        setSessionToken(oauthMscaSessionToken)
+        // OAuth session is local to the approval flow. Do not replace Hermes'
+        // token or its wallet state while Claude/GPT is being connected.
+        localStorage.setItem(`arx_oauth_vault_token:${oauthParams.client_id}`, oauthMscaSessionToken)
+        // Keep the OAuth agent isolated from the currently selected Hermes
+        // session. The backend binding and OAuth token are authoritative; do
+        // not replace the dashboard's active wallet/session here.
         setMscaState(prev => ({
           ...prev,
-          walletAddress: oauthMscaWalletAddress,
-          delegateAddress: sessionData.session.delegateAddress || prev.delegateAddress,
-          sessionActive: true,
+          walletAddress: prev.walletAddress || oauthMscaWalletAddress,
+          delegateAddress: prev.delegateAddress || sessionData.session.delegateAddress,
+          sessionActive: prev.sessionActive || Boolean(sessionData.session.active),
         }))
       }
 
       // 1. Get SIWE challenge from MCP server. Every network/provider step is
       // bounded so a suspended mobile tab cannot leave the button stuck forever.
       const msgResp = await withTimeout(
-        fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}&request_id=${encodeURIComponent(oauthParams.request_id)}`, { headers: authHeaders() }),
+        fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}&request_id=${encodeURIComponent(oauthParams.request_id)}`, { headers: { 'Authorization': `Bearer ${oauthMscaSessionToken}` } }),
         20_000,
         t('plugin.challengeTimeout'),
       )
