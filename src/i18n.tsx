@@ -645,7 +645,7 @@ const extraMessages = {
     'plugin.agentConnections': '🤖 Connected Agents',
     'plugin.agentConnectionsCopy': 'Agents allowed to use your Agent Wallet, with their activity log and linked cards.',
     'plugin.hermesPanelCopy': 'Hermes uses a separate flow: activate a wallet, create a connection token, then paste the ready command into the default Hermes terminal.',
-    'plugin.hermesCreateWalletToken': 'Create Hermes wallet + token',
+    'plugin.hermesCreateWalletToken': 'Create Hermes wallet + token', 'plugin.hermesCreateConnectionToken': 'Create connection token',
     'plugin.agentWalletListTitle': 'Wallets per agent — 1 wallet = 1 agent',
     'plugin.agentWalletListNote': 'Each agent’s wallet stays listed even when you connect or switch to other agents.',
     'plugin.walletBrowserActive': 'Active browser wallet (not linked to an agent yet)',

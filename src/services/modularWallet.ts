@@ -55,6 +55,14 @@ declare global { interface Window { __circleProxyInstalled?: boolean } }
 
 // ── Persisted state ──
 const STORAGE_KEY = 'arx_msca_state'
+const AGENT_STORAGE_KEY = 'arx_active_agent_key'
+
+function stateStorageKey() {
+  try {
+    const agentKey = localStorage.getItem(AGENT_STORAGE_KEY)
+    return agentKey ? `${STORAGE_KEY}:${agentKey}` : STORAGE_KEY
+  } catch { return STORAGE_KEY }
+}
 let livePasskeyCredential: any = null
 
 type DeploymentStatus = { status: 'deployed' | 'failed' | 'unsupported'; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationPrecheckFailed?: boolean; authorizationError?: string; error?: string; updatedAt: number }
@@ -72,7 +80,7 @@ interface MscaState {
 
 function loadState(): Partial<MscaState> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(stateStorageKey())
     const state = raw ? JSON.parse(raw) : {}
     if (livePasskeyCredential && state?.credential && !state.credential.raw) {
       state.credential = { ...state.credential, raw: livePasskeyCredential }
@@ -83,7 +91,7 @@ function loadState(): Partial<MscaState> {
 
 function saveState(state: Partial<MscaState>) {
   if (state.credential?.raw) livePasskeyCredential = state.credential.raw
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  localStorage.setItem(stateStorageKey(), JSON.stringify(state))
 }
 
 function bytesToBase64Url(value: unknown) {
@@ -188,7 +196,7 @@ export function serializeWebAuthnCredential(credential: any) {
 
 function clearState() {
   livePasskeyCredential = null
-  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(stateStorageKey())
 }
 
 // ── Transports ──
@@ -517,8 +525,9 @@ function createStoredCredential(id: unknown, publicKey: unknown, raw: unknown): 
 }
 
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
+export async function registerPasskey(agentKey = ''): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
+  if (agentKey) localStorage.setItem(AGENT_STORAGE_KEY, agentKey)
   // Keep one browser credential request at a time. The browser assertion is
   // verified by Circle exactly once on the backend; the SDK high-level helper
   // is intentionally not used because it would verify the same session again.
@@ -707,6 +716,7 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
 // ── Login with existing passkey ──
 export async function loginPasskey(agentKey = ''): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
+  if (agentKey) localStorage.setItem(AGENT_STORAGE_KEY, agentKey)
   const state = loadState()
   return runPasskeyOperation(async () => {
     try {

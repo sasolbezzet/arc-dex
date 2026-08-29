@@ -515,6 +515,21 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
+  const createHermesWallet = async () => {
+    if (!sessionToken || !address) { setError(t('plugin.vaultLoginFailed')); return }
+    setAgentAction('hermes-wallet')
+    setError(null)
+    try {
+      const passkey = await registerPasskey(`hermes-mcp|${address}`)
+      const hermesToken = passkey.sessionToken
+      localStorage.setItem('arx_hermes_vault_token', hermesToken)
+      await autoActivateSession(passkey.walletAddress, address, hermesToken)
+      setMscaState(prev => ({ ...prev, walletAddress: passkey.walletAddress, sessionActive: true }))
+      await refreshVaultAgents()
+    } catch (e: any) { setError(e?.message || t('plugin.vaultAgentsLoadFailed')) }
+    finally { setAgentAction(null) }
+  }
+
   const createBootstrapToken = async () => {
     if (!sessionToken) {
       setError(t('plugin.vaultLoginFailed'))
@@ -525,7 +540,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setConnectionToken(null)
     setError(null)
     try {
-      const issued = await createBootstrapConnectionToken(clientName, 90, sessionToken)
+      const hermesWallet = getMscaState().walletAddress
+      if (!hermesWallet) throw new Error(t('plugin.agentWalletRequired'))
+      const issued = await createBootstrapConnectionToken(clientName, 90, sessionToken, hermesWallet)
       setConnectionToken({
         ...issued,
         setupMessage: `Hubungkan Hermes ke Agent Wallet saya (${clientName}).\nURL MCP: ${MCP_URL}\nToken akses Hermes: ${issued.token}\nToken ini hanya memberi akses ke agent/wallet ini dan berlaku sampai: ${issued.expiresAt || ''}\nDi Hermes jalankan: hermes mcp add arcox --url ${MCP_URL} --auth header\nSaat diminta, tempel Token akses Hermes ini. Lalu jalankan: hermes mcp test arcox\nJangan gunakan token ini untuk agent lain.`,
@@ -1270,12 +1287,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <div style={{ color: '#c4b5fd', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Hermes MCP</div>
           <div style={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.45, marginBottom: 8 }}>{t('plugin.hermesPanelCopy')}</div>
           {!walletReady ? (
-            <div style={{ color: '#fbbf24', fontSize: 11 }}>{t('plugin.agentWalletRequired')}</div>
-          ) : (
             <div style={{ display: 'flex', gap: 6 }}>
+              <button type='button' onClick={() => void createHermesWallet()} disabled={agentAction !== null || !sessionToken} className='btn btn-primary'>{agentAction === 'hermes-wallet' ? t('plugin.creatingPasskeyWallet') : t('plugin.newWallet')}</button>
+              <button type='button' onClick={() => void run('hermes-login', loginMsca)} disabled={agentAction !== null || !sessionToken} className='btn'>{t('plugin.loginPasskey')}</button>
+              <button type='button' onClick={() => void run('hermes-revoke', revokeSession)} disabled={agentAction !== null || !sessionToken} className='btn'>{t('plugin.revoke')}</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <input value={bootstrapAgentName} onChange={e => setBootstrapAgentName(e.target.value)} placeholder={t('plugin.agentNamePlaceholder')} aria-label={t('plugin.agentNamePlaceholder')} style={{ flex: 1, minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '8px', fontSize: 11 }} />
               <button type='button' onClick={() => void createBootstrapToken()} disabled={agentAction !== null || !sessionToken} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
-                {agentAction === 'bootstrap-token' ? t('plugin.agentCreatingToken') : t('plugin.hermesCreateWalletToken')}
+                {agentAction === 'bootstrap-token' ? t('plugin.agentCreatingToken') : t('plugin.hermesCreateConnectionToken')}
               </button>
             </div>
           )}
