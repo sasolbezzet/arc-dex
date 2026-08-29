@@ -5,9 +5,9 @@ import { connectWalletConnect, restoreWalletConnect, disconnectWalletConnect, ge
 
 declare global { interface Window { ethereum?: any } }
 
-interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void }
+interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void; onConnected?:()=>void }
 
-export function WalletButton({ address, onConnect, onDisconnect }: Props) {
+export function WalletButton({ address, onConnect, onDisconnect, onConnected }: Props) {
   const { t } = useI18n()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -67,6 +67,7 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
       const accounts = await provider.request({ method: 'eth_requestAccounts' })
       setWalletProvider(provider)
       await onConnect(accounts[0])
+      onConnected?.()
     } catch(e:any) { setError(e?.message || t('wallet.connectFailed')) }
     setLoading(false)
   }
@@ -88,6 +89,7 @@ export function WalletButton({ address, onConnect, onDisconnect }: Props) {
         setMobileSignHint(false)
       } else {
           await onConnect(addr)
+          onConnected?.()
         }
       }
     } catch(e:any) {

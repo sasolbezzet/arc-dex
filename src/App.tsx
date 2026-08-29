@@ -447,7 +447,7 @@ export default function App() {
                   </div>
                 </ViewportPopover>
               </div>
-              <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
+              <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} onConnected={() => { if (currentPageFromLocation() !== 'plugin') navigate('plugin') }} />
             </div>
           </div>
         </header>

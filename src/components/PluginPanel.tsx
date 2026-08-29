@@ -422,9 +422,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const refreshVaultAgents = async () => {
     if (!sessionToken) return
     try {
-      const [agents, cards] = await Promise.all([listVaultAgents(sessionToken), listVaultCards(sessionToken)])
+      // Do not let an optional cards failure hide the authoritative agent list.
+      const agents = await listVaultAgents(sessionToken)
       setVaultAgents(agents)
-      setOwnerCards(cards)
+      try {
+        setOwnerCards(await listVaultCards(sessionToken))
+      } catch (cardsError) {
+        console.warn('[plugin] cards refresh failed; preserving agent list', cardsError)
+      }
     } catch (e: any) {
       if (!String(e?.message || '').includes('401')) setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
     }
@@ -578,7 +583,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   useEffect(() => {
     if (sessionToken) refreshVaultAgents()
     else {
-      setVaultAgents([])
+      // Keep the last known agent list visible while reconnecting. Clearing it
+      // here made Claude/Hermes cards disappear during wallet switches or a
+      // short-lived session refresh; the backend remains the source of truth.
       setOwnerCards([])
       setAgentDetails({})
       setAgentCardDrafts({})
@@ -1361,8 +1368,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {connectionToken && (
-        <div role='dialog' aria-label={t('plugin.agentCreateToken')} className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14, border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.06)' }}>
-          <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Token akses Hermes</div>
+        <div role='dialog' aria-label={t('plugin.agentCreateToken')} id='arx-hermes-token-dialog' className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14, border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.06)' }}>
+          <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Hermes connection token</div>
           <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>Ini adalah kredensial akses MCP untuk agent yang dipilih — bukan Passkey dan bukan token login website. Token hanya berlaku untuk satu Agent Wallet, tampil sekali, dan harus ditempel saat Hermes meminta autentikasi header.</div>
           <div style={{ color: '#94a3b8', fontSize: 10, marginBottom: 4 }}>Token yang ditempel ke Hermes:</div>
           <code style={{ display: 'block', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', padding: 8, borderRadius: 6, fontSize: 10, wordBreak: 'break-all', marginBottom: 8 }}>{connectionToken.token}</code>
