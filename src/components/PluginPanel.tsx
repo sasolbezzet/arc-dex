@@ -22,6 +22,7 @@ const API = ''
 // Use the public web origin in the user-facing setup instructions. Vercel
 // forwards this route to the non-Vercel backend without exposing its VPS URL.
 const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
+const AGENT_KEYS = { claude: 'oauth:claude', gpt: 'oauth:chatgpt', hermes: 'hermes-mcp' } as const
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -158,7 +159,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
   const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean; deployed?: boolean; deploymentStatus?: Record<string, { status: 'deployed' | 'failed' | 'unsupported'; error?: string; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationError?: string; updatedAt: number }>; chainAuthorizationStatus?: Record<string, 'authorized' | 'failed'> }>(() => {
-    const s = getMscaState()
+    const s = getMscaState(AGENT_KEYS.claude)
     return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false, deployed: s.deployed, deploymentStatus: s.deploymentStatus, chainAuthorizationStatus: undefined }
   })
   const [busy, setBusy] = useState<string | null>(null)
@@ -219,13 +220,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     finally { setBusy(null) }
   }
-  const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string) => {
+  const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string, agentKey = AGENT_KEYS.claude) => {
     // registerDelegateOwner sends a single addOwners UserOperation that both
     // deploys the deterministic MSCA (first UserOp carries factory initCode)
     // and adds the delegate owner, so no separate deployment is required.
     let authorization
     try {
-      authorization = await registerDelegateOwner(delegateAddress, chainKey, token)
+      authorization = await registerDelegateOwner(delegateAddress, chainKey, token, agentKey)
     } catch (error: any) {
       throw new Error(`${chainKey}: authorization UserOp gagal: ${error?.message || 'unknown error'}`)
     }
@@ -239,7 +240,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     return data
   }
 
-  const autoActivateSession = async (walletAddress: string, eoaAddress?: string, existingToken?: string) => {
+  const autoActivateSession = async (walletAddress: string, eoaAddress?: string, existingToken?: string, agentKey = AGENT_KEYS.claude) => {
     // Login activation: one addOwners UserOp on Arc deploys the MSCA and
     // authorizes the delegate in a single operation, then activates the
     // session. Base and Arbitrum are prepared immediately afterwards in the
@@ -266,14 +267,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const verifiedEoaAddress = ownerSessionToken ? eoaAddress : undefined
 
     // Arc: reserve delegate + addOwners (deploy+authorize) + backend setup.
-    const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken)
+    const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken, agentKey)
     setMscaState(prev => ({
       ...prev,
       walletAddress,
       delegateAddress: result.delegateAddress,
       sessionActive: result.active,
       deployed: true,
-      deploymentStatus: getDeploymentStatus(),
+      deploymentStatus: getDeploymentStatus(agentKey),
       chainAuthorizationStatus: { 'arc-testnet': 'authorized' },
     }))
 
@@ -283,19 +284,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const errors: string[] = []
     for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
       try {
-        await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token)
+        await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token, agentKey)
         chainAuthorizationStatus[chainKey] = 'authorized'
       } catch (error: any) {
         chainAuthorizationStatus[chainKey] = 'failed'
         errors.push(error?.message || `${chainKey}: authorization gagal`)
       }
     }
-    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(agentKey), chainAuthorizationStatus }))
     if (errors.length) setError(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
     return token
   }
   const registerMsca = async () => {
-    const existing = getMscaState()
+    const existing = getMscaState(AGENT_KEYS.claude)
     if (existing.walletAddress) {
       // MSCA already locked — never create a new one without explicit confirmation.
       throw new Error(t('plugin.walletExists'))
@@ -332,17 +333,17 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
   const revokeSession = async () => {
     if (!sessionToken) throw new Error(t('plugin.vaultLoginFailed'))
-    await revokeSessionKey(sessionToken)
+    await revokeSessionKey(sessionToken, AGENT_KEYS.claude)
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
   }
 
   const retryMscaDeploymentsFor = async (walletAddress: string, token: string) => {
     const previousAgentKey = localStorage.getItem('arx_active_agent_key')
     localStorage.setItem('arx_active_agent_key', `hermes-mcp|${address || 'pending'}`)
-    const deployment = await deployAllSmartAccounts()
+    const deployment = await deployAllSmartAccounts(AGENT_KEYS.hermes)
     if (previousAgentKey) localStorage.setItem('arx_active_agent_key', previousAgentKey)
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal.')
-    const delegateAddress = getMscaState().delegateAddress
+    const delegateAddress = getMscaState(AGENT_KEYS.hermes).delegateAddress
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
     const errors: string[] = []
     if (delegateAddress) {
@@ -356,19 +357,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         }
       }
     }
-    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(AGENT_KEYS.hermes), chainAuthorizationStatus }))
     if (errors.length) throw new Error(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
   }
 
   const retryMscaDeployments = async () => {
     const previousAgentKey = localStorage.getItem('arx_active_agent_key')
     localStorage.setItem('arx_active_agent_key', `hermes-mcp|${address || 'pending'}`)
-    const deployment = await deployAllSmartAccounts()
+    const deployment = await deployAllSmartAccounts(AGENT_KEYS.hermes)
     if (previousAgentKey) localStorage.setItem('arx_active_agent_key', previousAgentKey)
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal. Periksa policy Gas Station dan coba lagi.')
     const walletAddress = mscaState.walletAddress
     const delegateAddress = mscaState.delegateAddress
-    const token = sessionToken || (walletAddress ? (await loginPasskey()).sessionToken : '')
+    const token = sessionToken || (walletAddress ? (await loginPasskey(AGENT_KEYS.claude)).sessionToken : '')
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
     const errors: string[] = []
     if (walletAddress && delegateAddress && token) {
@@ -383,7 +384,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         catch (error: any) { chainAuthorizationStatus[chainKey] = 'failed'; errors.push(error?.message || `${chainKey}: authorization gagal`) }
       }
     }
-    setMscaState(prev => ({ ...prev, deployed: true, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    setMscaState(prev => ({ ...prev, deployed: true, deploymentStatus: getDeploymentStatus(AGENT_KEYS.hermes), chainAuthorizationStatus }))
     if (errors.length) setError(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
   }
 
@@ -392,14 +393,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const fresh = sessionToken ? null : await loginPasskey()
     const token = sessionToken || fresh!.sessionToken
     if (!token) throw new Error('Passkey token gagal.')
-    await deploySmartAccountOnChain('base-sepolia')
+    await deploySmartAccountOnChain('base-sepolia', AGENT_KEYS.claude)
     await authorizeDelegateOnChain('base-sepolia', mscaState.walletAddress, mscaState.delegateAddress, token)
     setMscaState(prev => ({ ...prev, chainAuthorizationStatus: { ...(prev.chainAuthorizationStatus || {}), 'base-sepolia': 'authorized' } }))
     setDestinationReady(true)
   }
 
   const approvePendingTx = async (tx: PendingTx) => {
-    const result = await signPendingTx(tx.txId, tx.calls, tx.chainKey)
+    const result = await signPendingTx(tx.txId, tx.calls, tx.chainKey, AGENT_KEYS.claude)
     // Remove from pending list immediately
     setPendingTxs(prev => prev.filter(t => t.txId !== tx.txId))
     if (result.error) throw new Error(result.error)
@@ -562,10 +563,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setAgentAction('hermes-wallet')
     setError(null)
     try {
-      const passkey = await registerPasskey(`hermes-mcp|${address}`)
+      const passkey = await registerPasskey(AGENT_KEYS.hermes)
       const hermesToken = passkey.sessionToken
       localStorage.setItem('arx_hermes_vault_token', hermesToken)
-      await autoActivateSession(passkey.walletAddress, address, hermesToken)
+      await autoActivateSession(passkey.walletAddress, address, hermesToken, AGENT_KEYS.hermes)
       setHermesWallet({ walletAddress: passkey.walletAddress, sessionToken: hermesToken })
       localStorage.setItem('arx_hermes_wallet_address', passkey.walletAddress)
       await refreshVaultAgents()
@@ -602,7 +603,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setAgentAction(`login:${agent.agentKey}`)
     setError(null)
     try {
-      const result = await loginPasskey(agent.agentKey)
+      const result = await loginPasskey(agent.agentKey.includes('hermes') ? AGENT_KEYS.hermes : agent.agentKey)
       const isHermes = /hermes/i.test(agent.clientName || agent.agentKey)
       if (isHermes) {
         setHermesWallet({ walletAddress: result.walletAddress, sessionToken: result.sessionToken })
@@ -614,7 +615,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         localStorage.setItem('arx_passkey_vault_token', result.sessionToken)
         setMscaState(prev => ({ ...prev, walletAddress: result.walletAddress, sessionActive: false }))
       }
-      await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken)
+      await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken, isHermes ? AGENT_KEYS.hermes : agent.agentKey)
       await retryMscaDeploymentsFor(result.walletAddress, result.sessionToken)
       await refreshVaultAgents()
     } catch (e: any) {
@@ -962,8 +963,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       // Plugin, so its localStorage can lack the passkey/MSCA binding. Never
       // issue an unbound OAuth token in that case: authenticate the selected
       // Agent Wallet in this context first and verify that its session is active.
-      let oauthMscaWalletAddress = mscaState.walletAddress || ''
-      let oauthMscaSessionToken = localStorage.getItem('arx_passkey_vault_token') || ''
+      const oauthStorageKey = `arx_oauth_vault_token:${oauthParams.client_id}`
+      let oauthMscaWalletAddress = ''
+      let oauthMscaSessionToken = localStorage.getItem(oauthStorageKey) || ''
       let hydratedPasskey = false
       let sessionData: any = null
       let sessionVerified = false
@@ -982,8 +984,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           setOauthStatus('passkey')
           if (passkeyAttempt > 0) {
             // A stale token/address pair must not block the one allowed retry.
-            localStorage.removeItem('arx_vault_token')
-            localStorage.removeItem('arx_passkey_vault_token')
+            localStorage.removeItem(oauthStorageKey)
             oauthMscaWalletAddress = ''
             oauthMscaSessionToken = ''
           }
@@ -1001,7 +1002,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           // A new user has no delegate/session yet. The same explicit passkey
           // flow can safely initialize it; existing users take the idempotent
           // active/reconcile path and do not receive a duplicate owner.
-          await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken)
+          await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken, `oauth:${oauthParams.client_id}|${address.toLowerCase()}`)
           // WebAuthn/session setup is complete; status lookup is a separate
           // network phase before the SIWE wallet signature.
           setOauthStatus('checking')
@@ -1030,16 +1031,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       if (hydratedPasskey) {
         // OAuth session is local to the approval flow. Do not replace Hermes'
         // token or its wallet state while Claude/GPT is being connected.
-        localStorage.setItem(`arx_oauth_vault_token:${oauthParams.client_id}`, oauthMscaSessionToken)
-        // Keep the OAuth agent isolated from the currently selected Hermes
-        // session. The backend binding and OAuth token are authoritative; do
-        // not replace the dashboard's active wallet/session here.
-        setMscaState(prev => ({
-          ...prev,
-          walletAddress: prev.walletAddress || oauthMscaWalletAddress,
-          delegateAddress: prev.delegateAddress || sessionData.session.delegateAddress,
-          sessionActive: prev.sessionActive || Boolean(sessionData.session.active),
-        }))
+        localStorage.setItem(oauthStorageKey, oauthMscaSessionToken)
+        // OAuth is client-scoped. Do not write its wallet/session into the
+        // generic dashboard MSCA state, which may belong to Hermes or another
+        // agent. The backend binding is the source of truth for this OAuth agent.
+        setOauthStatus('approving')
       }
 
       // 1. Get SIWE challenge from MCP server. Every network/provider step is
@@ -1349,7 +1345,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             <div style={{ display: 'flex', gap: 6 }}>
               <button type='button' onClick={() => void createHermesWallet()} disabled={agentAction !== null || !sessionToken} className='btn btn-primary'>{agentAction === 'hermes-wallet' ? t('plugin.creatingPasskeyWallet') : t('plugin.newWallet')}</button>
               <button type='button' onClick={() => void run('hermes-login', async () => { const result = await loginPasskey('hermes-mcp'); setHermesWallet({ walletAddress: result.walletAddress, sessionToken: result.sessionToken }); localStorage.setItem('arx_hermes_vault_token', result.sessionToken); localStorage.setItem('arx_hermes_wallet_address', result.walletAddress); await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken); await refreshVaultAgents() })} disabled={agentAction !== null || !sessionToken} className='btn'>{t('plugin.loginPasskey')}</button>
-              <button type='button' onClick={() => void run('hermes-revoke', async () => { if (!hermesWallet) return; await revokeSessionKey(hermesWallet.sessionToken); localStorage.removeItem('arx_hermes_vault_token'); localStorage.removeItem('arx_hermes_wallet_address'); setHermesWallet(null); await refreshVaultAgents() })} disabled={agentAction !== null || !hermesWallet} className='btn'>{t('plugin.revoke')}</button>
+              <button type='button' onClick={() => void run('hermes-revoke', async () => { if (!hermesWallet) return; await revokeSessionKey(hermesWallet.sessionToken, AGENT_KEYS.hermes); localStorage.removeItem('arx_hermes_vault_token'); localStorage.removeItem('arx_hermes_wallet_address'); setHermesWallet(null); await refreshVaultAgents() })} disabled={agentAction !== null || !hermesWallet} className='btn'>{t('plugin.revoke')}</button>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

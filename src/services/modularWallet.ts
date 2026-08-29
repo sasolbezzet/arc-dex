@@ -57,11 +57,16 @@ declare global { interface Window { __circleProxyInstalled?: boolean } }
 const STORAGE_KEY = 'arx_msca_state'
 const AGENT_STORAGE_KEY = 'arx_active_agent_key'
 
-function stateStorageKey() {
+const DEFAULT_AGENT_KEY = 'dashboard:primary'
+
+function resolveAgentKey(agentKey?: string) {
   try {
-    const agentKey = localStorage.getItem(AGENT_STORAGE_KEY)
-    return agentKey ? `${STORAGE_KEY}:${agentKey}` : STORAGE_KEY
-  } catch { return STORAGE_KEY }
+    return agentKey || localStorage.getItem(AGENT_STORAGE_KEY) || DEFAULT_AGENT_KEY
+  } catch { return agentKey || DEFAULT_AGENT_KEY }
+}
+
+function stateStorageKey(agentKey?: string) {
+  return `${STORAGE_KEY}:${resolveAgentKey(agentKey)}`
 }
 let livePasskeyCredential: any = null
 
@@ -78,9 +83,9 @@ interface MscaState {
   deploymentStatus?: Record<string, DeploymentStatus>
 }
 
-function loadState(): Partial<MscaState> {
+function loadState(agentKey?: string): Partial<MscaState> {
   try {
-    const raw = localStorage.getItem(stateStorageKey())
+    const raw = localStorage.getItem(stateStorageKey(agentKey))
     const state = raw ? JSON.parse(raw) : {}
     if (livePasskeyCredential && state?.credential && !state.credential.raw) {
       state.credential = { ...state.credential, raw: livePasskeyCredential }
@@ -89,9 +94,9 @@ function loadState(): Partial<MscaState> {
   } catch { return {} }
 }
 
-function saveState(state: Partial<MscaState>) {
+function saveState(state: Partial<MscaState>, agentKey?: string) {
   if (state.credential?.raw) livePasskeyCredential = state.credential.raw
-  localStorage.setItem(stateStorageKey(), JSON.stringify(state))
+  localStorage.setItem(stateStorageKey(agentKey), JSON.stringify(state))
 }
 
 function bytesToBase64Url(value: unknown) {
@@ -194,9 +199,9 @@ export function serializeWebAuthnCredential(credential: any) {
   })
 }
 
-function clearState() {
+function clearState(agentKey?: string) {
   livePasskeyCredential = null
-  localStorage.removeItem(stateStorageKey())
+  localStorage.removeItem(stateStorageKey(agentKey))
 }
 
 // ── Transports ──
@@ -457,9 +462,9 @@ async function userOpOutcome(client: any, userOpHash?: string, submittedAt?: num
 // gas) and is what the official SDK's executeRecovery does before addOwners.
 // It is idempotent: a duplicate mapping returns an ALREADY_KNOWN error that
 // we swallow.
-async function ensureWebAuthnOwnerMapping(chainKey: string): Promise<void> {
+async function ensureWebAuthnOwnerMapping(chainKey: string, agentKey = DEFAULT_AGENT_KEY): Promise<void> {
   if (chainKey === 'arc-testnet' || chainKey === 'ethereum-sepolia') return
-  const state = loadState()
+  const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential?.publicKey) return
   const config = chainConfig(chainKey)
   // Backend stores the passkey public key as a compressed SEC1 point
@@ -489,8 +494,8 @@ async function ensureWebAuthnOwnerMapping(chainKey: string): Promise<void> {
   }
 }
 
-function mergeAuthorizationStatus(chainKey: string, userOpHash: string, delegateAddress: string) {
-  const state = loadState()
+function mergeAuthorizationStatus(chainKey: string, userOpHash: string, delegateAddress: string, agentKey = DEFAULT_AGENT_KEY) {
+  const state = loadState(agentKey)
   const previous = state.deploymentStatus?.[chainKey]
   // Authorization state must never downgrade a confirmed deployment to failed.
   // Keep the two concerns distinguishable in the same backward-compatible
@@ -525,15 +530,15 @@ function createStoredCredential(id: unknown, publicKey: unknown, raw: unknown): 
 }
 
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(agentKey = ''): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
+export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
-  if (agentKey) localStorage.setItem(AGENT_STORAGE_KEY, agentKey)
+  localStorage.setItem(AGENT_STORAGE_KEY, resolveAgentKey(agentKey))
   // Keep one browser credential request at a time. The browser assertion is
   // verified by Circle exactly once on the backend; the SDK high-level helper
   // is intentionally not used because it would verify the same session again.
   return runPasskeyOperation(async () => {
     try {
-      const { options, flowId } = await freshPasskeyOptions('Register')
+      const { options, flowId } = await freshPasskeyOptions('Register', resolveAgentKey(agentKey))
       const rawCredential = await navigator.credentials.create({
         publicKey: registrationPublicKeyOptions(options),
       }) as any
@@ -550,7 +555,7 @@ export async function registerPasskey(agentKey = ''): Promise<{ walletAddress: s
       if (String(smartAccount.address).toLowerCase() !== walletAddress.toLowerCase()) {
         throw new Error('Passkey wallet address mismatch')
       }
-      saveState({ walletAddress, credential, sessionActive: false })
+      saveState({ walletAddress, credential, sessionActive: false }, resolveAgentKey(agentKey))
       return { walletAddress, credential, sessionToken: String(verified.token) }
     } catch (error) {
       throw new Error(passkeyErrorMessage(error), { cause: error })
@@ -562,8 +567,8 @@ export async function registerPasskey(agentKey = ''): Promise<{ walletAddress: s
 
 // ── Deploy MSCA on-chain via passkey UserOp ──
 // After deployment, call registerDelegateOwner to add delegate as owner.
-export async function deploySmartAccount(): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
-  const state = loadState()
+export async function deploySmartAccount(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
+  const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum mengaktifkan Agent Wallet.')
 
   const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
@@ -574,9 +579,9 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
   })
   const bundlerClient = bundlerClientFor('arc-testnet', smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
-    const previous = loadState().deploymentStatus?.['arc-testnet']
-    saveDeploymentStatus('arc-testnet', { ...(previous || {}), status: 'deployed', updatedAt: Date.now() })
-    saveState({ ...loadState(), deployed: true })
+    const previous = loadState(agentKey).deploymentStatus?.['arc-testnet']
+    saveDeploymentStatus('arc-testnet', { ...(previous || {}), status: 'deployed', updatedAt: Date.now() }, agentKey)
+    saveState({ ...loadState(agentKey), deployed: true }, agentKey)
     return { walletAddress: state.walletAddress, deployed: true }
   }
 
@@ -589,19 +594,19 @@ export async function deploySmartAccount(): Promise<{ walletAddress: string; dep
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
     paymaster: true,
   })
-  const previousDeployment = loadState().deploymentStatus?.['arc-testnet']
-  saveDeploymentStatus('arc-testnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() })
+  const previousDeployment = loadState(agentKey).deploymentStatus?.['arc-testnet']
+  saveDeploymentStatus('arc-testnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!isSuccessfulUserOpReceipt(receipt) || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
 
-  const latestDeployment = loadState().deploymentStatus?.['arc-testnet']
-  saveDeploymentStatus('arc-testnet', { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() })
-  saveState({ ...loadState(), deployed: true })
+  const latestDeployment = loadState(agentKey).deploymentStatus?.['arc-testnet']
+  saveDeploymentStatus('arc-testnet', { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() }, agentKey)
+  saveState({ ...loadState(agentKey), deployed: true }, agentKey)
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
 
-function saveDeploymentStatus(chainKey: string, status: DeploymentStatusUpdate) {
-  const state = loadState()
+function saveDeploymentStatus(chainKey: string, status: DeploymentStatusUpdate, agentKey = DEFAULT_AGENT_KEY) {
+  const state = loadState(agentKey)
   const previous = state.deploymentStatus?.[chainKey]
   const merged: DeploymentStatus = {
     ...(previous || {}),
@@ -615,42 +620,42 @@ function saveDeploymentStatus(chainKey: string, status: DeploymentStatusUpdate) 
       ...(state.deploymentStatus || {}),
       [chainKey]: merged,
     },
-  })
+  }, agentKey)
 }
 
-export async function deployAllSmartAccounts(): Promise<{ walletAddress: string; results: Record<string, DeploymentStatus> }> {
-  const state = loadState()
+export async function deployAllSmartAccounts(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; results: Record<string, DeploymentStatus> }> {
+  const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum deploy multi-chain.')
   const results: Record<string, DeploymentStatus> = {}
   for (const chainKey of MSCA_DEPLOYMENT_CHAINS) {
     if (chainKey === 'ethereum-sepolia') {
       const result: DeploymentStatus = { status: 'unsupported', error: 'Circle saat ini tidak mendukung MSCA di Ethereum Sepolia.', updatedAt: Date.now() }
-      results[chainKey] = result; saveDeploymentStatus(chainKey, result); continue
+      results[chainKey] = result; saveDeploymentStatus(chainKey, result, agentKey); continue
     }
     try {
-      await deploySmartAccountOnChain(chainKey)
-      const result: DeploymentStatus = { status: 'deployed', ...(loadState().deploymentStatus?.[chainKey] || {}), updatedAt: Date.now() }
-      results[chainKey] = result; saveDeploymentStatus(chainKey, result)
+      await deploySmartAccountOnChain(chainKey, agentKey)
+      const result: DeploymentStatus = { status: 'deployed', ...(loadState(agentKey).deploymentStatus?.[chainKey] || {}), updatedAt: Date.now() }
+      results[chainKey] = result; saveDeploymentStatus(chainKey, result, agentKey)
     } catch (error: any) {
-      const previous = loadState().deploymentStatus?.[chainKey]
+      const previous = loadState(agentKey).deploymentStatus?.[chainKey]
       const result: DeploymentStatus = {
         ...(previous || {}),
         status: 'failed',
         error: `${chainKey}: deployment failed: ${error?.message || 'unknown error'}`,
         updatedAt: Date.now(),
       }
-      results[chainKey] = result; saveDeploymentStatus(chainKey, result)
+      results[chainKey] = result; saveDeploymentStatus(chainKey, result, agentKey)
     }
   }
-  const latest = loadState()
-  saveState({ ...latest, deployed: latest.deploymentStatus?.['arc-testnet']?.status === 'deployed' })
+  const latest = loadState(agentKey)
+  saveState({ ...latest, deployed: latest.deploymentStatus?.['arc-testnet']?.status === 'deployed' }, agentKey)
   return { walletAddress: state.walletAddress, results }
 }
 
-export function getDeploymentStatus(): Record<string, DeploymentStatus> { return loadState().deploymentStatus || {} }
+export function getDeploymentStatus(agentKey = DEFAULT_AGENT_KEY): Record<string, DeploymentStatus> { return loadState(agentKey).deploymentStatus || {} }
 
-export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddress?: string): Promise<boolean> {
-  const state = loadState()
+export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddress?: string, agentKey = DEFAULT_AGENT_KEY): Promise<boolean> {
+  const state = loadState(agentKey)
   const address = walletAddress || state.walletAddress
   if (!address || !state.credential) throw new Error('Login Passkey diperlukan untuk verifikasi deployment.')
   if (chainKey === 'ethereum-sepolia') {
@@ -669,8 +674,8 @@ export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddr
 // Deploy the same deterministic MSCA on a destination EVM chain using the
 // original passkey credential. This must run in the browser because only the
 // passkey can produce the valid first UserOperation signature.
-export async function deploySmartAccountOnChain(chainKey: string): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
-  const state = loadState()
+export async function deploySmartAccountOnChain(chainKey: string, agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
+  const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum deploy destination MSCA.')
   if (chainKey === 'ethereum-sepolia') {
     throw new Error('MSCA unsupported on Ethereum Sepolia. Use Circle SCA/EOA wallet flow for this network.')
@@ -684,48 +689,49 @@ export async function deploySmartAccountOnChain(chainKey: string): Promise<{ wal
   })
   const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
-    const previous = loadState().deploymentStatus?.[chainKey]
-    saveDeploymentStatus(chainKey, { ...(previous || {}), status: 'deployed', updatedAt: Date.now() })
+    const previous = loadState(agentKey).deploymentStatus?.[chainKey]
+    saveDeploymentStatus(chainKey, { ...(previous || {}), status: 'deployed', updatedAt: Date.now() }, agentKey)
     return { walletAddress: state.walletAddress, deployed: true }
   }
-  const previousStatus = loadState().deploymentStatus?.[chainKey]
+  const previousStatus = loadState(agentKey).deploymentStatus?.[chainKey]
   const previousHash = previousStatus?.userOpHash
   const previousOutcome = await userOpOutcome(client, previousHash, previousStatus?.updatedAt)
   if (previousOutcome === 'success' && await smartAccount.isDeployed()) {
-    saveDeploymentStatus(chainKey, { ...(previousStatus as DeploymentStatus), status: 'deployed', userOpHash: previousHash, updatedAt: Date.now() })
+    saveDeploymentStatus(chainKey, { ...(previousStatus as DeploymentStatus), status: 'deployed', userOpHash: previousHash, updatedAt: Date.now() }, agentKey)
     return { walletAddress: state.walletAddress, deployed: true, userOpHash: previousHash }
   }
   // Destination chains do not inherit the WebAuthn sender mapping from Arc;
   // create it (idempotent, off-chain) so the plugin can validate the UserOp.
-  await ensureWebAuthnOwnerMapping(chainKey)
+  await ensureWebAuthnOwnerMapping(chainKey, agentKey)
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
     paymaster: true,
   })
-  const previousDeployment = loadState().deploymentStatus?.[chainKey]
-  saveDeploymentStatus(chainKey, { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() })
+  const previousDeployment = loadState(agentKey).deploymentStatus?.[chainKey]
+  saveDeploymentStatus(chainKey, { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
   const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
   if (!isSuccessfulUserOpReceipt(receipt) || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
-  const latestDeployment = loadState().deploymentStatus?.[chainKey]
-  saveDeploymentStatus(chainKey, { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() })
-  const latest = loadState()
-  saveState({ ...latest, deployed: latest.deployed ?? true })
+  const latestDeployment = loadState(agentKey).deploymentStatus?.[chainKey]
+  saveDeploymentStatus(chainKey, { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() }, agentKey)
+  const latest = loadState(agentKey)
+  saveState({ ...latest, deployed: latest.deployed ?? true }, agentKey)
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
 
 // ── Login with existing passkey ──
-export async function loginPasskey(agentKey = ''): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
+export async function loginPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
-  if (agentKey) localStorage.setItem(AGENT_STORAGE_KEY, agentKey)
-  const state = loadState()
+  const selectedAgentKey = resolveAgentKey(agentKey)
+  localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
+  const state = loadState(selectedAgentKey)
   return runPasskeyOperation(async () => {
     try {
-      const { options, flowId } = await freshPasskeyOptions('Login', agentKey)
+      const { options, flowId } = await freshPasskeyOptions('Login', selectedAgentKey)
       const rawCredential = await navigator.credentials.get({
         publicKey: loginPublicKeyOptions(options),
       }) as any
       if (!rawCredential) throw new Error('No credential available.')
-      const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId, agentKey)
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId, selectedAgentKey)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
@@ -745,7 +751,7 @@ export async function loginPasskey(agentKey = ''): Promise<{ walletAddress: stri
         deployed: state.deployed,
         delegateAddress: state.delegateAddress,
         deploymentStatus: state.deploymentStatus,
-      })
+      }, selectedAgentKey)
       return { walletAddress, credential, sessionToken: String(verified.token) }
     } catch (error) {
       throw new Error(passkeyErrorMessage(error), { cause: error })
@@ -756,12 +762,12 @@ export async function loginPasskey(agentKey = ''): Promise<{ walletAddress: stri
 // ── Setup session key: authorize delegate on-chain, then store it in vault ──
 // The backend must never activate a signer before the MSCA has accepted it.
 // The delegate is an automation key, not the user's EOA or passkey key.
-export async function setupSessionKey(vaultToken: string, ownerAddress?: string, ownerSessionToken?: string): Promise<{
+export async function setupSessionKey(vaultToken: string, ownerAddress?: string, ownerSessionToken?: string, agentKey = DEFAULT_AGENT_KEY): Promise<{
   walletAddress: string
   delegateAddress: string
   active: boolean
 }> {
-  const state = loadState()
+  const state = loadState(agentKey)
   if (!state.walletAddress) throw new Error('MSCA wallet belum dibuat. Register passkey dulu.')
 
   // No separate deployment UserOp is required: the addOwners authorization
@@ -806,7 +812,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
     return data?.session || null
   })
   if (existingStatus?.active === true && String(existingStatus.walletAddress || '').toLowerCase() === state.walletAddress.toLowerCase()) {
-    saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, sessionActive: true })
+    saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, sessionActive: true }, agentKey)
     return { walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, active: true }
   }
 
@@ -827,7 +833,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
       if (!reconcileResponse.ok) throw new Error(reconcileData?.error || `Session reconciliation failed (${reconcileResponse.status})`)
       if (reconcileData?.session?.active === true) {
         const reconciledDelegate = reconcileData.session.delegateAddress || delegateAddress
-        saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, sessionActive: true })
+        saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, sessionActive: true }, agentKey)
         return { walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, active: true }
       }
       lastReconcileReason = String(reconcileData?.session?.reason || '')
@@ -857,7 +863,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   }
 
   // The passkey authorizes exactly this reserved address.
-  const authorization = await registerDelegateOwner(delegateAddress, 'arc-testnet', vaultToken)
+  const authorization = await registerDelegateOwner(delegateAddress, 'arc-testnet', vaultToken, agentKey)
   if (!authorization.success || !authorization.userOpHash) throw new Error('Automation signer authorization did not return a UserOperation hash')
 
   // Activate the already-reserved signer only after authorization succeeded.
@@ -879,7 +885,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
 
   // Step 4: Update local state. The single addOwners UserOp already deployed
   // the MSCA (first UserOp carries initCode), so the wallet is on-chain now.
-  saveState({ ...state, delegateAddress, sessionActive: true, deployed: true })
+  saveState({ ...state, delegateAddress, sessionActive: true, deployed: true }, agentKey)
 
   return {
     walletAddress: state.walletAddress,
@@ -889,7 +895,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
 }
 
 // ── Revoke session key ──
-export async function revokeSessionKey(vaultToken: string): Promise<void> {
+export async function revokeSessionKey(vaultToken: string, agentKey = DEFAULT_AGENT_KEY): Promise<void> {
   const res = await fetch(`${API}/api/session/revoke`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
@@ -897,8 +903,8 @@ export async function revokeSessionKey(vaultToken: string): Promise<void> {
   const data = await res.json()
   if (!data.success) throw new Error(data.error || 'Revoke gagal')
 
-  const state = loadState()
-  saveState({ ...state, sessionActive: false, delegateAddress: '' })
+  const state = loadState(agentKey)
+  saveState({ ...state, sessionActive: false, delegateAddress: '' }, agentKey)
 }
 
 // ── Get session status ──
@@ -922,13 +928,13 @@ export async function getSessionStatus(vaultToken: string): Promise<{
 }
 
 // ── Get stored MSCA state ──
-export function getMscaState(): Partial<MscaState> {
-  return loadState()
+export function getMscaState(agentKey?: string): Partial<MscaState> {
+  return loadState(agentKey)
 }
 
 // ── Clear MSCA state (logout) ──
-export function clearMscaState() {
-  clearState()
+export function clearMscaState(agentKey?: string) {
+  clearState(agentKey)
 }
 
 // ── Register delegate EOA as on-chain owner ──
@@ -937,8 +943,8 @@ export function clearMscaState() {
 // the delegate as owner. After that the backend can sign transactions with the
 // delegate EOA automatically. Verified live on Arc, Base Sepolia, and Arbitrum
 // Sepolia: one UserOp = deploy + authorize.
-export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-testnet', vaultToken = ''): Promise<{ success: boolean; userOpHash?: string }> {
-  const state = loadState()
+export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-testnet', vaultToken = '', agentKey = DEFAULT_AGENT_KEY): Promise<{ success: boolean; userOpHash?: string }> {
+  const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
   const config = chainConfig(chainKey)
 
@@ -949,7 +955,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
   })
 
-  const saved = loadState().deploymentStatus?.[chainKey]
+  const saved = loadState(agentKey).deploymentStatus?.[chainKey]
   const sameDelegate = saved?.authorizationDelegateAddress?.toLowerCase() === delegateAddress.toLowerCase()
   // Never reuse a prior delegate's UserOperation as proof for a new delegate.
   // The persisted attempt is relevant only when its delegate is an exact match.
@@ -958,7 +964,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
     if (outcome === 'success') {
       // A successful on-chain addOwners is authoritative: the MSCA is deployed
       // and the delegate is already an owner. No second mutation is needed.
-      const current = loadState().deploymentStatus?.[chainKey]
+      const current = loadState(agentKey).deploymentStatus?.[chainKey]
       if (current?.authorizationStatus !== 'authorized') {
         saveDeploymentStatus(chainKey, { ...current, status: 'deployed', authorizationStatus: 'authorized', authorizationError: undefined, updatedAt: Date.now() })
       }
@@ -969,7 +975,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   // Persist the attempt marker immediately before mutation so a browser close
   // after this point can still recover the exact submitted hash.
   saveDeploymentStatus(chainKey, {
-    ...(loadState().deploymentStatus?.[chainKey] || {}),
+    ...(loadState(agentKey).deploymentStatus?.[chainKey] || {}),
     authorizationDelegateAddress: delegateAddress,
     authorizationStatus: 'pending',
     updatedAt: Date.now(),
@@ -978,8 +984,8 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   // Destination chains (Base/Arbitrum) do not inherit the WebAuthn sender
   // mapping that registration created on Arc. Without it the plugin reverts
   // with InvalidValidationFunctionId during simulation. Create it first
-  // (off-chain API call, idempotent).
-  await ensureWebAuthnOwnerMapping(chainKey)
+  // (off-chain API call, idempotent).await ensureWebAuthnOwnerMapping(chainKey, agentKey)
+
 
   const callData = encodeFunctionData({ abi: ADD_OWNERS_ABI, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
   const fees = await circleGasFees(chainKey)
@@ -995,7 +1001,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   // Persist locally and server-side before waiting. The backend records the
   // exact hash but does not activate the delegate until it independently
   // verifies a successful receipt and exact addOwners calldata.
-  mergeAuthorizationStatus(chainKey, userOpHash, delegateAddress)
+  mergeAuthorizationStatus(chainKey, userOpHash, delegateAddress, agentKey)
   try {
     const token = vaultToken || localStorage.getItem('arx_vault_token') || ''
     if (token) {
@@ -1021,19 +1027,19 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
       throw new Error(`${chainKey}: delegate authorization UserOperation reverted (receipt=${status}${txHash ? ` tx=${txHash}` : ''})`)
     }
     const deployed = await smartAccount.isDeployed()
-    const current = loadState().deploymentStatus?.[chainKey]
+    const current = loadState(agentKey).deploymentStatus?.[chainKey]
     if (current) saveDeploymentStatus(chainKey, { ...current, status: deployed ? 'deployed' : current.status, authorizationStatus: 'authorized', authorizationPrecheckFailed: undefined, authorizationError: undefined, updatedAt: Date.now() })
     return { success: true, userOpHash }
   } catch (error: any) {
-    const current = loadState().deploymentStatus?.[chainKey]
+    const current = loadState(agentKey).deploymentStatus?.[chainKey]
     if (current) saveDeploymentStatus(chainKey, { ...current, authorizationStatus: 'failed', authorizationError: error?.message || 'authorization failed', updatedAt: Date.now() })
     throw error
   }
 }
 
 // ── Sign a pending tx with passkey and submit to backend relay ──
-export async function signPendingTx(txId: string, calls: Array<{ to: string; data: string; value: string }>, chainKey: string): Promise<{ txHash?: string; explorerUrl?: string; error?: string }> {
-  const state = loadState()
+export async function signPendingTx(txId: string, calls: Array<{ to: string; data: string; value: string }>, chainKey: string, agentKey = DEFAULT_AGENT_KEY): Promise<{ txHash?: string; explorerUrl?: string; error?: string }> {
+  const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
 
   if (chainKey === 'ethereum-sepolia') {
