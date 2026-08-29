@@ -516,7 +516,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const createBootstrapToken = async () => {
-    if (!sessionToken) return
+    if (!sessionToken) {
+      setError(t('plugin.vaultLoginFailed'))
+      return
+    }
     const clientName = bootstrapAgentName.trim() || 'Hermes Agent'
     setAgentAction('bootstrap-token')
     setConnectionToken(null)
@@ -1260,9 +1263,23 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       </Section>
 
       {/* Per-agent wallet connections: owner-only controls for token issuance and revoke. */}
-      <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : undefined}>
+      <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : <StatusDot on={false} label={t('plugin.idle')} />}>
         <div id='arx-agent-connect' />
         <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.agentConnectionsCopy')}</div>
+        <div style={{ padding: 10, marginBottom: 10, borderRadius: 8, border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(99,102,241,0.07)' }}>
+          <div style={{ color: '#c4b5fd', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Hermes MCP</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.45, marginBottom: 8 }}>{t('plugin.hermesPanelCopy')}</div>
+          {!walletReady ? (
+            <div style={{ color: '#fbbf24', fontSize: 11 }}>{t('plugin.agentWalletRequired')}</div>
+          ) : (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input value={bootstrapAgentName} onChange={e => setBootstrapAgentName(e.target.value)} placeholder={t('plugin.agentNamePlaceholder')} aria-label={t('plugin.agentNamePlaceholder')} style={{ flex: 1, minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '8px', fontSize: 11 }} />
+              <button type='button' onClick={() => void createBootstrapToken()} disabled={agentAction !== null || !sessionToken} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                {agentAction === 'bootstrap-token' ? t('plugin.agentCreatingToken') : t('plugin.hermesCreateWalletToken')}
+              </button>
+            </div>
+          )}
+        </div>
         {vaultAgents.length === 0 ? (
           !walletReady ? (
             <div>
@@ -1277,12 +1294,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ) : (
           <div>
             <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>{t('plugin.noVaultAgents')}</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input value={bootstrapAgentName} onChange={e => setBootstrapAgentName(e.target.value)} placeholder={t('plugin.agentNamePlaceholder')} aria-label={t('plugin.agentNamePlaceholder')} style={{ flex: 1, minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '8px', fontSize: 11 }} />
-              <button type='button' onClick={() => void createBootstrapToken()} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
-                {agentAction === 'bootstrap-token' ? t('plugin.agentCreatingToken') : t('plugin.agentCreateToken')}
-              </button>
-            </div>
           </div>
           )
         ) : ([
