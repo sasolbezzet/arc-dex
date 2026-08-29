@@ -909,15 +909,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       } else {
         throw new Error(t('plugin.unknownAction', { action: a.action }))
       }
-      // Record the signed tx on the backend approval (flips status → approved).
-      try {
-        await fetch(`${API}/api/vault/approvals/${a.id}/approve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ txHash, explorerUrl }),
-        })
-      } catch {}
-      fetchAll()
+      // Record approval only after the transaction succeeded and the backend
+      // explicitly confirms the state transition. A swallowed 401/500 used to
+      // make a successful wallet transaction appear as rejected/pending.
+      const approvalResponse = await fetch(`${API}/api/vault/approvals/${a.id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ txHash, explorerUrl }),
+      })
+      const approvalData = await approvalResponse.json().catch(() => ({}))
+      if (!approvalResponse.ok || approvalData.success === false) {
+        throw new Error(approvalData.error || `Approval update failed (${approvalResponse.status})`)
+      }
+      await fetchAll()
     } catch (e: any) {
       // User rejected in MetaMask or tx failed — leave approval pending.
       const msg = e?.code === 4001 ? t('plugin.signatureCancelled') : (e?.message || t('plugin.transactionFailed'))
@@ -925,7 +929,15 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     setSigningId(null)
   }
-  const reject = async (id: string) => { try { await fetch(`${API}/api/vault/approvals/${id}/reject`, { method: 'POST', headers: authHeaders() }) } catch {}; fetchAll() }
+  const reject = async (id: string) => {
+    try {
+      const response = await fetch(`${API}/api/vault/approvals/${id}/reject`, { method: 'POST', headers: authHeaders() })
+      if (!response.ok) throw new Error(`Reject failed (${response.status})`)
+      await fetchAll()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.transactionFailed'))
+    }
+  }
   const fmtTime = (ts: number) => new Date(ts).toLocaleString('id-ID', { hour12: false })
 
   // Connection status badge
