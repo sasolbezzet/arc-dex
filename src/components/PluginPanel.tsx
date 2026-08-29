@@ -171,6 +171,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [connectionToken, setConnectionToken] = useState<AgentConnectionToken | null>(null)
   const [agentAction, setAgentAction] = useState<string | null>(null)
   const [bootstrapAgentName, setBootstrapAgentName] = useState('Hermes Agent')
+  const [hermesWallet, setHermesWallet] = useState<{ walletAddress: string; sessionToken: string } | null>(() => {
+    try {
+      const walletAddress = localStorage.getItem('arx_hermes_wallet_address') || ''
+      const sessionToken = localStorage.getItem('arx_hermes_vault_token') || ''
+      return walletAddress && sessionToken ? { walletAddress, sessionToken } : null
+    } catch { return null }
+  })
 
   // "1 wallet = 1 agent" overview: every Agent Wallet is labeled with the
   // agent that owns it and stays visible no matter which passkey session is
@@ -524,7 +531,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const hermesToken = passkey.sessionToken
       localStorage.setItem('arx_hermes_vault_token', hermesToken)
       await autoActivateSession(passkey.walletAddress, address, hermesToken)
-      setMscaState(prev => ({ ...prev, walletAddress: passkey.walletAddress, sessionActive: true }))
+      setHermesWallet({ walletAddress: passkey.walletAddress, sessionToken: hermesToken })
+      localStorage.setItem('arx_hermes_wallet_address', passkey.walletAddress)
       await refreshVaultAgents()
     } catch (e: any) { setError(e?.message || t('plugin.vaultAgentsLoadFailed')) }
     finally { setAgentAction(null) }
@@ -540,9 +548,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setConnectionToken(null)
     setError(null)
     try {
-      const hermesWallet = getMscaState().walletAddress
-      if (!hermesWallet) throw new Error(t('plugin.agentWalletRequired'))
-      const issued = await createBootstrapConnectionToken(clientName, 90, sessionToken, hermesWallet)
+      if (!hermesWallet?.walletAddress || !hermesWallet.sessionToken) throw new Error(t('plugin.agentWalletRequired'))
+      const issued = await createBootstrapConnectionToken(clientName, 90, sessionToken, hermesWallet.walletAddress)
       setConnectionToken({
         ...issued,
         setupMessage: `Hubungkan Hermes ke Agent Wallet saya (${clientName}).\nURL MCP: ${MCP_URL}\nToken akses Hermes: ${issued.token}\nToken ini hanya memberi akses ke agent/wallet ini dan berlaku sampai: ${issued.expiresAt || ''}\nDi Hermes jalankan: hermes mcp add arcox --url ${MCP_URL} --auth header\nSaat diminta, tempel Token akses Hermes ini. Lalu jalankan: hermes mcp test arcox\nJangan gunakan token ini untuk agent lain.`,
@@ -1286,11 +1293,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         <div style={{ padding: 10, marginBottom: 10, borderRadius: 8, border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(99,102,241,0.07)' }}>
           <div style={{ color: '#c4b5fd', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Hermes MCP</div>
           <div style={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.45, marginBottom: 8 }}>{t('plugin.hermesPanelCopy')}</div>
-          {!walletReady ? (
+          {!hermesWallet ? (
             <div style={{ display: 'flex', gap: 6 }}>
               <button type='button' onClick={() => void createHermesWallet()} disabled={agentAction !== null || !sessionToken} className='btn btn-primary'>{agentAction === 'hermes-wallet' ? t('plugin.creatingPasskeyWallet') : t('plugin.newWallet')}</button>
-              <button type='button' onClick={() => void run('hermes-login', loginMsca)} disabled={agentAction !== null || !sessionToken} className='btn'>{t('plugin.loginPasskey')}</button>
-              <button type='button' onClick={() => void run('hermes-revoke', revokeSession)} disabled={agentAction !== null || !sessionToken} className='btn'>{t('plugin.revoke')}</button>
+              <button type='button' onClick={() => void run('hermes-login', async () => { const result = await loginPasskey('hermes-mcp'); setHermesWallet({ walletAddress: result.walletAddress, sessionToken: result.sessionToken }); localStorage.setItem('arx_hermes_vault_token', result.sessionToken); localStorage.setItem('arx_hermes_wallet_address', result.walletAddress); await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken); await refreshVaultAgents() })} disabled={agentAction !== null || !sessionToken} className='btn'>{t('plugin.loginPasskey')}</button>
+              <button type='button' onClick={() => void run('hermes-revoke', async () => { if (!hermesWallet) return; await revokeSessionKey(hermesWallet.sessionToken); localStorage.removeItem('arx_hermes_vault_token'); localStorage.removeItem('arx_hermes_wallet_address'); setHermesWallet(null); await refreshVaultAgents() })} disabled={agentAction !== null || !hermesWallet} className='btn'>{t('plugin.revoke')}</button>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -1302,7 +1309,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           )}
         </div>
         {vaultAgents.length === 0 ? (
-          !walletReady ? (
+          !hermesWallet ? (
             <div>
               <div style={{ color: '#fbbf24', fontSize: 12, lineHeight: 1.5, padding: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, marginBottom: 10 }}>
                 {t('plugin.agentWalletRequired')}
