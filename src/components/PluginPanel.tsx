@@ -291,7 +291,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         errors.push(error?.message || `${chainKey}: authorization gagal`)
       }
     }
-    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(agentKey), chainAuthorizationStatus }))
+    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(AGENT_KEYS.hermes), chainAuthorizationStatus }))
     if (errors.length) setError(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
     return token
   }
@@ -300,36 +300,34 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (existing.walletAddress) {
       // MSCA already locked — never create a new one without explicit confirmation.
       throw new Error(t('plugin.walletExists'))
-    }
-    const { walletAddress, sessionToken } = await registerPasskey()
+    }      const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
     // Publish the newly derived MSCA before setting the token. Token polling
     // starts immediately and must not persist an intermediate empty address.
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     localStorage.setItem('arx_passkey_vault_token', sessionToken)
-    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken, AGENT_KEYS.claude)
   }
   const forceRegisterMsca = async () => {
-    // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
-    const { walletAddress, sessionToken } = await registerPasskey()
+    // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.      const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
     // Publish the newly derived MSCA before setting the token. Token polling
     // starts immediately and must not persist an intermediate empty address.
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     localStorage.setItem('arx_passkey_vault_token', sessionToken)
-    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken, AGENT_KEYS.claude)
   }
   const loginMsca = async () => {
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
-    const { walletAddress, sessionToken } = await loginPasskey()
+    const { walletAddress, sessionToken } = await loginPasskey(AGENT_KEYS.claude)
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     localStorage.setItem('arx_passkey_vault_token', sessionToken)
-    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken, AGENT_KEYS.claude)
   }
   const revokeSession = async () => {
     if (!sessionToken) throw new Error(t('plugin.vaultLoginFailed'))
@@ -338,10 +336,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const retryMscaDeploymentsFor = async (walletAddress: string, token: string) => {
-    const previousAgentKey = localStorage.getItem('arx_active_agent_key')
-    localStorage.setItem('arx_active_agent_key', `hermes-mcp|${address || 'pending'}`)
     const deployment = await deployAllSmartAccounts(AGENT_KEYS.hermes)
-    if (previousAgentKey) localStorage.setItem('arx_active_agent_key', previousAgentKey)
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal.')
     const delegateAddress = getMscaState(AGENT_KEYS.hermes).delegateAddress
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
@@ -349,7 +344,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (delegateAddress) {
       for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
         try {
-          await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token)
+          await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token, AGENT_KEYS.hermes)
           chainAuthorizationStatus[chainKey] = 'authorized'
         } catch (error: any) {
           chainAuthorizationStatus[chainKey] = 'failed'
@@ -362,10 +357,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const retryMscaDeployments = async () => {
-    const previousAgentKey = localStorage.getItem('arx_active_agent_key')
-    localStorage.setItem('arx_active_agent_key', `hermes-mcp|${address || 'pending'}`)
     const deployment = await deployAllSmartAccounts(AGENT_KEYS.hermes)
-    if (previousAgentKey) localStorage.setItem('arx_active_agent_key', previousAgentKey)
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal. Periksa policy Gas Station dan coba lagi.')
     const walletAddress = mscaState.walletAddress
     const delegateAddress = mscaState.delegateAddress
@@ -380,7 +372,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           errors.push(deployment.results[chainKey]?.error || `${chainKey}: deployment belum berhasil`)
           continue
         }
-        try { await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token); chainAuthorizationStatus[chainKey] = 'authorized' }
+        try { await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token, AGENT_KEYS.hermes); chainAuthorizationStatus[chainKey] = 'authorized' }
         catch (error: any) { chainAuthorizationStatus[chainKey] = 'failed'; errors.push(error?.message || `${chainKey}: authorization gagal`) }
       }
     }
@@ -390,7 +382,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
   const prepareBaseSepoliaBridge = async () => {
     if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error(t('plugin.sessionActivateFirst'))
-    const fresh = sessionToken ? null : await loginPasskey()
+    const fresh = sessionToken ? null : await loginPasskey(AGENT_KEYS.claude)
     const token = sessionToken || fresh!.sessionToken
     if (!token) throw new Error('Passkey token gagal.')
     await deploySmartAccountOnChain('base-sepolia', AGENT_KEYS.claude)
@@ -539,6 +531,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const createConnectionToken = async (agent: VaultAgent) => {
+    // Connection tokens are issued from the selected binding only. Never infer
+    // a wallet from the currently active dashboard session.
+    if (!agent.walletAddress) throw new Error(t('plugin.agentWalletRequired'))
     if (!agent.agentKey || !sessionToken) return
     setAgentAction(`token:${agent.agentKey}`)
     setConnectionToken(null)
@@ -707,7 +702,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const resolved = typeof patch === 'function' ? patch(prev) : patch
       const next = { ...prev, ...resolved }
       try {
-        const stored: Record<string, any> = JSON.parse(localStorage.getItem('arx_msca_state') || '{}')
+        const stored: Record<string, any> = JSON.parse(localStorage.getItem('arx_msca_state:oauth:claude') || '{}')
         // React state can legitimately lag a just-completed passkey operation.
         // Never let an undefined field erase a newer persisted value, and
         // merge per-chain maps so status polling cannot erase deployment data.
@@ -722,7 +717,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             chainAuthorizationStatus: { ...(stored.chainAuthorizationStatus || {}), ...(definedPatch.chainAuthorizationStatus || {}) },
           } : {}),
         }
-        localStorage.setItem('arx_msca_state', JSON.stringify(merged))
+        localStorage.setItem('arx_msca_state:oauth:claude', JSON.stringify(merged))
       } catch { /* localStorage is best effort; API remains authoritative */ }
       return next
     })
