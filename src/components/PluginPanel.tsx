@@ -176,7 +176,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // agent that owns it and stays visible no matter which passkey session is
   // active in this browser. The active browser wallet is appended when it is
   // not bound to an agent yet (freshly created, awaiting first connection).
-  const agentWalletEntries: AgentWalletEntry[] = vaultAgents.map(agent => ({
+  const agentWalletEntries: AgentWalletEntry[] = Array.from(new Map(vaultAgents.map(agent => [agent.walletAddress.toLowerCase(), agent])).values()).map(agent => ({
     address: agent.walletAddress,
     label: agent.clientName || agent.agentKey.split('|')[0] || t('plugin.mcpAgent'),
     live: mcpSessions.some(s => s.active && s.clientId === agent.agentKey.split('|')[0]),
@@ -1261,7 +1261,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
 
       {/* Per-agent wallet connections: owner-only controls for token issuance and revoke. */}
       <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : undefined}>
-        <div id='arx-agent-connect'></div>
+        <div id='arx-agent-connect' />
         <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.agentConnectionsCopy')}</div>
         {vaultAgents.length === 0 ? (
           !walletReady ? (
@@ -1287,6 +1287,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           )
         ) : ([
           <AgentWalletList key='arx-wallet-list' wallets={agentWalletEntries} />,
+          <div key='arx-agent-actions' data-testid='connected-agent-actions' />,
           ...vaultAgents.map(agent => {
             const clientId = agent.agentKey.split('|')[0]
             const live = mcpSessions.some(session => session.active && session.clientId === clientId)
