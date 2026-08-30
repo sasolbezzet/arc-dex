@@ -532,18 +532,19 @@ function createStoredCredential(id: unknown, publicKey: unknown, raw: unknown): 
 // ── Register passkey + create MSCA ──
 export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
-  localStorage.setItem(AGENT_STORAGE_KEY, resolveAgentKey(agentKey))
+  const selectedAgentKey = resolveAgentKey(agentKey)
+  localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
   // Keep one browser credential request at a time. The browser assertion is
   // verified by Circle exactly once on the backend; the SDK high-level helper
   // is intentionally not used because it would verify the same session again.
   return runPasskeyOperation(async () => {
     try {
-      const { options, flowId } = await freshPasskeyOptions('Register', resolveAgentKey(agentKey))
+      const { options, flowId } = await freshPasskeyOptions('Register', selectedAgentKey)
       const rawCredential = await navigator.credentials.create({
         publicKey: registrationPublicKeyOptions(options),
       }) as any
       if (!rawCredential) throw new Error('No credential created.')
-      const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId)
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId, selectedAgentKey)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
@@ -568,7 +569,8 @@ export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ w
 // ── Deploy MSCA on-chain via passkey UserOp ──
 // After deployment, call registerDelegateOwner to add delegate as owner.
 export async function deploySmartAccount(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
-  const state = loadState(agentKey)
+  const selectedAgentKey = resolveAgentKey(agentKey)
+  const state = loadState(selectedAgentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum mengaktifkan Agent Wallet.')
 
   const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
