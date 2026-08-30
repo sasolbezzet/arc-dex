@@ -1508,7 +1508,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         </div>
       )}
 
-      {/* Approvals — pending only */}
+      {/* Approvals + History — only show when there are pending or resolved approvals */}
+      {approvals.length > 0 && (
       <Section title={t('plugin.approvals')} badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{t('plugin.waitingCount', { count: approvals.filter(a => a.status === 'pending').length })}</span> : undefined}>
         {approvals.filter(a => a.status === 'pending').length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noApproval')}</div>
@@ -1526,9 +1527,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))
         )}
       </Section>
+      )}
 
-      {/* Approval History — approved / rejected */}
-      <Section title={t('plugin.approvalHistory')} badge={approvals.filter(a => a.status !== 'pending').length > 0 ? <span style={{ fontSize: 11, color: '#64748b' }}>{approvals.filter(a => a.status !== 'pending').length}</span> : undefined}>
+      {/* Approval History — hide when empty */}
+      {approvals.filter(a => a.status !== 'pending').length > 0 && (
+      <Section title={t('plugin.approvalHistory')} badge={<span style={{ fontSize: 11, color: '#64748b' }}>{approvals.filter(a => a.status !== 'pending').length}</span>}>
         {approvals.filter(a => a.status !== 'pending').length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noHistory')}</div>
         ) : (
@@ -1553,8 +1556,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             })
         )}
       </Section>
+      )}
 
-      {/* Limits */}
+      {/* Limits — hide when no session */}
+      {(sessionToken || hermesWallet) && (
       <Section title={t('plugin.limits')}>
         <Row label={t('plugin.maxPerTx')} value={
           <input type='number' value={limits.maxPerTx} onChange={e => updateLimits({ maxPerTx: Number(e.target.value) })} style={{ width: 80, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px 8px', fontSize: 12 }} />
@@ -1579,6 +1584,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))}
         </div>
       </Section>
+      )}
 
       {/* Agent Wallet (MSCA + Passkey) — Claude/GPT dashboard wallet */}
       {address && (
@@ -1717,7 +1723,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         </Section>
       )}
 
-      {/* Activity */}
+      {/* Activity — hide when empty */}
+      {activity.length > 0 && (
       <Section title={t('plugin.activityAgent')} badge={<span style={{ fontSize: 11, color: '#64748b' }}>{t('plugin.latestFive')}</span>}>
         {activity.length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noActivity')}</div>
@@ -1732,6 +1739,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))
         )}
       </Section>
+      )}
     </div>
   )
 }
