@@ -567,7 +567,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const createHermesWallet = async () => {
-    if (!address) { setError(t('plugin.walletMainMissing')); return }
+    // Hermes MSCA can be created without a primary EOA wallet. The EOA
+    // binding is optional — only used for SIWE in the Claude/GPT OAuth flow.
     setAgentAction('hermes-wallet')
     setError(null)
     try {
@@ -1196,13 +1197,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
   }
 
-  // Wallet utama adalah identitas Plugin. Tidak ada login kedua di sini.
-  if (!address) return (
-    <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-      {t('plugin.noWalletForPlugin')}
-    </div>
-  )
-
+  // Wallet utama (EOA) adalah identitas Plugin untuk Claude/GPT OAuth flow.
+  // Hermes flow tidak membutuhkan EOA — ia membuat MSCA sendiri via passkey
+  // dan dapat berdiri sendiri. Jangan blokir seluruh Plugin hanya karena
+  // user belum connect wallet utama; tampilkan Hermes section tetap.
   if (loading) return <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>{t('plugin.pluginLoading')}</div>
 
   return (
@@ -1210,7 +1208,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       {error && <div style={{ color: '#f87171', fontSize: 12, padding: 10, background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>{error}</div>}
 
       {/* Onboarding stepper — guides a brand-new user until the first live MCP session */}
-      {!anyConnected && (
+      {/* Claude/GPT onboarding requires a primary EOA wallet. Hermes has its own section below. */}
+      {!anyConnected && address && (
         <div className='glass' style={{ borderRadius: 12, padding: 16, marginBottom: 14, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.06)', order: -50 }}>
           <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700 }}>{t('plugin.onboardingTitle')}</div>
           <div style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 12px' }}>{t('plugin.onboardingSub')}</div>
@@ -1363,6 +1362,16 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))
         )}
       </Section>
+
+      {/* Connect wallet prompt for Claude/GPT flow (not needed for Hermes) */}
+      {!address && (
+        <div className='glass' style={{ borderRadius: 12, padding: 16, marginBottom: 8, border: '1px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.06)' }}>
+          <div style={{ color: '#fbbf24', fontSize: 12, fontWeight: 600 }}>Claude / ChatGPT</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>
+            {t('plugin.noWalletForPlugin')}
+          </div>
+        </div>
+      )}
 
       {/* Per-agent wallet connections: owner-only controls for token issuance and revoke. */}
       <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : <StatusDot on={false} label={t('plugin.idle')} />}>
