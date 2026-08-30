@@ -228,15 +228,18 @@ function runPasskeyOperation<T>(operation: () => Promise<T>): Promise<T> {
   return request
 }
 
-function registrationUsername() {
+function registrationUsername(agentKey = DEFAULT_AGENT_KEY) {
+  // Circle requires a globally unique username for each registration. Never
+  // reuse the old single global username: creating a second agent otherwise
+  // fails before WebAuthn with `username is duplicate`.
+  const safeAgent = String(agentKey || DEFAULT_AGENT_KEY).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)
+  const key = `${PASSKEY_REGISTRATION_USERNAME_KEY}:${safeAgent}`
   try {
-    const saved = localStorage.getItem(PASSKEY_REGISTRATION_USERNAME_KEY)
-    if (saved) return saved
-    const value = `arx-user-${Date.now()}`
-    localStorage.setItem(PASSKEY_REGISTRATION_USERNAME_KEY, value)
+    const value = `arx-${safeAgent}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    localStorage.setItem(key, value)
     return value
   } catch {
-    return `arx-user-${Date.now()}`
+    return `arx-${safeAgent}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   }
 }
 
@@ -247,7 +250,7 @@ function registrationUsername() {
  */
 async function freshPasskeyOptions(mode: PasskeyMode, agentKey = '') {
   ensurePasskeyEnvironment()
-  const username = mode === 'Register' ? registrationUsername() : ''
+  const username = mode === 'Register' ? registrationUsername(agentKey) : ''
   const response = await fetch(`${API}/api/auth/passkey-options`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
