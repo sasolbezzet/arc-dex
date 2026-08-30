@@ -1403,10 +1403,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
               <div style={{ color: '#fbbf24', fontSize: 12, lineHeight: 1.5, padding: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, marginBottom: 10 }}>
                 {t('plugin.agentWalletRequired')}
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>{t('plugin.stepCreateWallet')}</button>
-                <button className='btn' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>{t('plugin.stepLoginPasskey')}</button>
-              </div>
             </div>
           ) : (
           <div>
