@@ -93,11 +93,13 @@ function normalizeList<T>(data: any, field: string): T[] {
   return Array.isArray(data?.[field]) ? data[field] : []
 }
 
-/** Create the first owner-scoped connection-token agent from an active MSCA session. */
-export function createBootstrapConnectionToken(clientName = 'Hermes Agent', ttlDays = 90, authToken?: string, walletAddress?: string): Promise<AgentConnectionToken & { agentKey: string }> {
+/** Create the first owner-scoped connection-token agent from an active MSCA session.
+ * walletAddress is REQUIRED: the backend no longer falls back to the owner's
+ * active session, which could silently bind Hermes to another agent's wallet. */
+export function createBootstrapConnectionToken(clientName: string, ttlDays: number, authToken: string | undefined, walletAddress: string): Promise<AgentConnectionToken & { agentKey: string }> {
   return api('/api/vault/agents/bootstrap-connection-token', {
     method: 'POST',
-    body: JSON.stringify({ clientName, ttlDays, ...(walletAddress ? { walletAddress } : {}) }),
+    body: JSON.stringify({ clientName, ttlDays, walletAddress }),
   }, authToken)
 }
 

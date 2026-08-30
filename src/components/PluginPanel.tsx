@@ -4,7 +4,7 @@ import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { AgentWalletList, type AgentWalletEntry } from './AgentWalletList'
-import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
+import { disconnectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
 import { createAgentConnectionToken, createBootstrapConnectionToken, getAgentActivity, getAgentCards, linkCardToAgent, listVaultAgents, listVaultCards, revokeVaultAgent, unlinkCardFromAgent, type AgentActivityEntry, type AgentConnectionToken, type LinkedAgentCard, type OwnerAgentCard, type VaultAgent } from '../vaultAgentsApi'
@@ -36,18 +36,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   } finally {
     if (timer) clearTimeout(timer)
   }
-}
-
-// WalletConnect disconnect can itself wait on a dead relay. Never await that
-// cleanup before updating the UI: otherwise a completed/expired signature can
-// leave the OAuth card forever on "Menunggu persetujuan wallet".
-function cleanupWalletConnectInBackground(t: ReturnType<typeof useI18n>['t']) {
-  if (!isMobile() || !getWalletConnectProviderSync()) return
-  void withTimeout(
-    disconnectWalletConnect(),
-    4_000,
-    t('plugin.relayTimeout'),
-  ).catch(() => {})
 }
 
 const Section = ({ title, children, badge, style }: { title: string; children: React.ReactNode; badge?: React.ReactNode; style?: React.CSSProperties }) => (
@@ -300,7 +288,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     if (existing.walletAddress) {
       // MSCA already locked — never create a new one without explicit confirmation.
       throw new Error(t('plugin.walletExists'))
-    }      const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
+    }
+    const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
     // Publish the newly derived MSCA before setting the token. Token polling
     // starts immediately and must not persist an intermediate empty address.
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
@@ -310,7 +299,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     await autoActivateSession(walletAddress, address ?? undefined, sessionToken, AGENT_KEYS.claude)
   }
   const forceRegisterMsca = async () => {
-    // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.      const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
+    // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
+    const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
     // Publish the newly derived MSCA before setting the token. Token polling
     // starts immediately and must not persist an intermediate empty address.
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
@@ -975,72 +965,55 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const walletReady = Boolean(mscaState.walletAddress)
   const agentsReady = vaultAgents.length > 0
   const scrollToAgentConnect = () => document.getElementById('arx-agent-connect')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  // ── OAuth approve flow: passkey → sign SIWE → get auth code → redirect ──
-  // The caller chooses Login for an existing user or Register for a new user;
-  // WebAuthn must never guess which browser ceremony the user intended.
-  /* Legacy OAuth callback handler retained for protocol compatibility; user-facing Hermes onboarding uses Agent Terhubung tokens. */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // ── OAuth approve flow: passkey فقط → auth code → redirect ──
+  // یک امضا: passkey به‌تنهایی هویت Agent Wallet را ثابت می‌کند. دیگر نیازی به
+  // امضای SIWE با wallet اصلی نیست — EOA فقط برای تراکنش‌های ارزش دستی استفاده
+  // می‌شود. Caller انتخاب می‌کند Login (کاربر قدیمی) یا Register (کاربر جدید)؛
+  // WebAuthn هرگز حدس نمی‌زند کدام مراسم مرورگر مدنظر بوده است.
   const approveOAuth = async (passkeyMode: 'Login' | 'Register' = 'Login') => {
     setOauthPasskeyMode(passkeyMode)
     if (!address || !oauthParams) return
     const attempt = ++oauthAttempt.current
-    // Do not open a wallet tab before WebAuthn. On mobile Chrome that new tab
-    // can take focus while the Passkey prompt belongs to the OAuth page, making
-    // the required first approval appear to be skipped.
     setOauthStatus('checking')
     setError(null)
     try {
       // Claude may open this approval page in a separate browser context from
       // Plugin, so its localStorage can lack the passkey/MSCA binding. Never
-      // issue an unbound OAuth token in that case: authenticate the selected
-      // Agent Wallet in this context first and verify that its session is active.
+      // issue an unbound OAuth token: authenticate the selected Agent Wallet
+      // in this context first and verify that its session is active.
       const oauthStorageKey = `arx_oauth_vault_token:${oauthParams.client_id}`
       let oauthMscaWalletAddress = ''
       let oauthMscaSessionToken = localStorage.getItem(oauthStorageKey) || ''
-      let hydratedPasskey = false
       let sessionData: any = null
       let sessionVerified = false
       for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
         // Every new MCP authorization must freshly prove control of the Agent
         // Wallet. Do not trust a persisted MSCA address/token pair here: Claude
         // may reuse the OAuth page while localStorage still contains an older
-        // session, which previously skipped WebAuthn and jumped straight to
-        // the EOA wallet signature.
-        const needsPasskey = true
-        if (needsPasskey) {
-          // Render this phase before opening WebAuthn. The previous code used a
-          // single `signing` state for both WebAuthn and SIWE, so the page kept
-          // displaying "Menunggu persetujuan wallet" while the passkey prompt
-          // was the active request.
-          setOauthStatus('passkey')
-          if (passkeyAttempt > 0) {
-            // A stale token/address pair must not block the one allowed retry.
-            localStorage.removeItem(oauthStorageKey)
-            oauthMscaWalletAddress = ''
-            oauthMscaSessionToken = ''
-          }
-          // Claude/GPT OAuth must authenticate the agent selected by the OAuth
-          // request, never whichever Hermes state was last active in storage.
-          const oauthAgentKey = `oauth:${oauthParams.client_id}|${address.toLowerCase()}`
-          const passkey = await withTimeout(
-            passkeyMode === 'Register' ? registerPasskey(oauthAgentKey) : loginPasskey(oauthAgentKey),
-            60_000,
-            passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
-          )
-          oauthMscaWalletAddress = passkey.walletAddress
-          oauthMscaSessionToken = passkey.sessionToken
-          hydratedPasskey = true
-          // A new user has no delegate/session yet. The same explicit passkey
-          // flow can safely initialize it; existing users take the idempotent
-          // active/reconcile path and do not receive a duplicate owner.
-          await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken, `oauth:${oauthParams.client_id}|${address.toLowerCase()}`)
-          // WebAuthn/session setup is complete; status lookup is a separate
-          // network phase before the SIWE wallet signature.
-          setOauthStatus('checking')
+        // session.
+        setOauthStatus('passkey')
+        if (passkeyAttempt > 0) {
+          // A stale token/address pair must not block the one allowed retry.
+          localStorage.removeItem(oauthStorageKey)
+          oauthMscaWalletAddress = ''
+          oauthMscaSessionToken = ''
         }
-        // Always verify the exact token/address pair, including when storage was
-        // present. This prevents stale localStorage from producing an OAuth token
-        // bound to an inactive or different MSCA.
+        // Claude/GPT OAuth must authenticate the agent selected by the OAuth
+        // request, never whichever Hermes state was last active in storage.
+        const oauthAgentKey = `oauth:${oauthParams.client_id}|${address.toLowerCase()}`
+        const passkey = await withTimeout(
+          passkeyMode === 'Register' ? registerPasskey(oauthAgentKey) : loginPasskey(oauthAgentKey),
+          60_000,
+          passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
+        )
+        oauthMscaWalletAddress = passkey.walletAddress
+        oauthMscaSessionToken = passkey.sessionToken
+        // A new user has no delegate/session yet. The same explicit passkey
+        // flow can safely initialize it; existing users take the idempotent
+        // active/reconcile path and do not receive a duplicate owner.
+        await autoActivateSession(oauthMscaWalletAddress, undefined, oauthMscaSessionToken, `oauth:${oauthParams.client_id}|${address.toLowerCase()}`)
+        // WebAuthn/session setup complete; verify the exact token/address pair.
+        setOauthStatus('checking')
         const sessionResponse = await withTimeout(
           fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${oauthMscaSessionToken}` } }),
           20_000,
@@ -1059,120 +1032,21 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         }
         throw new Error(t('plugin.passkeySessionMismatch'))
       }
-      if (hydratedPasskey) {
-        // OAuth session is local to the approval flow. Do not replace Hermes'
-        // token or its wallet state while Claude/GPT is being connected.
-        localStorage.setItem(oauthStorageKey, oauthMscaSessionToken)
-        // OAuth is client-scoped. Do not write its wallet/session into the
-        // generic dashboard MSCA state, which may belong to Hermes or another
-        // agent. The backend binding is the source of truth for this OAuth agent.
-        setOauthStatus('approving')
-      }
-
-      // 1. Get SIWE challenge from MCP server. Every network/provider step is
-      // bounded so a suspended mobile tab cannot leave the button stuck forever.
-      const msgResp = await withTimeout(
-        fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}&request_id=${encodeURIComponent(oauthParams.request_id)}`, { headers: { 'Authorization': `Bearer ${oauthMscaSessionToken}` } }),
-        20_000,
-        t('plugin.challengeTimeout'),
-      )
-      if (!msgResp.ok) throw new Error(`Gagal mendapat challenge (${msgResp.status})`)
-      const msgData = await withTimeout(msgResp.json(), 10_000, t('plugin.challengeResponseTimeout'))
-      if (!msgData.message) throw new Error(t('plugin.challengeFailed'))
-
-      // 2. Sign with the already-connected wallet provider. This is a separate
-      // SIWE proof from the passkey step above; it proves control of the EOA
-      // identity used by the MCP OAuth client.
-      // Do not use window.ethereum: on mobile it can trigger an unintended app switch.
-      setOauthStatus('wallet')
-      let provider = await withTimeout(
-        findConnectedWalletProvider(address),
-        20_000,
-        t('plugin.providerTimeout'),
-      )
-      // Claude can open OAuth in a separate mobile browser context where the
-      // injected provider from the original Plugin tab is unavailable. Start
-      // a fresh WalletConnect pairing instead of waiting for a request with no
-      // provider transport to deliver it.
-      if (!provider && isMobile() && isWalletConnectAvailable()) {
-        const connectedAddress = await withTimeout(
-          connectWalletConnect(),
-          180_000,
-          t('plugin.walletConnectTimeout'),
-        )
-        if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) {
-          throw new Error(t('plugin.walletConnectMismatch'))
-        }
-        const connectedProvider = getWalletConnectProviderSync()
-        if (connectedProvider) {
-          ;(window as any).ethereum = connectedProvider
-          provider = await findConnectedWalletProvider(address)
-        }
-      }
-      if (!provider) throw new Error(t('plugin.walletMainMissing'))
-      const from = address
-      const messageHex = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
-      // Re-open the relay before creating the request. The approval helper
-      // opens the wallet universal link in a separate tab after the request is
-      // queued, keeping this page alive to receive the relay response.
-      const walletConnectProvider = getWalletConnectProviderSync()
-      const usingWalletConnect = Boolean(walletConnectProvider && provider === walletConnectProvider)
-      if (isMobile() && usingWalletConnect) {
-        // Opening the relay is asynchronous. Starting personal_sign before it
-        // is open creates a request that can be delivered to the wallet but
-        // whose response has no live transport to return through, leaving this
-        // card on "Menunggu persetujuan wallet app" after the user approved.
-        const relayReady = await withTimeout(
-          resumeWalletConnect(),
-          8_000,
-          t('plugin.relayTimeout'),
-        )
-        if (!relayReady) throw new Error(t('plugin.relayUnavailable'))
-      }
-      const signPromise = provider.request({ method: 'personal_sign', params: [messageHex, from] }) as Promise<string>
-      // Attach a rejection handler immediately. If the relay dies after the
-      // wallet has displayed/approved the request, the underlying provider
-      // promise may settle later than our timeout; it must not create an
-      // unhandled rejection or keep the UI in a stale signing state.
-      signPromise.catch(() => {})
-      // WalletConnect sends the request through the relay, but mobile Chrome
-      // does not always foreground the connected wallet app for a later
-      // personal_sign. Open the wallet's universal link in a new tab after the
-      // request is queued; the approval page remains alive to receive the
-      // relay response when the user returns from the wallet app.
-      if (isMobile() && usingWalletConnect) redirectToWalletForSign()
-      let timeoutId: ReturnType<typeof setTimeout> | null = null
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Wallet signature response timeout. Jika sudah menekan Approve di app, kembali ke browser; koneksi WalletConnect akan dipulihkan saat mencoba lagi.')), 90_000)
-      })
-      let signature: string
-      try {
-        signature = await Promise.race([signPromise, timeoutPromise])
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId)
-      }
-      if (attempt !== oauthAttempt.current) return
+      // OAuth session is local to the approval flow. Do not replace Hermes'
+      // token or its wallet state while Claude/GPT is being connected.
+      localStorage.setItem(oauthStorageKey, oauthMscaSessionToken)
       setOauthStatus('approving')
 
-      // Send only the token issued by passkey registration/login. The backend
-      // re-validates this token against the exact MSCA and active session before
-      // creating the EOA alias, so no client-side status preflight is needed.
-      // In particular, do not fall back to the EOA/SIWE token: that would bind
-      // an identity without proof of control of the selected Agent Wallet.
-      const mscaBinding: Record<string, string> = {}
-      if (oauthMscaSessionToken && oauthMscaWalletAddress) {
-        mscaBinding.mscaWalletAddress = oauthMscaWalletAddress
-        mscaBinding.mscaSessionToken = oauthMscaSessionToken
-      }
-
-      // 3. Verify → get auth code → redirect
-      const codeResp = await withTimeout(fetch(`${API}/api/auth/siwe-verify`, {
+      // یک امضا کافی است: توکن passkey هویت MSCA را ثابت می‌کند. بک‌اند توکن را
+      // نسبت به MSCA دقیق و session فعال re-validate می‌کند و کد OAuth صادر
+      // می‌شود — بدون هیچ امضای SIWE از wallet اصلی.
+      const codeResp = await withTimeout(fetch(`${API}/api/auth/passkey-verify`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          address: from, message: msgData.message, signature,
+          mscaWalletAddress: oauthMscaWalletAddress,
+          mscaSessionToken: oauthMscaSessionToken,
           requestId: oauthParams.request_id, clientId: oauthParams.client_id, redirectUri: oauthParams.redirect_uri,
           state: oauthParams.state, codeChallenge: oauthParams.code_challenge,
-          ...mscaBinding,
         }),
       }), 20_000, t('plugin.verifyTimeout'))
       const codeData = await withTimeout(codeResp.json(), 10_000, t('plugin.verificationIncomplete'))
@@ -1185,15 +1059,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error(codeData.error || t('plugin.authorizationCodeFailed'))
     } catch (e: any) {
       if (attempt !== oauthAttempt.current) return
-      // Update React state before relay cleanup. A dead WalletConnect socket
-      // must never block the error/retry state from rendering.
       setOauthStatus('error')
       setError(e?.message || t('plugin.oauthFailed'))
-      // Reset only the WC transport so the next retry starts cleanly; injected
-      // desktop providers are left untouched. Cleanup is deliberately
-      // fire-and-forget and bounded because disconnect() may hang on a dead
-      // relay after the wallet already accepted the signature.
-      cleanupWalletConnectInBackground(t)
     }
   }
 
@@ -1599,6 +1466,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
               {t('plugin.mscaDescription')}
             </div>
+            {/* The onboarding stepper (shown for brand-new users) already offers
+                Create Wallet + Login Passkey; repeating the same pair here made
+                the panel feel like it needed two wallets. Only render these
+                buttons when the stepper is hidden (existing multi-agent users
+                or no primary wallet connected). */}
+            {(!anyConnected && address) ? null : (
             <div style={{ display: 'flex', gap: 8 }}>
               <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
                 {t('plugin.loginPasskey')}
@@ -1607,6 +1480,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 {t('plugin.newWallet')}
               </button>
             </div>
+            )}
           </div>
         ) : (
           <div>
