@@ -455,16 +455,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const refreshVaultAgents = async () => {
-    if (!sessionToken) return
+    // The vault agent list must be reachable from any active agent session,
+    // not only from the Claude/GPT dashboard session. A user who only created
+    // a Hermes wallet (no Claude session) must still see their agents.
+    const token = sessionToken || hermesWallet?.sessionToken || ''
+    if (!token) return
     try {
       // Do not let an optional cards failure hide the authoritative agent list.
-      const agents = await listVaultAgents(sessionToken)
+      const agents = await listVaultAgents(token)
       // Keep previously loaded bindings until the refresh succeeds; login of a
       // different agent must not make Claude disappear during the request.
 
       setVaultAgents(agents)
       try {
-        setOwnerCards(await listVaultCards(sessionToken))
+        setOwnerCards(await listVaultCards(token))
       } catch (cardsError) {
         console.warn('[plugin] cards refresh failed; preserving agent list', cardsError)
       }
@@ -474,9 +478,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const refreshAgentDetails = async (agentKey: string) => {
-    if (!sessionToken) return
+    const token = sessionToken || hermesWallet?.sessionToken || ''
+    if (!token) return
     try {
-      const [activityRows, cards] = await Promise.all([getAgentActivity(agentKey, sessionToken), getAgentCards(agentKey, sessionToken)])
+      const [activityRows, cards] = await Promise.all([getAgentActivity(agentKey, token), getAgentCards(agentKey, token)])
       setAgentDetails(prev => ({ ...prev, [agentKey]: { activity: activityRows, cards } }))
       setAgentCardDrafts(prev => {
         if (prev[agentKey]) return prev
@@ -633,12 +638,14 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const revokeAgent = async (agent: VaultAgent) => {
-    if (!agent.agentKey || !sessionToken) return
+    if (!agent.agentKey) return
+    const token = sessionToken || hermesWallet?.sessionToken || ''
+    if (!token) return
     if (!window.confirm(`${t('plugin.agentRevokeConfirm')}\n\n${agent.clientName || t('plugin.mcpAgent')}`)) return
     setAgentAction(`revoke:${agent.agentKey}`)
     setError(null)
     try {
-      await revokeVaultAgent(agent.agentKey, sessionToken)
+      await revokeVaultAgent(agent.agentKey, token)
       // Revoke is scoped to the selected agent. If this browser is currently
       // using that exact Agent Wallet, clear its local session too so the UI
       // cannot appear active after the backend has revoked it.
@@ -834,9 +841,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Agents (and every vault panel) vanished on refresh until the next passkey
   // login, because sessionToken only lived in React memory.
   useEffect(() => {
-    const stored = localStorage.getItem('arx_passkey_vault_token') || localStorage.getItem('arx_vault_token') || ''
+    const storedClaude = localStorage.getItem('arx_passkey_vault_token') || localStorage.getItem('arx_vault_token') || ''
+    const storedHermes = localStorage.getItem('arx_hermes_vault_token') || ''
+    // Restore vault agents from whichever session is available. A Hermes-only
+    // user (no Claude session) must still see their agent list.
+    const stored = storedClaude || storedHermes
     if (!stored || sessionTokenRef.current) return
-    setSessionToken(stored)
+    if (storedClaude) setSessionToken(storedClaude)
     void listVaultAgents(stored).then(setVaultAgents).catch(() => {})
   }, [])
 
