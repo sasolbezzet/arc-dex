@@ -1307,7 +1307,9 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <StatusDot on={claudeConnected} label="Claude" />
           <StatusDot on={anyConnected} label={anyConnected ? t('plugin.agentActive') : t('plugin.noAgent')} />
         </div>
+        {(sessionToken || hermesWallet) && (
         <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); Object.keys(localStorage).forEach(k => { if (k.startsWith('arx_oauth_vault_token:')) localStorage.removeItem(k) }); setSessionToken(null); setMscaState(prev => ({ ...prev, walletAddress: '', sessionActive: false, delegateAddress: '' })) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>{t('plugin.logout')}</button>
+        )}
       </div>
 
       <Section title={t('plugin.mcpUrlTitle')} badge={anyConnected ? <StatusDot on={true} label={t('plugin.connected')} /> : undefined}>
@@ -1582,7 +1584,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         </div>
       </Section>
 
-      {/* Agent Wallet (MSCA + Passkey) */}
+      {/* Agent Wallet (MSCA + Passkey) — Claude/GPT dashboard wallet */}
+      {address && (
       <Section title={t('plugin.agentWallet')} style={{ order: -40 }} badge={
         mscaState.walletAddress
           ? (mscaState.sessionActive ? <StatusDot on={true} label={mscaState.deployed ? t('plugin.deployedActive') : t('plugin.sessionActive')} /> : <StatusDot on={false} label={t('plugin.sessionInactive')} />)
@@ -1675,6 +1678,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
         )}
       </Section>
+      )}
 
       {/* Multi-chain Agent Wallet Balances */}
       {mscaState.walletAddress && (
