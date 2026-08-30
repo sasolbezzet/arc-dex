@@ -1,7 +1,6 @@
-// AgentWalletList.tsx — "1 wallet = 1 agent" wallet overview.
-// One compact row per Agent Wallet: whose wallet it is, its address, and a
-// single balance line underneath. Deliberately space-efficient: the full
-// multi-chain dashboard stays in MultiChainBalances.
+// AgentWalletList.tsx — "1 wallet = 1 agent" compact wallet overview.
+// One single row per Agent Wallet: status dot · label · short address · balance.
+// Minimal vertical footprint — the full multi-chain dashboard stays in MultiChainBalances.
 import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 
@@ -14,7 +13,7 @@ export interface AgentWalletEntry {
 const API = ''
 
 function shortAddress(address: string) {
-  return address.length > 14 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address
+  return address.length > 14 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address
 }
 
 function sumToken(balances: Record<string, any> | undefined, token: string) {
@@ -23,11 +22,10 @@ function sumToken(balances: Record<string, any> | undefined, token: string) {
     const value = Number(String((chain as any)?.[token] ?? '0').replace(/,/g, ''))
     if (Number.isFinite(value)) total += value
   }
-  // Compact display: never show more than 4 decimals.
   return total.toFixed(total > 0 && total < 0.01 ? 4 : 2).replace(/\.?0+$/, m => (m.includes('.') ? '' : m))
 }
 
-function BalanceLine({ address }: { address: string }) {
+function BalanceText({ address }: { address: string }) {
   const { t } = useI18n()
   const [text, setText] = useState('')
   useEffect(() => {
@@ -39,48 +37,44 @@ function BalanceLine({ address }: { address: string }) {
         const data = await res.json()
         if (cancelled) return
         const usdc = sumToken(data?.balances, 'USDC')
-        const arc = data?.balances?.['arc-testnet']
-        const nativeSymbol = String(arc?.nativeSymbol || '')
-        const native = Number(String(arc?.nativeBalance ?? '0').replace(/,/g, ''))
-        const parts = [`${usdc} USDC`]
-        if (nativeSymbol && nativeSymbol !== 'USDC' && Number.isFinite(native) && native > 0) parts.push(`${native.toFixed(4).replace(/\.?0+$/, m => (m.includes('.') ? '' : m))} ${nativeSymbol}`)
-        setText(parts.join(' · '))
+        setText(usdc ? `${usdc} USDC` : '')
       } catch {
-        if (!cancelled) setText(t('plugin.walletBalanceUnavailable'))
+        if (!cancelled) setText('—')
       }
     }
     void load()
     const interval = setInterval(load, 60_000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [address, t])
-  if (!text) return <span style={{ color: '#475569', fontSize: 10 }}>…</span>
-  return <span style={{ color: '#86efac', fontSize: 10 }}>{text}</span>
+  if (!text) return <span style={{ color: '#475569', fontSize: 9 }}>…</span>
+  return <span style={{ color: '#86efac', fontSize: 9 }}>{text}</span>
 }
 
 export function AgentWalletList({ wallets }: { wallets: AgentWalletEntry[] }) {
   const { t } = useI18n()
   if (wallets.length === 0) return null
   return (
-    <div style={{ padding: '8px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8, marginBottom: 10 }}>
-      <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>{t('plugin.agentWalletListTitle')}</div>
+    <div style={{ padding: '6px 8px', background: 'rgba(18,18,26,0.5)', borderRadius: 6, marginBottom: 8 }}>
+      <div style={{ color: '#94a3b8', fontSize: 9, marginBottom: 3 }}>{t('plugin.agentWalletListTitle')}</div>
       {wallets.map(wallet => (
-        <div key={wallet.address} style={{ padding: '6px 0', borderTop: wallets[0].address === wallet.address ? 'none' : '1px solid rgba(30,30,46,0.7)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              {wallet.live ? <span title={t('plugin.agentStatusConnected')} style={{ width: 7, height: 7, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} /> : <span title={t('plugin.idle')} style={{ width: 7, height: 7, borderRadius: '50%', background: '#64748b', flexShrink: 0 }} />}
-              <span style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{wallet.label}</span>
-            </span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-              <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#94a3b8' }}>{shortAddress(wallet.address)}</span>
-              <span role='button' aria-label={t('plugin.copyWalletAddress')} onClick={() => navigator.clipboard?.writeText(wallet.address).catch(() => {})} style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>📋</span>
-            </span>
-          </div>
-          <div style={{ paddingLeft: 13, marginTop: 1 }}>
-            <BalanceLine address={wallet.address} />
-          </div>
+        <div key={wallet.address} style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0',
+          borderTop: wallets[0].address === wallet.address ? 'none' : '1px solid rgba(30,30,46,0.5)',
+        }}>
+          {/* status dot */}
+          {wallet.live
+            ? <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
+            : <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#64748b', flexShrink: 0 }} />}
+          {/* agent label */}
+          <span style={{ color: '#e2e8f0', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', minWidth: 42 }}>{wallet.label}</span>
+          {/* address */}
+          <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#64748b', flexShrink: 0 }}>{shortAddress(wallet.address)}</span>
+          {/* copy button */}
+          <span role='button' aria-label={t('plugin.copyWalletAddress')} onClick={() => navigator.clipboard?.writeText(wallet.address).catch(() => {})} style={{ cursor: 'pointer', fontSize: 9, opacity: 0.6, flexShrink: 0 }}>📋</span>
+          {/* balance — right aligned, fills remaining space */}
+          <span style={{ marginLeft: 'auto' }}><BalanceText address={wallet.address} /></span>
         </div>
       ))}
-      <div style={{ color: '#475569', fontSize: 9, marginTop: 4 }}>{t('plugin.agentWalletListNote')}</div>
     </div>
   )
 }

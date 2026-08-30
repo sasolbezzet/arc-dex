@@ -192,7 +192,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Keep every backend binding visible. The active passkey wallet is only an
   // unbound extra row; it must never replace or hide Claude/Hermes bindings.
   if (mscaState.walletAddress && !agentWalletEntries.some(w => w.address.toLowerCase() === mscaState.walletAddress!.toLowerCase())) {
-    agentWalletEntries.push({ address: mscaState.walletAddress, label: t('plugin.walletBrowserActive'), live: false })
+    agentWalletEntries.push({ address: mscaState.walletAddress, label: 'Claude', live: false })
   }
   if (hermesWallet?.walletAddress && !agentWalletEntries.some(w => w.address.toLowerCase() === hermesWallet!.walletAddress.toLowerCase())) {
     agentWalletEntries.push({ address: hermesWallet.walletAddress, label: 'Hermes', live: false })
