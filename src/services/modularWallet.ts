@@ -232,15 +232,35 @@ function registrationUsername(agentKey = DEFAULT_AGENT_KEY) {
   // Circle requires a globally unique username for each registration. Never
   // reuse the old single global username: creating a second agent otherwise
   // fails before WebAuthn with `username is duplicate`.
-  const safeAgent = String(agentKey || DEFAULT_AGENT_KEY).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)
-  const key = `${PASSKEY_REGISTRATION_USERNAME_KEY}:${safeAgent}`
-  try {
-    const value = `arx-${safeAgent}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    localStorage.setItem(key, value)
-    return value
-  } catch {
-    return `arx-${safeAgent}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  //
+  // Username rules enforced by Circle:
+  //   - 5 to 50 characters
+  //   - only alphanumeric and _@.:+-
+  //
+  // OAuth agent keys are long (e.g. `oauth:claude|0xabc...`) and would exceed
+  // the 50-char limit or contain invalid characters after normalization.
+  // Collapse every agent to a short stable slug so the full username always
+  // fits within Circle's limit.
+  const AGENT_SLUGS: Record<string, string> = {
+    [DEFAULT_AGENT_KEY]: 'claude',
+    'oauth:claude': 'claude',
+    'oauth:chatgpt': 'gpt',
+    'hermes-mcp': 'hermes',
   }
+  const rawSlug = AGENT_SLUGS[String(agentKey || '').toLowerCase()]
+    || String(agentKey || DEFAULT_AGENT_KEY).toLowerCase()
+      .replace(/^oauth:/, '')
+      .replace(/\|.*$/, '')
+      .replace(/[^a-z0-9]+/g, '')
+      .slice(0, 12)
+  const safeAgent = (rawSlug || 'agent').slice(0, 12)
+  const stamp = Date.now().toString(36).slice(-6)
+  const rand = Math.random().toString(36).slice(2, 6)
+  // arx-<slug12>-<stamp6>-<rand4> = max 4+12+1+6+1+4 = 28 chars, well under 50.
+  const value = `arx-${safeAgent}-${stamp}-${rand}`
+  const key = `${PASSKEY_REGISTRATION_USERNAME_KEY}:${safeAgent}`
+  try { localStorage.setItem(key, value) } catch { /* ignore */ }
+  return value
 }
 
 /**
