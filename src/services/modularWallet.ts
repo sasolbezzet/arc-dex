@@ -556,7 +556,7 @@ export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ w
       if (String(smartAccount.address).toLowerCase() !== walletAddress.toLowerCase()) {
         throw new Error('Passkey wallet address mismatch')
       }
-      saveState({ walletAddress, credential, sessionActive: false }, resolveAgentKey(agentKey))
+      saveState({ walletAddress, credential, sessionActive: false }, selectedAgentKey)
       return { walletAddress, credential, sessionToken: String(verified.token) }
     } catch (error) {
       throw new Error(passkeyErrorMessage(error), { cause: error })
