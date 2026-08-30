@@ -35,6 +35,7 @@ let pendingUri: string | null = null
 let uriResolve: ((uri: string) => void) | null = null
 let visibilityHandler: (() => void) | null = null
 let relayOpenPromise: Promise<boolean> | null = null
+let pendingSignRedirect = false
 
 function removeVisibilityHandler() {
   if (visibilityHandler && typeof document !== 'undefined') {
@@ -59,6 +60,7 @@ function resetProvider() {
   wcProvider = null
   pendingUri = null
   uriResolve = null
+  pendingSignRedirect = false
   // Clear stale WalletConnect v2 localStorage entries that can cause
   // init to hang on mobile Chrome when recovering from a broken session.
   try {
@@ -269,7 +271,7 @@ export async function resumeWalletConnect(): Promise<boolean> {
 }
 
 export function redirectToWalletForSign(openedWindow?: Window | null): boolean {
-  if (!isMobile() || !wcProvider?.session) return false
+  if (!isMobile() || !wcProvider?.session || pendingSignRedirect) return false
 
   const peer = wcProvider.session?.peer?.metadata
   const redirect = peer?.redirect
@@ -302,6 +304,7 @@ export function redirectToWalletForSign(openedWindow?: Window | null): boolean {
     ? openedWindow
     : window.open(target, '_blank', 'noopener,noreferrer')
   if (opened) {
+    pendingSignRedirect = true
     opened.location.href = target
     return true
   }
@@ -309,6 +312,7 @@ export function redirectToWalletForSign(openedWindow?: Window | null): boolean {
   anchor.href = target
   anchor.target = '_blank'
   anchor.rel = 'noopener noreferrer'
+  pendingSignRedirect = true
   anchor.click()
   return true
 }
@@ -372,6 +376,7 @@ export async function connectWalletConnect(): Promise<string | null> {
     if (!provider) throw new Error('WalletConnect tidak tersedia — pastikan VITE_WC_PROJECT_ID sudah dikonfigurasi')
 
     pendingUri = null
+    pendingSignRedirect = false
 
     // enable() = connect + session settle + accounts terisi.
     const enablePromise: Promise<string[]> = provider.enable()
@@ -430,6 +435,7 @@ export async function connectWalletConnect(): Promise<string | null> {
       resetProvider()
       return null
     }
+    pendingSignRedirect = false
     resetProvider()
     if (/Koneksi ke relay WalletConnect gagal/.test(e?.message || '')) {
       throw new Error('Relay WalletConnect tidak merespons. Periksa jaringan/VPN/ad blocker lalu coba lagi.')
