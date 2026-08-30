@@ -554,7 +554,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   }
 
   const createHermesWallet = async () => {
-    if (!sessionToken || !address) { setError(t('plugin.vaultLoginFailed')); return }
+    if (!address) { setError(t('plugin.walletMainMissing')); return }
     setAgentAction('hermes-wallet')
     setError(null)
     try {
@@ -1204,7 +1204,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             </div>
             {!walletReady && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <button className='btn btn-primary' disabled={busy === 'register'} onClick={() => run('register', registerMsca)}>{t('plugin.stepCreateWallet')}</button>
+                <button className='btn btn-primary' disabled={busy !== null} onClick={() => run('register', registerMsca)}>{t('plugin.stepCreateWallet')}</button>
                 <button className='btn' disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>{t('plugin.stepLoginPasskey')}</button>
               </div>
             )}
@@ -1350,7 +1350,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <div style={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.45, marginBottom: 8 }}>{t('plugin.hermesPanelCopy')}</div>
           {!hermesWallet ? (
             <div style={{ display: 'flex', gap: 6 }}>
-              <button type='button' onClick={() => void createHermesWallet()} disabled={agentAction !== null || !sessionToken} className='btn btn-primary'>{agentAction === 'hermes-wallet' ? t('plugin.creatingPasskeyWallet') : t('plugin.newWallet')}</button>
+              <button type='button' onClick={() => void createHermesWallet()} disabled={agentAction !== null} className='btn btn-primary'>{agentAction === 'hermes-wallet' ? t('plugin.creatingPasskeyWallet') : t('plugin.newWallet')}</button>
               <button type='button' onClick={() => void run('hermes-login', async () => { const result = await loginPasskey('hermes-mcp'); setHermesWallet({ walletAddress: result.walletAddress, sessionToken: result.sessionToken }); localStorage.setItem('arx_hermes_vault_token', result.sessionToken); localStorage.setItem('arx_hermes_wallet_address', result.walletAddress); await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken); await refreshVaultAgents() })} disabled={agentAction !== null || !sessionToken} className='btn'>{t('plugin.loginPasskey')}</button>
               <button type='button' onClick={() => void run('hermes-revoke', async () => { if (!hermesWallet) return; await revokeSessionKey(hermesWallet.sessionToken, AGENT_KEYS.hermes); localStorage.removeItem('arx_hermes_vault_token'); localStorage.removeItem('arx_hermes_wallet_address'); setHermesWallet(null); await refreshVaultAgents() })} disabled={agentAction !== null || !hermesWallet} className='btn'>{t('plugin.revoke')}</button>
             </div>
