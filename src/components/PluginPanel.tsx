@@ -1398,7 +1398,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           )}
         </div>
         {vaultAgents.length === 0 ? (
-          !hermesWallet ? (
+          !hermesWallet && !mscaState.walletAddress ? (
             <div>
               <div style={{ color: '#fbbf24', fontSize: 12, lineHeight: 1.5, padding: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, marginBottom: 10 }}>
                 {t('plugin.agentWalletRequired')}
@@ -1406,6 +1406,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             </div>
           ) : (
           <div>
+            {agentWalletEntries.length > 0 && <AgentWalletList wallets={agentWalletEntries} />}
             <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>{t('plugin.noVaultAgents')}</div>
           </div>
           )
