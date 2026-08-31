@@ -1850,6 +1850,14 @@ button, a, select {
 .plugin-provider-card .mini-button { grid-column: 1 / -1; }
 .agent-card-description { display: grid; gap: 7px; }
 .agent-key { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8190a6; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.agent-balance-panel { display: grid; gap: 9px; padding: 11px; border: 1px solid rgba(34,211,238,.16); border-radius: 10px; background: linear-gradient(135deg, rgba(34,211,238,.06), rgba(2,6,23,.34)); }
+.agent-balance-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #a8b3c7; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .55px; }
+.agent-balance-head small { color: #71809a; font-size: 9px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.agent-balance-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.agent-balance-values div { display: grid; gap: 3px; min-width: 0; }
+.agent-balance-values strong { color: #e0f2fe; font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.agent-balance-values span { color: #71809a; font-size: 9px; }
+.agent-balance-unavailable { color: #71809a !important; font-size: 10px !important; }
 .agent-health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .agent-health-item { display: grid; gap: 4px; min-width: 0; padding: 9px; border: 1px solid rgba(148,163,184,.12); border-radius: 9px; background: rgba(2,6,23,.3); }
 .agent-health-item span { color: #71809a; font-size: 10px; }
@@ -1923,6 +1931,7 @@ button, a, select {
   .plugin-first-run-grid { grid-template-columns: minmax(0, 1fr); }
   .plugin-panel-section { padding: 15px; }
   .plugin-form-grid, .agent-health-grid, .plugin-security-checks { grid-template-columns: minmax(0, 1fr); }
+  .agent-balance-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .plugin-credential-row { grid-template-columns: auto minmax(0, 1fr); }
   .plugin-credential-row code { grid-column: 2; max-width: 100%; }
   .plugin-hero-actions .action-button, .plugin-hero-actions .mini-button { width: 100%; }

@@ -79,6 +79,18 @@ export function AgentCard({
 
       {agent ? (
         <>
+          <div className='agent-balance-panel'>
+            <div className='agent-balance-head'><span>Saldo Agent Wallet · Arc</span><small>{agent.balanceUpdatedAt ? 'Diperbarui' : 'Memuat…'}</small></div>
+            {agent.balance
+              ? <div className='agent-balance-values'>
+                  <div><strong>{agent.balance.USDC ?? '0'}</strong><span>USDC</span></div>
+                  <div><strong>{agent.balance.EURC ?? '0'}</strong><span>EURC</span></div>
+                  <div><strong>{agent.balance.USYC ?? '0'}</strong><span>USYC</span></div>
+                  <div><strong>{agent.balance.cirBTC ?? '0'}</strong><span>cirBTC</span></div>
+                </div>
+              : <p className='agent-balance-unavailable'>Saldo belum tersedia. Muat ulang setelah backend RPC merespons.</p>}
+          </div>
+
           <div className='agent-health-grid'>
             <div className='agent-health-item'>
               <span>Passkey</span>

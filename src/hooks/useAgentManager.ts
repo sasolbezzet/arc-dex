@@ -75,6 +75,42 @@ function toAgentState(agent: VaultAgent, sessions: McpSession[]): AgentState {
   }
 }
 
+/**
+ * OAuth approval stores one passkey session per MCP client. A single
+ * `vaultToken` is not enough to render every independently-created Agent
+ * Wallet, so read all locally-held owner/passkey session tokens and merge the
+ * owner-scoped read results. Tokens are never sent anywhere except the same
+ * origin vault endpoints.
+ */
+function storedVaultTokens(primary: string | null): string[] {
+  const tokens: string[] = []
+  const add = (value: string | null) => {
+    const token = String(value || '').trim()
+    if (token && !tokens.includes(token)) tokens.push(token)
+  }
+  add(primary)
+  if (typeof window === 'undefined') return tokens
+  try {
+    add(localStorage.getItem('arx_vault_token'))
+    add(localStorage.getItem('arx_passkey_vault_token'))
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key?.startsWith('arx_oauth_vault_token:')) add(localStorage.getItem(key))
+    }
+  } catch { /* storage can be unavailable in privacy mode */ }
+  return tokens
+}
+
+interface AgentReadResult {
+  token: string
+  agents: PromiseSettledResult<VaultAgent[]>
+  sessions: PromiseSettledResult<McpSession[]>
+  approvals: PromiseSettledResult<Awaited<ReturnType<typeof listApprovals>>>
+  activity: PromiseSettledResult<Awaited<ReturnType<typeof listActivity>>>
+  credentials: PromiseSettledResult<Awaited<ReturnType<typeof listCredentials>>>
+  limits: PromiseSettledResult<Awaited<ReturnType<typeof getLimits>>>
+}
+
 export function useAgentManager() {
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -96,6 +132,7 @@ export function useAgentManager() {
     setApprovals,
     setActivity,
     setConnectionToken,
+    updateAgent,
     removeAgent,
   } = useAgentStore()
 
@@ -117,46 +154,122 @@ export function useAgentManager() {
     safeSet(setError, message || fallback)
   }, [clearVaultToken, safeSet])
 
+  const refreshAgentBalances = useCallback((nextAgents: AgentState[]) => {
+    void Promise.all(nextAgents.map(async agent => {
+      try {
+        const response = await fetch(`/api/balance/${encodeURIComponent(agent.walletAddress)}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(12_000),
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data?.error || `Balance request failed (${response.status})`)
+        if (mounted.current) updateAgent(agent.agentKey, { balance: data, balanceUpdatedAt: Date.now() })
+      } catch {
+        // Keep the card honest: unavailable is distinct from a real zero.
+        if (mounted.current) updateAgent(agent.agentKey, { balance: null, balanceUpdatedAt: Date.now() })
+      }
+    }))
+  }, [updateAgent])
+
   const refreshAll = useCallback(async () => {
-    if (!vaultToken) return
-    const [agentsResult, sessionsResult, approvalsResult, activityResult, credentialsResult, limitsResult] = await Promise.allSettled([
-      listVaultAgents(vaultToken),
-      listMcpSessions(vaultToken),
-      listApprovals(vaultToken),
-      listActivity(vaultToken, 5),
-      listCredentials(vaultToken),
-      getLimits(vaultToken),
-    ])
+    const tokens = storedVaultTokens(vaultToken)
+    if (tokens.length === 0) return
+
+    const reads: AgentReadResult[] = await Promise.all(tokens.map(async token => {
+      const [agents, sessions, approvals, activity, credentials, limits] = await Promise.allSettled([
+        listVaultAgents(token),
+        listMcpSessions(token),
+        listApprovals(token),
+        listActivity(token, 5),
+        listCredentials(token),
+        getLimits(token),
+      ])
+      return { token, agents, sessions, approvals, activity, credentials, limits }
+    }))
 
     if (!mounted.current) return
 
-    // A dead token makes every call fail the same way; clear it once.
-    if (
-      agentsResult.status === 'rejected'
-      && agentsResult.reason instanceof VaultApiError
-      && agentsResult.reason.code === SESSION_EXPIRED
-    ) {
-      clearVaultToken()
+    const agentMap = new Map<string, VaultAgent>()
+    const sessionMap = new Map<string, McpSession>()
+    const approvalMap = new Map<string, Awaited<ReturnType<typeof listApprovals>>[number]>()
+    const activityMap = new Map<string, Awaited<ReturnType<typeof listActivity>>[number]>()
+    const credentialMap = new Map<string, Awaited<ReturnType<typeof listCredentials>>[number]>()
+    let firstLimits: Awaited<ReturnType<typeof getLimits>> | null = null
+    let successfulAgentRead = false
+    let candidateToken = ''
+
+    for (const read of reads) {
+      if (read.agents.status === 'fulfilled') {
+        successfulAgentRead = true
+        candidateToken ||= read.token
+        for (const agent of read.agents.value) agentMap.set(agent.agentKey, agent)
+      }
+      if (read.sessions.status === 'fulfilled') {
+        for (const session of read.sessions.value) {
+          const key = `${session.clientId}:${session.agent}`
+          const previous = sessionMap.get(key)
+          if (!previous || previous.lastActivity < session.lastActivity) sessionMap.set(key, session)
+        }
+      }
+      if (read.approvals.status === 'fulfilled') for (const item of read.approvals.value) approvalMap.set(item.id, item)
+      if (read.activity.status === 'fulfilled') for (const item of read.activity.value) activityMap.set(item.id, item)
+      if (read.credentials.status === 'fulfilled') {
+        for (const item of read.credentials.value) credentialMap.set(item.id, item)
+      }
+      if (!firstLimits && read.limits.status === 'fulfilled') firstLimits = read.limits.value
+    }
+
+    // A dead token makes every owner read fail. If another OAuth passkey token
+    // is still valid, keep it and continue rendering the connected agents.
+    if (!successfulAgentRead) {
+      const allExpired = reads.every(read => read.agents.status === 'rejected'
+        && read.agents.reason instanceof VaultApiError
+        && read.agents.reason.code === SESSION_EXPIRED)
+      if (allExpired) clearVaultToken()
       return
     }
+    if (!vaultToken && candidateToken) setVaultToken(candidateToken)
 
-    const sessions = sessionsResult.status === 'fulfilled' ? sessionsResult.value : []
-    if (sessionsResult.status === 'fulfilled') setMcpSessions(sessions)
-    if (agentsResult.status === 'fulfilled') {
-      setAgents(agentsResult.value.map(agent => toAgentState(agent, sessions)))
-    }
-    if (approvalsResult.status === 'fulfilled') setApprovals(approvalsResult.value)
-    if (activityResult.status === 'fulfilled') setActivity(activityResult.value)
-    if (credentialsResult.status === 'fulfilled') setCredentials(credentialsResult.value)
-    if (limitsResult.status === 'fulfilled') setLimits(limitsResult.value)
-  }, [vaultToken, clearVaultToken, setAgents, setMcpSessions, setApprovals, setActivity])
+    const sessions = [...sessionMap.values()]
+    const nextAgents = [...agentMap.values()].map(agent => toAgentState(agent, sessions))
+    setMcpSessions(sessions)
+    setAgents(nextAgents)
+    setApprovals([...approvalMap.values()])
+    setActivity([...activityMap.values()].sort((left, right) => right.ts - left.ts).slice(0, 5))
+    setCredentials([...credentialMap.values()])
+    if (firstLimits) setLimits(firstLimits)
+    refreshAgentBalances(nextAgents)
+  }, [vaultToken, clearVaultToken, setVaultToken, setAgents, setMcpSessions, setApprovals, setActivity, setCredentials, setLimits, refreshAgentBalances])
 
   useEffect(() => {
-    if (!vaultToken) return
-    refreshAll()
-    const interval = setInterval(refreshAll, REFRESH_MS)
+    // OAuth passkey sessions are intentionally stored per MCP client and do
+    // not replace the active Hermes vault token. Start the dashboard refresh
+    // whenever any owner-scoped token exists, not only when `vaultToken` is
+    // populated in the Zustand store.
+    if (storedVaultTokens(vaultToken).length === 0) return
+    void refreshAll()
+    const interval = setInterval(() => { void refreshAll() }, REFRESH_MS)
     return () => clearInterval(interval)
   }, [vaultToken, refreshAll])
+
+  useEffect(() => {
+    // A Claude/ChatGPT approval can finish in another tab while this dashboard
+    // remains open. Refresh as soon as the token appears or the user returns
+    // to this tab instead of waiting for the next ten-second poll.
+    if (typeof window === 'undefined') return
+    const onStorage = (event: StorageEvent) => {
+      if (event.key?.startsWith('arx_oauth_vault_token:') || event.key === 'arx_vault_token') void refreshAll()
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void refreshAll()
+    }
+    window.addEventListener('storage', onStorage)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [refreshAll])
 
   /** Run a passkey ceremony and activate the resulting Agent Wallet session. */
   const openAgentWallet = useCallback(async (
