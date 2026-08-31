@@ -10,7 +10,10 @@ function shellQuote(value: string): string {
 /** Build the one-line command that lets Hermes configure its own remote MCP. */
 export function buildHermesConnectionCommand(token: Pick<AgentConnectionToken, 'token' | 'mcpUrl'>): string {
   const message = `URL server: ${token.mcpUrl || DEFAULT_MCP_URL} Token: ${token.token}`
-  return `printf '%s\\n' ${shellQuote(message)} | { if command -v arcox-agent >/dev/null 2>&1; then arcox-agent connect; else npx --yes arcox-agent@latest connect; fi; }`
+  // Always use the published remote-MCP connector. A local executable named
+  // `arcox-agent` may be the legacy Agent Jobs CLI with a different `connect`
+  // command, which would configure 127.0.0.1 instead of this token's MSCA.
+  return `printf '%s\\n' ${shellQuote(message)} | npx --yes arcox-agent@0.1.20 connect`
 }
 
 export interface ConnectionTokenDialogProps {
