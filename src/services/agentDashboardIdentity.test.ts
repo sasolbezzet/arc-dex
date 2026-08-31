@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { canonicalAgentKey, mergeAgentRows } from '../hooks/useAgentManager'
+import { buildHermesConnectionCommand } from '../features/plugin/ConnectionTokenDialog'
 import type { VaultAgent } from '../types/agent'
 
 const CLAUDE_WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -49,5 +50,17 @@ describe('Plugin agent identity normalization', () => {
 
     expect(rows).toHaveLength(1)
     expect(rows[0].clientName).toBe('Claude')
+  })
+
+  it('builds a copy-paste command that configures Hermes through the helper', () => {
+    const command = buildHermesConnectionCommand({
+      token: 'arx_at_0123456789abcdef0123456789abcdef',
+      mcpUrl: 'https://arcoxdex.vercel.app/mcp',
+    })
+
+    expect(command).toContain("URL server: https://arcoxdex.vercel.app/mcp Token: arx_at_0123456789abcdef0123456789abcdef")
+    expect(command).toContain('arcox-agent connect')
+    expect(command).toContain('npx --yes arcox-agent@latest connect')
+    expect(command).toContain("printf '%s\\n'")
   })
 })

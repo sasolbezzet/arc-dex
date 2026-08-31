@@ -1770,6 +1770,12 @@ button, a, select {
 .plugin-modal h3 { margin: 0; font-size: 17px; color: #f8fafc; }
 .plugin-modal p { margin: 0; color: #a8b3c7; font-size: 12px; line-height: 1.6; }
 .plugin-modal-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.plugin-command-block { display: grid; gap: 8px; padding: 12px; border: 1px solid rgba(34, 211, 238, 0.24); border-radius: 10px; background: rgba(8, 20, 29, 0.62); }
+.plugin-command-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.plugin-command-heading strong { color: #bae6fd; font-size: 12px; }
+.plugin-command-heading span, .plugin-command-block p { color: #7f9bb0; font-size: 11px; line-height: 1.45; }
+.plugin-command-block .agent-wallet-row { align-items: flex-start; }
+.plugin-command-block .agent-wallet-row code { color: #d9f99d; font-size: 11px; line-height: 1.5; }
 
 .plugin-oauth {
   display: grid; gap: 13px; padding: 20px;

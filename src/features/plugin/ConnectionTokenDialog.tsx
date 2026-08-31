@@ -1,6 +1,18 @@
 import type { AgentConnectionToken } from '../../types/agent'
 import { CopyField } from './CopyField'
 
+const DEFAULT_MCP_URL = 'https://arcoxdex.vercel.app/mcp'
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+/** Build the one-line command that lets Hermes configure its own remote MCP. */
+export function buildHermesConnectionCommand(token: Pick<AgentConnectionToken, 'token' | 'mcpUrl'>): string {
+  const message = `URL server: ${token.mcpUrl || DEFAULT_MCP_URL} Token: ${token.token}`
+  return `printf '%s\\n' ${shellQuote(message)} | { if command -v arcox-agent >/dev/null 2>&1; then arcox-agent connect; else npx --yes arcox-agent@latest connect; fi; }`
+}
+
 export interface ConnectionTokenDialogProps {
   token: AgentConnectionToken
   onClose: () => void
@@ -32,6 +44,19 @@ export function ConnectionTokenDialog({ token, onClose }: ConnectionTokenDialogP
 
         <CopyField label='Token' value={token.token} ariaLabel='Salin token koneksi' />
         {token.mcpUrl && <CopyField label='Alamat' value={token.mcpUrl} ariaLabel='Salin alamat MCP' />}
+
+        <div className='plugin-command-block'>
+          <div className='plugin-command-heading'>
+            <strong>Perintah koneksi Hermes</strong>
+            <span>Tempel ke input TUI Hermes</span>
+          </div>
+          <CopyField
+            label='Command'
+            value={buildHermesConnectionCommand(token)}
+            ariaLabel='Salin perintah koneksi Hermes'
+          />
+          <p>Hermes akan menjalankan helper, memeriksa MCP, lalu menulis koneksi ke profilnya. Jika helper belum terpasang, command memakai npx otomatis.</p>
+        </div>
         {token.walletAddress && (
           <CopyField
             label='Wallet'
