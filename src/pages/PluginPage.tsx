@@ -66,13 +66,15 @@ export default function PluginPage() {
   const currentDailyLimit = draftDailyLimit ?? limits?.dailyLimit ?? '500'
 
   const handleConnect = (type: AgentType) => {
-    if (type === 'hermes') return connectHermes('login')
-    return prepareAgentWallet(type, 'login')
-  }
-
-  const handleCreateWallet = (type: AgentType) => {
+    // The primary empty-state action is the first-time path: create a
+    // dedicated Agent Wallet. Returning users use the secondary Login action.
     if (type === 'hermes') return connectHermes('register')
     return prepareAgentWallet(type, 'register')
+  }
+
+  const handleLogin = (type: AgentType) => {
+    if (type === 'hermes') return connectHermes('login')
+    return prepareAgentWallet(type, 'login')
   }
 
   const handleSaveLimits = () => {
@@ -128,14 +130,31 @@ export default function PluginPage() {
         </div>
       </section>
 
+      <section className='glass plugin-first-run' aria-labelledby='plugin-first-run-title'>
+        <div className='plugin-section-heading'>
+          <div><span className='section-eyebrow'>Panduan pertama kali</span><strong id='plugin-first-run-title'>Satu urutan untuk semua agent</strong></div>
+          <span className='plugin-secure-label'>● tidak ada private key</span>
+        </div>
+        <p className='plugin-muted-copy'>Pisahkan tiga hal ini: wallet utama untuk fitur DEX, Agent Wallet yang dikunci passkey, dan koneksi MCP ke agent AI.</p>
+        <div className='plugin-first-run-grid'>
+          <div className='plugin-first-run-step'><b>01</b><div><strong>Aktifkan Agent Wallet</strong><span>Tekan <em>Buat Agent Wallet</em> atau buka kartu agent yang ingin dipakai. Pilih Login jika wallet sudah ada; pilih Buat baru hanya untuk agent baru.</span></div></div>
+          <div className='plugin-first-run-step'><b>02</b><div><strong>Mulai dari aplikasi agent</strong><span>Hermes memakai token dari ARCOX. Claude dan ChatGPT dimulai dari pengaturan MCP mereka, lalu otomatis kembali ke halaman approval ARCOX.</span></div></div>
+          <div className='plugin-first-run-step'><b>03</b><div><strong>Setujui satu kali</strong><span>Di halaman ARCOX, periksa nama agent lalu pilih Login passkey atau Buat wallet baru. Tidak perlu SIWE wallet utama untuk koneksi MCP.</span></div></div>
+          <div className='plugin-first-run-step'><b>04</b><div><strong>Selesai dan pantau</strong><span>Hermes menerima token satu kali. Claude/ChatGPT kembali ke aplikasinya; status, approval, limit, dan activity terlihat di tab ini.</span></div></div>
+        </div>
+      </section>
+
       {!hasSession && (
         <section className='plugin-session-banner'>
           <div className='plugin-session-icon'>⌁</div>
           <div>
-            <strong>Hubungkan Agent Wallet untuk membuka kontrol penuh</strong>
-            <p>Passkey diperlukan untuk melihat agent, mengatur izin, dan mengelola akses.</p>
+            <strong>Aktifkan Agent Wallet dengan passkey</strong>
+            <p>Ini berbeda dari wallet utama. Passkey mengunci wallet khusus agent dan membuka kontrol keamanan.</p>
           </div>
-          <button type='button' className='mini-button mini-button-primary' onClick={() => handleConnect('hermes')}>Mulai dengan passkey</button>
+          <div className='plugin-session-actions'>
+            <button type='button' className='mini-button mini-button-primary' onClick={() => handleConnect('hermes')}>Buat Agent Wallet</button>
+            <button type='button' className='text-button' onClick={() => handleLogin('hermes')}>Login passkey yang sudah ada</button>
+          </div>
         </section>
       )}
 
@@ -208,8 +227,8 @@ export default function PluginPage() {
                   {connected
                     ? <button type='button' className='mini-button' onClick={() => setTab('activity')}>Lihat koneksi</button>
                     : type === 'hermes'
-                      ? <button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleConnect(type)}>Buat koneksi</button>
-                      : <button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleCreateWallet(type)}>Siapkan wallet</button>}
+                      ? <button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleConnect(type)}>Buat Agent Wallet</button>
+                      : <div className='agent-external-note'>Mulai dari {config.name}, lalu kembali ke sini</div>}
                 </article>
               )
             })}

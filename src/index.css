@@ -1815,7 +1815,17 @@ button, a, select {
 .plugin-metric-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; }
 .plugin-metric-row strong { color: #dbeafe; font-size: 15px; font-feature-settings: "tnum"; }
 .plugin-metric-row strong.is-warning { color: #fbbf24; }
+.plugin-first-run { display: grid; gap: 12px; padding: 18px 19px; border-color: rgba(129,140,248,.24); background: linear-gradient(120deg, rgba(99,102,241,.08), rgba(8,10,15,.72)); }
+.plugin-first-run-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.plugin-first-run-step { display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 12px; border: 1px solid rgba(148,163,184,.14); border-radius: 10px; background: rgba(2,6,23,.32); }
+.plugin-first-run-step > b { color: #a5b4fc; font-size: 11px; letter-spacing: .5px; }
+.plugin-first-run-step > div { min-width: 0; }
+.plugin-first-run-step strong, .plugin-first-run-step span { display: block; }
+.plugin-first-run-step strong { color: #e2e8f0; font-size: 11px; }
+.plugin-first-run-step span { margin-top: 5px; color: #8fa0b8; font-size: 10px; line-height: 1.5; }
+.plugin-first-run-step em { color: #c7d2fe; font-style: normal; }
 .plugin-session-banner { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid rgba(245,158,11,.3); border-radius: 13px; background: linear-gradient(110deg, rgba(245,158,11,.1), rgba(15,23,42,.68)); }
+.plugin-session-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; flex: none; }
 .plugin-session-icon { display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border-radius: 10px; background: rgba(245,158,11,.15); color: #fde68a; font-size: 22px; }
 .plugin-session-banner > div:nth-child(2) { min-width: 0; flex: 1; }
 .plugin-session-banner strong { color: #fde68a; font-size: 13px; }
@@ -1889,6 +1899,10 @@ button, a, select {
 
 .plugin-page button:focus-visible, .plugin-page a:focus-visible, .plugin-page select:focus-visible, .plugin-page input:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
 
+@media (max-width: 1080px) {
+  .plugin-first-run-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (max-width: 860px) {
   .plugin-provider-grid, .plugin-security-grid { grid-template-columns: minmax(0, 1fr); }
   .plugin-security-wide { grid-column: auto; }
@@ -1898,12 +1912,15 @@ button, a, select {
 @media (max-width: 760px) {
   .plugin-tabs-v2 { top: 0; }
   .plugin-session-banner { align-items: flex-start; flex-wrap: wrap; }
+  .plugin-session-banner .plugin-session-actions { width: 100%; justify-content: flex-start; }
   .plugin-session-banner .mini-button { width: 100%; }
+  .plugin-session-actions .text-button { width: 100%; text-align: left; }
   .plugin-metrics { width: 100%; }
   .plugin-activity-summary { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 520px) {
+  .plugin-first-run-grid { grid-template-columns: minmax(0, 1fr); }
   .plugin-panel-section { padding: 15px; }
   .plugin-form-grid, .agent-health-grid, .plugin-security-checks { grid-template-columns: minmax(0, 1fr); }
   .plugin-credential-row { grid-template-columns: auto minmax(0, 1fr); }
