@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { type AgentState, AGENT_CONFIGS } from '../../types/agent';
+import { AlertTriangle, ShieldAlert } from 'lucide-react';
 
 export interface RevokeModalProps {
   agent: AgentState;
@@ -29,56 +30,74 @@ export const RevokeModal: React.FC<RevokeModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       onClick={() => !loading && onCancel()}
     >
       <div 
         role="dialog"
         aria-modal="true"
-        className="bg-[#1e1e2e] rounded-2xl max-w-md w-full border border-red-500/30 p-6 flex flex-col gap-4 shadow-2xl"
+        className="bg-[#0a0a0f] rounded-xl max-w-md w-full border border-red-500/50 p-6 flex flex-col gap-5 shadow-[0_0_40px_rgba(239,68,68,0.25)] relative overflow-hidden font-sans"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex flex-col items-center text-center gap-3">
-          <div className="text-5xl">⚠️</div>
-          <h2 className="text-xl font-bold text-white">
-            Revoke {agentName}?
+        {/* Warning glow background */}
+        <div className="absolute -top-20 -right-20 w-48 h-48 bg-red-600/20 rounded-full blur-[60px] pointer-events-none" />
+        <div className="absolute -bottom-20 -left-20 w-48 h-48 bg-red-600/10 rounded-full blur-[60px] pointer-events-none" />
+
+        <div className="flex flex-col items-center text-center gap-3 relative z-10">
+          <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-full">
+            <AlertTriangle className="w-10 h-10 text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]" />
+          </div>
+          <h2 className="text-xl font-black uppercase tracking-widest text-red-500 drop-shadow-[0_0_5px_rgba(239,68,68,0.5)]">
+            Terminate {agentName}?
           </h2>
         </div>
 
-        <div className="bg-[#12121a] rounded-xl p-4 flex flex-col gap-2 text-sm text-gray-300">
-          <p className="font-semibold text-white mb-1">Aksi ini akan mencabut:</p>
-          <ul className="list-disc pl-5 flex flex-col gap-1">
-            <li>Session aktif & connection token</li>
-            <li>Credential binding (passkey)</li>
-            <li>Akses MCP ke Agent Wallet</li>
+        <div className="bg-[#12121a] border border-red-500/20 rounded-lg p-4 flex flex-col gap-3 text-sm text-gray-300 relative z-10">
+          <p className="font-bold text-red-400 uppercase tracking-wider text-xs">This action will immediately revoke:</p>
+          <ul className="list-none flex flex-col gap-2 font-mono text-xs">
+            <li className="flex items-start gap-2">
+              <span className="text-red-500 mt-0.5">►</span>
+              <span>Session token invalidated</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-red-500 mt-0.5">►</span>
+              <span>Passkey credential unlinked</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-red-500 mt-0.5">►</span>
+              <span>MCP access terminated</span>
+            </li>
           </ul>
         </div>
 
-        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3 text-sm text-yellow-200/90 text-center">
-          Agent lain <strong>TIDAK terpengaruh</strong>. Dana di wallet tetap aman.
+        <div className="bg-[#00ff9d]/5 border border-[#00ff9d]/20 rounded-lg p-3 text-xs text-[#00ff9d] flex items-start gap-3 relative z-10">
+          <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
+          <p className="font-mono leading-relaxed">
+            Other agents remain unaffected.<br/>Smart account funds remain safe.
+          </p>
         </div>
 
         {agent.walletAddress && (
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-gray-400 font-medium px-1">Agent Wallet:</span>
-            <div className="bg-[#12121a] rounded-lg p-3 text-xs font-mono text-gray-300 break-all text-center">
+          <div className="flex flex-col gap-1 relative z-10">
+            <span className="text-[10px] text-gray-500 uppercase tracking-widest px-1 font-bold">Target Wallet:</span>
+            <div className="bg-[#050508] border border-gray-800 rounded p-2 text-xs font-mono text-gray-400 break-all text-center">
               {agent.walletAddress.slice(0, 8)}...{agent.walletAddress.slice(-6)}
             </div>
           </div>
         )}
 
-        <div className="flex gap-3 mt-2">
+        <div className="flex gap-4 mt-2 relative z-10">
           <button
             onClick={onCancel}
             disabled={loading}
-            className="flex-1 px-4 py-2.5 rounded-xl border border-gray-600 text-gray-300 font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-gray-500"
+            className="flex-1 px-4 py-3 rounded border border-gray-600 text-gray-400 text-xs font-bold uppercase tracking-widest hover:text-white hover:border-gray-400 hover:bg-gray-800 transition-all disabled:opacity-50"
           >
-            Batal
+            Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={loading}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="flex-1 px-4 py-3 rounded bg-gradient-to-r from-red-600 to-red-500 text-white text-xs font-black uppercase tracking-widest hover:from-red-500 hover:to-red-400 shadow-[0_0_15px_rgba(239,68,68,0.4)] hover:shadow-[0_0_25px_rgba(239,68,68,0.6)] transition-all disabled:opacity-50 flex items-center justify-center gap-2 border border-red-400/50"
           >
             {loading ? (
               <>
@@ -89,7 +108,7 @@ export const RevokeModal: React.FC<RevokeModalProps> = ({
                 Revoking...
               </>
             ) : (
-              'Revoke'
+              'Revoke Access'
             )}
           </button>
         </div>
