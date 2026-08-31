@@ -9,6 +9,27 @@ import type {
   AgentType,
 } from '../types/agent';
 
+function isGenericAgentLabel(agent: AgentState): boolean {
+  const label = String(agent.clientName || '').trim().toLowerCase();
+  return !label || label === 'agent mcp' || label === 'mcp-agent' || label === 'mcp agent';
+}
+
+function deduplicateAgents(agents: AgentState[]): AgentState[] {
+  const result = new Map<string, AgentState>();
+  for (const agent of agents) {
+    const wallet = String(agent.walletAddress || '').trim().toLowerCase();
+    const clientId = String(agent.clientId || agent.agentKey || '').split('|')[0].replace(/^oauth:/, '').toLowerCase();
+    const key = /^0x[0-9a-f]{40}$/.test(wallet)
+      ? `client:${clientId}|wallet:${wallet}`
+      : `key:${agent.agentKey}`;
+    const previous = result.get(key);
+    if (!previous || (isGenericAgentLabel(previous) && !isGenericAgentLabel(agent))) {
+      result.set(key, agent);
+    }
+  }
+  return [...result.values()];
+}
+
 export interface AgentStoreState {
   agents: AgentState[];
   mcpSessions: McpSession[];
@@ -41,7 +62,7 @@ export const useAgentStore = create<AgentStoreState>()(
       expandedAgentKey: null,
       agentAction: null,
 
-      setAgents: (agents) => set({ agents }),
+      setAgents: (agents) => set({ agents: deduplicateAgents(agents) }),
       updateAgent: (agentKey, patch) =>
         set((state) => ({
           agents: state.agents.map((a) =>
@@ -62,6 +83,14 @@ export const useAgentStore = create<AgentStoreState>()(
     }),
     {
       name: 'arx-agents',
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<AgentStoreState>;
+        return {
+          ...currentState,
+          ...persisted,
+          agents: deduplicateAgents(persisted.agents || []),
+        };
+      },
       partialize: (state) => ({
         agents: state.agents.map((agent) => {
           // Do not persist any transient session fields.

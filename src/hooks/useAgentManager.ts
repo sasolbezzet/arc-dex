@@ -52,6 +52,51 @@ function deriveAgentStatus(agent: VaultAgent, sessions: McpSession[]): AgentStat
   return live ? 'connected' : 'idle'
 }
 
+export function canonicalAgentKey(agent: VaultAgent): string {
+  const rawKey = String(agent.agentKey || '').trim().toLowerCase()
+  if (rawKey.startsWith('oauth:')) {
+    const clientId = rawKey.slice('oauth:'.length).split('|')[0]
+    const owner = rawKey.includes('|') ? rawKey.slice(rawKey.indexOf('|') + 1) : String(agent.walletAddress || '').toLowerCase()
+    return `${clientId}|${owner}`
+  }
+  return rawKey
+}
+
+function isGenericAgentLabel(agent: VaultAgent): boolean {
+  const label = String(agent.clientName || '').trim().toLowerCase()
+  return !label || label === 'agent mcp' || label === 'mcp-agent' || label === 'mcp agent'
+}
+
+function agentIdentity(agent: Pick<VaultAgent, 'agentKey' | 'walletAddress' | 'clientName'>): string {
+  const wallet = String(agent.walletAddress || '').trim().toLowerCase()
+  const clientId = clientIdFromAgentKey(canonicalAgentKey(agent))
+  return /^0x[0-9a-f]{40}$/.test(wallet)
+    ? `client:${clientId}|wallet:${wallet}`
+    : `key:${canonicalAgentKey(agent)}`
+}
+
+/**
+ * Collapse rows produced by the old OAuth namespace (`oauth:<clientId>`).
+ * When legacy and canonical rows share a wallet, keep the named/canonical row
+ * so the card says Claude or ChatGPT instead of the generic MCP label.
+ */
+export function mergeAgentRows(rows: VaultAgent[]): VaultAgent[] {
+  const byIdentity = new Map<string, VaultAgent>()
+  for (const source of rows) {
+    const agent = { ...source, agentKey: canonicalAgentKey(source) }
+    const identity = agentIdentity(agent)
+    const previous = byIdentity.get(identity)
+    if (!previous) {
+      byIdentity.set(identity, agent)
+      continue
+    }
+    if (isGenericAgentLabel(previous) && !isGenericAgentLabel(agent)) {
+      byIdentity.set(identity, agent)
+    }
+  }
+  return [...byIdentity.values()]
+}
+
 function toAgentState(agent: VaultAgent, sessions: McpSession[]): AgentState {
   const clientId = clientIdFromAgentKey(agent.agentKey)
   const session = sessions.find(item => item.clientId === clientId)
@@ -138,7 +183,26 @@ export function useAgentManager() {
 
   const vaultToken = useAuthStore(state => state.vaultToken)
   const setVaultToken = useAuthStore(state => state.setVaultToken)
+  const agentsRef = useRef(agents)
   const clearVaultToken = useAuthStore(state => state.clearVaultToken)
+
+  const tokenForAgent = useCallback((agentKey: string): string | null => {
+    const clientId = clientIdFromAgentKey(agentKey)
+    if (typeof window === 'undefined') return vaultToken
+    try {
+      if (clientId) {
+        const scoped = localStorage.getItem(`arx_oauth_vault_token:${clientId}`)
+        if (scoped) return scoped
+      }
+      return vaultToken || localStorage.getItem('arx_vault_token') || localStorage.getItem('arx_passkey_vault_token')
+    } catch {
+      return vaultToken
+    }
+  }, [vaultToken])
+
+  useEffect(() => {
+    agentsRef.current = agents
+  }, [agents])
 
   const safeSet = useCallback(<T,>(setter: (value: T) => void, value: T) => {
     if (mounted.current) setter(value)
@@ -202,7 +266,14 @@ export function useAgentManager() {
       if (read.agents.status === 'fulfilled') {
         successfulAgentRead = true
         candidateToken ||= read.token
-        for (const agent of read.agents.value) agentMap.set(agent.agentKey, agent)
+        for (const agent of mergeAgentRows(read.agents.value)) {
+          const identity = agentIdentity(agent)
+          const canonical = canonicalAgentKey(agent)
+          const previous = agentMap.get(identity)
+          if (!previous || (isGenericAgentLabel(previous) && !isGenericAgentLabel(agent))) {
+            agentMap.set(identity, { ...agent, agentKey: canonical })
+          }
+        }
       }
       if (read.sessions.status === 'fulfilled') {
         for (const session of read.sessions.value) {
@@ -232,8 +303,23 @@ export function useAgentManager() {
 
     const sessions = [...sessionMap.values()]
     const nextAgents = [...agentMap.values()].map(agent => toAgentState(agent, sessions))
+
+    // Each passkey token is scoped to one MSCA. A successful read for the
+    // currently selected GPT wallet must not erase Claude's previously loaded
+    // card from the dashboard. Keep the persisted card as display fallback;
+    // fresh backend rows always win and revokeAgent removes its own cache first.
+    const mergedAgents = [...nextAgents]
+    const knownIdentities = new Set(nextAgents.map(agent => agentIdentity(agent)))
+    for (const cached of agentsRef.current) {
+      const identity = agentIdentity(cached)
+      if (!knownIdentities.has(identity)) {
+        knownIdentities.add(identity)
+        mergedAgents.push(cached)
+      }
+    }
+
     setMcpSessions(sessions)
-    setAgents(nextAgents)
+    setAgents(mergedAgents)
     setApprovals([...approvalMap.values()])
     setActivity([...activityMap.values()].sort((left, right) => right.ts - left.ts).slice(0, 5))
     setCredentials([...credentialMap.values()])
@@ -346,19 +432,21 @@ export function useAgentManager() {
   /** Issue a fresh connection token for an agent that already has a binding. */
   const createToken = useCallback((agentKey: string) =>
     run(`token:${agentKey}`, async () => {
-      if (!vaultToken) throw new Error('Masuk dengan passkey terlebih dahulu')
-      const issued = await createAgentConnectionToken(agentKey, vaultToken, 90)
+      const token = tokenForAgent(agentKey)
+      if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
+      const issued = await createAgentConnectionToken(agentKey, token, 90)
       safeSet(setConnectionToken, issued)
-    }), [run, vaultToken, safeSet, setConnectionToken])
+    }), [run, tokenForAgent, safeSet, setConnectionToken])
 
   const revokeAgent = useCallback((agentKey: string) =>
     run(`revoke:${agentKey}`, async () => {
-      if (!vaultToken) throw new Error('Masuk dengan passkey terlebih dahulu')
-      await revokeVaultAgent(agentKey, vaultToken)
+      const token = tokenForAgent(agentKey)
+      if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
+      await revokeVaultAgent(agentKey, token)
       removeAgent(agentKey)
       safeSet(setNotice, 'Akses agent dicabut. Agent lain tidak terpengaruh.')
       await refreshAll()
-    }), [run, vaultToken, removeAgent, refreshAll, safeSet])
+    }), [run, tokenForAgent, removeAgent, refreshAll, safeSet])
 
   const saveLimits = useCallback((next: Partial<Limits>) =>
     run('limits', async () => {

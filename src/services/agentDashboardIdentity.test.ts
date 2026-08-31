@@ -1,0 +1,53 @@
+import { describe, expect, it } from 'vitest'
+import { canonicalAgentKey, mergeAgentRows } from '../hooks/useAgentManager'
+import type { VaultAgent } from '../types/agent'
+
+const CLAUDE_WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+const GPT_WALLET = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+
+function agent(overrides: Partial<VaultAgent>): VaultAgent {
+  return {
+    agentKey: 'oauth:claude',
+    walletAddress: CLAUDE_WALLET,
+    clientName: 'Claude',
+    ...overrides,
+  }
+}
+
+describe('Plugin agent identity normalization', () => {
+  it('maps the temporary OAuth namespace to the durable key', () => {
+    expect(canonicalAgentKey(agent({ agentKey: 'oauth:claude' })))
+      .toBe(`claude|${CLAUDE_WALLET}`)
+  })
+
+  it('keeps one named Claude row when legacy and canonical rows share a wallet', () => {
+    const rows = mergeAgentRows([
+      agent({ agentKey: 'oauth:claude', clientName: 'Agent MCP' }),
+      agent({ agentKey: `claude|${CLAUDE_WALLET}`, clientName: 'claude-mcp' }),
+    ])
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].agentKey).toBe(`claude|${CLAUDE_WALLET}`)
+    expect(rows[0].clientName).toBe('claude-mcp')
+  })
+
+  it('does not merge Claude and GPT wallets', () => {
+    const rows = mergeAgentRows([
+      agent({ agentKey: `claude|${CLAUDE_WALLET}`, clientName: 'Claude' }),
+      agent({ agentKey: `chatgpt|${GPT_WALLET}`, walletAddress: GPT_WALLET, clientName: 'ChatGPT' }),
+    ])
+
+    expect(rows).toHaveLength(2)
+    expect(rows.map(row => row.walletAddress)).toEqual([CLAUDE_WALLET, GPT_WALLET])
+  })
+
+  it('deduplicates the same wallet even when a legacy owner key changed', () => {
+    const rows = mergeAgentRows([
+      agent({ agentKey: 'oauth:claude|0x1111111111111111111111111111111111111111', clientName: 'Agent MCP' }),
+      agent({ agentKey: `claude|${CLAUDE_WALLET}`, clientName: 'Claude' }),
+    ])
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].clientName).toBe('Claude')
+  })
+})
