@@ -10,7 +10,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "test": "tsc --noEmit -p tsconfig.app.json && vitest run"
   },
   "dependencies": {
     "@circle-fin/adapter-solana-kit": "^1.5.1",

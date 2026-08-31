@@ -1,354 +1,267 @@
-import React, { useState, useCallback } from 'react';
-import { useI18n } from '../i18n';
-import { useAgentManager } from '../hooks/useAgentManager';
-import { useAuthStore } from '../stores/authStore';
-import { useWalletStore } from '../stores/walletStore';
-import { useAgentStore } from '../stores/agentStore';
+import { useMemo, useState } from 'react'
+import { useAgentManager } from '../hooks/useAgentManager'
+import { useOAuthApproval } from '../hooks/useOAuthApproval'
+import { AgentCard } from '../features/plugin/AgentCard'
+import { ApprovalsList } from '../features/plugin/ApprovalsList'
+import { AgentActivityList } from '../features/plugin/AgentActivityList'
+import { ConnectionTokenDialog } from '../features/plugin/ConnectionTokenDialog'
+import { RevokeModal } from '../features/plugin/RevokeModal'
+import { OAuthApprovalCard } from '../features/plugin/OAuthApprovalCard'
+import { CopyField } from '../features/plugin/CopyField'
+import { AGENT_TYPES, AGENT_CONFIGS, MCP_URL, type AgentState, type AgentType } from '../types/agent'
 
-import { AgentDashboardCard } from '../features/plugin/AgentDashboardCard';
-import { OnboardingStepper } from '../features/plugin/OnboardingStepper';
-import { ApprovalsList } from '../features/plugin/ApprovalsList';
-import { RevokeModal } from '../features/plugin/RevokeModal';
-import { ConnectionTokenDialog } from '../features/plugin/ConnectionTokenDialog';
-import { AgentActivityList } from '../features/plugin/AgentActivityList';
-import { AgentStatusBadge } from '../features/plugin/AgentStatusBadge';
-import { AgentWalletSummary } from '../features/plugin/AgentWalletSummary';
+type TabId = 'overview' | 'approvals' | 'activity' | 'security'
 
-import { type AgentType, type AgentState, MCP_URL, AGENT_CONFIGS } from '../types/agent';
-
-const AGENT_TYPES = ['hermes', 'claude', 'chatgpt'] as const;
-
-export default function PluginPage() {
-  const { t } = useI18n();
-  const {
-    agents,
-    approvals,
-    activity,
-    connectionToken,
-    setConnectionToken,
-    quickConnect,
-    loginAgent,
-    revokeAgent,
-    createToken,
-    approveRequest,
-    rejectRequest,
-    error
-  } = useAgentManager();
-
-  const [expandedAgent, setExpandedAgent] = useState<AgentType | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<AgentState | null>(null);
-  const [copySuccess, setCopySuccess] = useState(false);
-  const [addressCopySuccess, setAddressCopySuccess] = useState(false);
-  const [activeTab, setActiveTab] = useState<'agents' | 'active' | 'approvals' | 'activity'>('agents');
-
-  // Stores
-  const vaultToken = useAuthStore(state => state.vaultToken);
-  const hermesWalletAddress = useAuthStore(state => state.hermesWalletAddress);
-  const jwtAddress = useAuthStore(state => state.jwtAddress);
-  const logout = useAuthStore(state => state.logout);
-  const disconnectWallet = useWalletStore(state => state.disconnect);
-
-  const activeAgentsCount = agents.filter(a => a.status === 'connected').length;
-  const isAnyWalletReady = !!vaultToken || !!hermesWalletAddress || !!jwtAddress || activeAgentsCount > 0;
-  const pendingApprovalsCount = approvals?.length || 0;
-
-  const handleCopyMCPUrl = useCallback(() => {
-    navigator.clipboard.writeText(MCP_URL);
-    setCopySuccess(true);
-    setTimeout(() => setCopySuccess(false), 2000);
-  }, []);
-
-  const handleCopyAddress = useCallback((address: string) => {
-    navigator.clipboard.writeText(address);
-    setAddressCopySuccess(true);
-    setTimeout(() => setAddressCopySuccess(false), 2000);
-  }, []);
-
-  const handleReset = () => {
-    logout();
-    disconnectWallet();
-  };
-
-  const filteredAgents = activeTab === 'active' ? agents.filter(a => a.status === 'connected') : agents;
-
-  return (
-    <div className="relative min-h-screen bg-[#0B0E14] text-slate-100 overflow-hidden font-sans">
-      {/* Ambient Cyberpunk Background */}
-      <div className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-gradient-to-tr from-indigo-600/20 via-purple-600/15 to-emerald-500/10 blur-[120px] rounded-full" />
-      
-      <div className="container mx-auto p-6 space-y-10 relative z-10 max-w-7xl">
-        {/* Error Banner */}
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-4 rounded-xl flex items-center justify-between backdrop-blur-md shadow-lg shadow-red-500/5">
-            <span className="font-medium flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-              {error}
-            </span>
-          </div>
-        )}
-
-        {/* Header Hero Section */}
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-slate-800">
-          <div className="space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 backdrop-blur-sm text-xs font-semibold tracking-widest text-slate-300">
-              <span className="text-emerald-400">⚡</span> ARCOX AGENT MESH v2.0 &bull; CIRCLE MSCA POWERED
-            </div>
-            <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-emerald-400 drop-shadow-sm">
-              AI Agent & Plugin Terminal
-            </h1>
-            <p className="text-slate-400 text-lg max-w-2xl font-medium">
-              Command central for orchestrating autonomous AI assistants. Manage secure multi-chain operations through your connected MSCA Hub.
-            </p>
-          </div>
-          
-          <div className="flex flex-col items-end gap-3">
-            {/* Status & Live Network Counters */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2.5 bg-slate-800/60 border border-slate-700/80 rounded-lg px-4 py-2 backdrop-blur-md shadow-inner">
-                <div className="relative flex h-2.5 w-2.5">
-                  {activeAgentsCount > 0 ? (
-                    <>
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                    </>
-                  ) : (
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-500"></span>
-                  )}
-                </div>
-                <span className="text-sm font-bold text-slate-200">
-                  {activeAgentsCount} <span className="text-slate-400 font-medium">Agents Online</span>
-                </span>
-              </div>
-              
-              {jwtAddress && (
-                <div 
-                  onClick={() => handleCopyAddress(jwtAddress)}
-                  className="flex items-center gap-2 bg-slate-800/60 border border-slate-700/80 rounded-lg px-4 py-2 backdrop-blur-md cursor-pointer hover:bg-slate-700/60 transition-colors shadow-inner"
-                  title="Copy MSCA Hub Address"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" className="text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
-                  <span className="text-sm font-mono text-slate-300">
-                    {addressCopySuccess ? 'Copied!' : `${jwtAddress.slice(0, 6)}...${jwtAddress.slice(-4)}`}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {isAnyWalletReady && (
-              <button 
-                onClick={handleReset}
-                className="group flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg transition-all text-sm font-bold shadow-lg shadow-red-500/5 hover:shadow-red-500/10"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" className="group-hover:rotate-90 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
-                KILL SWITCH
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* MCP RPC Terminal Box */}
-        <div className="bg-gradient-to-r from-slate-900 via-slate-800/80 to-slate-900 border border-slate-700/60 rounded-2xl p-1 shadow-2xl">
-          <div className="bg-black/60 rounded-xl p-5 md:p-6 backdrop-blur-xl border border-white/5 relative overflow-hidden">
-            {/* Decorative background grid for terminal */}
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:14px_24px] pointer-events-none"></div>
-            
-            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="flex-1 space-y-2">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-bold tracking-wider">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    ONLINE
-                  </div>
-                  <h2 className="text-lg font-bold text-slate-100 font-mono tracking-tight flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" className="text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-                    MCP RPC ENDPOINT
-                  </h2>
-                </div>
-                <p className="text-sm text-slate-400 font-medium">
-                  Route your AI agent's tool calls through this endpoint to securely sign and execute transactions.
-                </p>
-              </div>
-              
-              <div className="flex items-center bg-[#0a0a0f] border border-slate-700 rounded-lg p-1.5 shadow-inner min-w-[320px] max-w-full group">
-                <div className="flex-1 px-3 py-2 text-indigo-300 font-mono text-sm overflow-x-auto whitespace-nowrap scrollbar-hide">
-                  {MCP_URL}
-                </div>
-                <button 
-                  onClick={handleCopyMCPUrl}
-                  className={`flex items-center justify-center gap-2 px-4 py-2 rounded-md font-bold text-xs transition-all ${
-                    copySuccess 
-                      ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' 
-                      : 'bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white border border-slate-700 hover:border-indigo-500'
-                  }`}
-                >
-                  {copySuccess ? (
-                    <><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> COPIED</>
-                  ) : (
-                    <><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> COPY RPC</>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Navigation Tabs / Filter */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide border-b border-slate-800">
-          <button 
-            onClick={() => setActiveTab('agents')}
-            className={`px-5 py-2.5 rounded-t-lg font-bold text-sm whitespace-nowrap transition-colors border-b-2 ${
-              activeTab === 'agents' ? 'text-indigo-400 border-indigo-400 bg-indigo-500/10' : 'text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            All Agents ({AGENT_TYPES.length})
-          </button>
-          <button 
-            onClick={() => setActiveTab('active')}
-            className={`px-5 py-2.5 rounded-t-lg font-bold text-sm whitespace-nowrap transition-colors border-b-2 ${
-              activeTab === 'active' ? 'text-emerald-400 border-emerald-400 bg-emerald-500/10' : 'text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            Active ({activeAgentsCount})
-          </button>
-          <button 
-            onClick={() => setActiveTab('approvals')}
-            className={`px-5 py-2.5 rounded-t-lg font-bold text-sm whitespace-nowrap transition-colors border-b-2 flex items-center gap-2 ${
-              activeTab === 'approvals' ? 'text-amber-400 border-amber-400 bg-amber-500/10' : 'text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            Pending Approvals 
-            {pendingApprovalsCount > 0 && (
-              <span className="bg-amber-500 text-amber-950 text-xs px-2 py-0.5 rounded-full">{pendingApprovalsCount}</span>
-            )}
-          </button>
-          <button 
-            onClick={() => setActiveTab('activity')}
-            className={`px-5 py-2.5 rounded-t-lg font-bold text-sm whitespace-nowrap transition-colors border-b-2 ${
-              activeTab === 'activity' ? 'text-purple-400 border-purple-400 bg-purple-500/10' : 'text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            Activity Log
-          </button>
-        </div>
-
-        {/* Tab Content */}
-        <div className="min-h-[400px]">
-          {(activeTab === 'agents' || activeTab === 'active') && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {AGENT_TYPES.map(type => {
-                const agentState = agents.find(a => a.agentType === type);
-                // In 'active' tab, only show connected agents
-                if (activeTab === 'active' && agentState?.status !== 'connected') {
-                  return null;
-                }
-                return (
-                  <AgentDashboardCard
-                    key={type}
-                    agentType={type as AgentType}
-                    agent={agentState}
-                    expanded={expandedAgent === type}
-                    onToggle={() => setExpandedAgent(prev => prev === type ? null : type)}
-                    onLogin={() => loginAgent(type as AgentType)}
-                    onQuickConnect={() => quickConnect(type as AgentType)}
-                    onRevoke={() => agentState && setRevokeTarget(agentState)}
-                    onCreateToken={() => createToken(type as AgentType)}
-                  />
-                );
-              })}
-              {activeTab === 'active' && activeAgentsCount === 0 && (
-                <div className="col-span-full py-12 text-center border border-dashed border-slate-700 rounded-2xl bg-slate-800/20 flex flex-col items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" className="text-slate-500 mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12 2.1 7.1"></path><path d="M12 12l9.9 4.9"></path></svg>
-                  <h3 className="text-lg font-bold text-slate-300">No Active Agents</h3>
-                  <p className="text-slate-500 mt-2 max-w-md">Connect an agent from the All Agents tab to monitor its activity here.</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'approvals' && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="bg-slate-800/40 border border-slate-700/60 rounded-2xl p-6 md:p-8 backdrop-blur-xl shadow-xl">
-                <div className="flex items-center justify-between mb-8">
-                  <h3 className="text-2xl font-bold text-slate-100 flex items-center gap-3">
-                    <span className="p-2 bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                    </span>
-                    Security & Approvals
-                  </h3>
-                </div>
-                
-                {pendingApprovalsCount > 0 ? (
-                  <ApprovalsList 
-                    approvals={approvals} 
-                    onApprove={(id) => approveRequest ? approveRequest(id) : console.log('approve', id)} 
-                    onReject={(id) => rejectRequest ? rejectRequest(id) : console.log('reject', id)} 
-                  />
-                ) : (
-                  <div className="text-center py-16 border border-dashed border-slate-700 rounded-xl bg-slate-900/30">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" className="mx-auto text-slate-600 mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-                    <p className="text-slate-400 font-medium text-lg">All caught up! No pending transactions to approve.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'activity' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="lg:col-span-2 bg-slate-800/40 border border-slate-700/60 rounded-2xl p-6 backdrop-blur-xl shadow-xl">
-                <h3 className="text-xl font-bold text-slate-200 mb-6 flex items-center gap-3 pb-4 border-b border-slate-700/50">
-                  <span className="p-2 bg-indigo-500/20 text-indigo-400 rounded-lg border border-indigo-500/30">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-                  </span>
-                  Live Feed
-                </h3>
-                <AgentActivityList activities={activity} />
-              </div>
-              
-              <div className="bg-slate-800/40 border border-slate-700/60 rounded-2xl p-6 backdrop-blur-xl shadow-xl h-fit">
-                <h3 className="text-xl font-bold text-slate-200 mb-6 flex items-center gap-3 pb-4 border-b border-slate-700/50">
-                  <span className="p-2 bg-purple-500/20 text-purple-400 rounded-lg border border-purple-500/30">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
-                  </span>
-                  Credentials
-                </h3>
-                <div className="space-y-4">
-                  {agents.filter(a => a.walletAddress).map(agent => (
-                    <div key={agent.agentKey} className="p-4 bg-slate-900/50 rounded-xl border border-slate-700/80 shadow-inner">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-xs uppercase tracking-widest text-slate-400 font-bold bg-slate-800 px-2 py-1 rounded">{agent.agentType}</span>
-                      </div>
-                      <AgentWalletSummary walletAddress={agent.walletAddress} />
-                    </div>
-                  ))}
-                  {agents.filter(a => a.walletAddress).length === 0 && (
-                    <div className="text-slate-500 text-sm italic p-6 text-center border border-dashed border-slate-700 rounded-xl bg-slate-900/30">
-                      {t('plugin.noCredentials', 'No active credentials. Connect an agent to see their summary.')}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Modals */}
-      {connectionToken && (
-        <ConnectionTokenDialog token={connectionToken} onClose={() => setConnectionToken && setConnectionToken(null)} />
-      )}
-
-      {revokeTarget && (
-        <RevokeModal
-          agent={revokeTarget}
-          onConfirm={() => {
-            revokeAgent(revokeTarget.agentKey);
-            setRevokeTarget(null);
-          }}
-          onCancel={() => setRevokeTarget(null)}
-        />
-      )}
-    </div>
-  );
+function displayAgentName(agent: AgentState): string {
+  return agent.clientName || AGENT_CONFIGS[agent.agentType]?.name || 'Agent'
 }
 
+/**
+ * Agent control center: identity, permissions, approvals, activity, and
+ * connection security live in one page. The exact agentKey remains the identity
+ * boundary; agentType is used only for visual grouping and copy.
+ */
+export default function PluginPage() {
+  const {
+    agents,
+    pendingApprovals,
+    activity,
+    credentials,
+    limits,
+    connectionToken,
+    connectedCount,
+    mcpSessions,
+    busyAction,
+    error,
+    notice,
+    hasSession,
+    connectHermes,
+    prepareAgentWallet,
+    loginAgent,
+    createToken,
+    revokeAgent,
+    approveRequest,
+    rejectRequest,
+    saveLimits,
+    setConnectionToken,
+    dismissError,
+    dismissNotice,
+  } = useAgentManager()
+
+  const oauth = useOAuthApproval()
+  const [tab, setTab] = useState<TabId>('overview')
+  const [activityAgentKey, setActivityAgentKey] = useState('all')
+  const [revokeTarget, setRevokeTarget] = useState<AgentState | null>(null)
+  const [draftMaxPerTx, setDraftMaxPerTx] = useState<string | null>(null)
+  const [draftDailyLimit, setDraftDailyLimit] = useState<string | null>(null)
+
+  const visibleActivity = useMemo(
+    () => activityAgentKey === 'all'
+      ? activity
+      : activity.filter(entry => String(entry.data?.agentKey || '') === activityAgentKey),
+    [activity, activityAgentKey],
+  )
+  const connectedTypes = useMemo(() => new Set(agents.map(agent => agent.agentType)), [agents])
+  const currentMaxPerTx = draftMaxPerTx ?? limits?.maxPerTx ?? '100'
+  const currentDailyLimit = draftDailyLimit ?? limits?.dailyLimit ?? '500'
+
+  const handleConnect = (type: AgentType) => {
+    if (type === 'hermes') return connectHermes('login')
+    return prepareAgentWallet(type, 'login')
+  }
+
+  const handleCreateWallet = (type: AgentType) => {
+    if (type === 'hermes') return connectHermes('register')
+    return prepareAgentWallet(type, 'register')
+  }
+
+  const handleSaveLimits = () => {
+    void saveLimits({
+      maxPerTx: Number(draftMaxPerTx ?? limits?.maxPerTx ?? 100),
+      dailyLimit: Number(draftDailyLimit ?? limits?.dailyLimit ?? 500),
+      autoApprove: limits?.autoApprove ?? true,
+      whitelist: limits?.whitelist ?? [],
+    })
+  }
+
+  return (
+    <div className='plugin-page'>
+      {oauth.request && (
+        <OAuthApprovalCard
+          clientId={oauth.request.clientId}
+          step={oauth.step}
+          stepLabel={oauth.stepLabel}
+          busy={oauth.busy}
+          error={oauth.error}
+          onApprove={oauth.approve}
+          onCancel={oauth.cancel}
+        />
+      )}
+
+      {error && (
+        <div className='inline-error plugin-alert'>
+          <span>{error}</span>
+          <button type='button' className='text-button' onClick={dismissError}>Tutup</button>
+        </div>
+      )}
+      {notice && (
+        <div className='inline-notice plugin-alert'>
+          <span>{notice}</span>
+          <button type='button' className='text-button' onClick={dismissNotice}>Tutup</button>
+        </div>
+      )}
+
+      <section className='glass plugin-hero plugin-hero-v2'>
+        <div className='plugin-hero-copy'>
+          <div className='plugin-eyebrow'><span className='plugin-eyebrow-dot' /> Agent control center</div>
+          <h2>Kontrol semua agent Anda</h2>
+          <p>Kelola wallet, akses MCP, batas pengeluaran, dan setiap permintaan transaksi dari satu tempat.</p>
+          <div className='plugin-hero-actions'>
+            <button type='button' className='action-button' onClick={() => setTab('overview')}>Kelola agent</button>
+            {pendingApprovals.length > 0 && <button type='button' className='mini-button' onClick={() => setTab('approvals')}>Tinjau {pendingApprovals.length} permintaan</button>}
+          </div>
+        </div>
+        <div className='plugin-hero-meta plugin-hero-metrics'>
+          <div className='plugin-metric-primary'><strong>{agents.length}</strong><span>agent terdaftar</span></div>
+          <div className='plugin-metric-row'><span>Online</span><strong>{connectedCount}</strong></div>
+          <div className='plugin-metric-row'><span>Permintaan</span><strong className={pendingApprovals.length ? 'is-warning' : ''}>{pendingApprovals.length}</strong></div>
+        </div>
+      </section>
+
+      {!hasSession && (
+        <section className='plugin-session-banner'>
+          <div className='plugin-session-icon'>⌁</div>
+          <div>
+            <strong>Hubungkan Agent Wallet untuk membuka kontrol penuh</strong>
+            <p>Passkey diperlukan untuk melihat agent, mengatur izin, dan mengelola akses.</p>
+          </div>
+          <button type='button' className='mini-button mini-button-primary' onClick={() => handleConnect('hermes')}>Mulai dengan passkey</button>
+        </section>
+      )}
+
+      <section className='glass plugin-connect-strip'>
+        <div className='plugin-section-heading'>
+          <div><span className='section-eyebrow'>Endpoint MCP</span><strong>Hubungkan agent baru</strong></div>
+          <span className='plugin-secure-label'>● owner-controlled</span>
+        </div>
+        <p>Gunakan URL ini pada Claude, ChatGPT, Hermes, atau client MCP lain. Setiap koneksi mendapat wallet dan izin terpisah.</p>
+        <CopyField value={MCP_URL} ariaLabel='Salin alamat koneksi MCP' />
+      </section>
+
+      <nav className='glass plugin-tabs plugin-tabs-v2' aria-label='Navigasi Plugin'>
+        {([
+          ['overview', 'Overview', agents.length],
+          ['approvals', 'Permintaan izin', pendingApprovals.length],
+          ['activity', 'Aktivitas', activity.length],
+          ['security', 'Keamanan', credentials.length],
+        ] as const).map(([id, label, count]) => (
+          <button key={id} type='button' className={`plugin-tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
+            <span>{label}</span>
+            {count > 0 && <b>{count}</b>}
+          </button>
+        ))}
+      </nav>
+
+      {tab === 'overview' && (
+        <div className='plugin-overview'>
+          <div className='plugin-section-title'>
+            <div><span className='section-eyebrow'>Identitas terisolasi</span><h3>Agent Anda</h3></div>
+            <span>{agents.length} koneksi</span>
+          </div>
+
+          {agents.length > 0 ? (
+            <div className='agent-grid'>
+              {agents.map(agent => (
+                <AgentCard
+                  key={agent.agentKey}
+                  agentType={agent.agentType}
+                  agent={agent}
+                  busyAction={busyAction}
+                  onConnect={() => loginAgent(agent.agentKey)}
+                  onCreateWallet={() => loginAgent(agent.agentKey)}
+                  onLogin={() => loginAgent(agent.agentKey)}
+                  onCreateToken={() => createToken(agent.agentKey)}
+                  onRevoke={() => setRevokeTarget(agent)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className='plugin-empty plugin-empty-hero'>
+              <div className='plugin-empty-mark'>+</div>
+              <strong>Belum ada agent yang terhubung</strong>
+              <p>Pilih metode koneksi di bawah untuk membuat Agent Wallet pertama Anda.</p>
+            </div>
+          )}
+
+          <div className='plugin-section-title plugin-section-title-spaced'>
+            <div><span className='section-eyebrow'>Metode koneksi</span><h3>Tambah agent</h3></div>
+          </div>
+          <div className='plugin-provider-grid'>
+            {AGENT_TYPES.map(type => {
+              const config = AGENT_CONFIGS[type]
+              const connected = connectedTypes.has(type)
+              return (
+                <article key={type} className='plugin-provider-card' style={{ ['--agent-accent' as string]: config.accent }}>
+                  <div className='plugin-provider-mark'>{config.mark}</div>
+                  <div className='plugin-provider-copy'><strong>{config.name}</strong><span>{connected ? 'Sudah terhubung' : config.connectionType}</span></div>
+                  <p>{config.description}</p>
+                  {connected
+                    ? <button type='button' className='mini-button' onClick={() => setTab('activity')}>Lihat koneksi</button>
+                    : type === 'hermes'
+                      ? <button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleConnect(type)}>Buat koneksi</button>
+                      : <button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleCreateWallet(type)}>Siapkan wallet</button>}
+                </article>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {tab === 'approvals' && (
+        <section className='plugin-panel-section'>
+          <div className='plugin-section-title'><div><span className='section-eyebrow'>Tindakan bernilai</span><h3>Permintaan yang memerlukan Anda</h3></div><span className='plugin-count-badge'>{pendingApprovals.length} pending</span></div>
+          <div className='plugin-safety-note'><span>!</span><p>Periksa agent, jumlah, token, chain, dan alamat tujuan sebelum menyetujui. Tombol ini hanya mengubah status persetujuan; transaksi tetap mengikuti flow signing yang aman.</p></div>
+          <ApprovalsList approvals={pendingApprovals} busyAction={busyAction} onApprove={approveRequest} onReject={rejectRequest} />
+        </section>
+      )}
+
+      {tab === 'activity' && (
+        <section className='plugin-panel-section'>
+          <div className='plugin-section-title'><div><span className='section-eyebrow'>Audit trail</span><h3>Aktivitas terbaru</h3></div><select className='plugin-select' value={activityAgentKey} onChange={event => setActivityAgentKey(event.target.value)}><option value='all'>Semua agent</option>{agents.map(agent => <option key={agent.agentKey} value={agent.agentKey}>{displayAgentName(agent)}</option>)}</select></div>
+          <div className='plugin-activity-summary'><span><strong>{visibleActivity.length}</strong> event ditampilkan</span><span>Auto-refresh setiap 10 detik</span></div>
+          <AgentActivityList activities={visibleActivity} />
+        </section>
+      )}
+
+      {tab === 'security' && (
+        <div className='plugin-security-grid'>
+          <section className='plugin-panel-section'>
+            <div className='plugin-section-title'><div><span className='section-eyebrow'>Spending policy</span><h3>Batas default owner</h3></div><span className='plugin-secure-label'>● fail-closed</span></div>
+            <p className='plugin-muted-copy'>Batas ini menjadi pagar dasar. Policy per-agent akan menjadi lapisan berikutnya saat tersedia.</p>
+            <div className='plugin-form-grid'>
+              <label><span>Maksimum per transaksi</span><div className='plugin-input-wrap'>                  <input className='input' inputMode='decimal' value={String(currentMaxPerTx)} onChange={event => setDraftMaxPerTx(event.target.value)} aria-label='Maksimum per transaksi' /><em>USDC</em></div></label>
+              <label><span>Batas harian</span><div className='plugin-input-wrap'>                  <input className='input' inputMode='decimal' value={String(currentDailyLimit)} onChange={event => setDraftDailyLimit(event.target.value)} aria-label='Batas harian' /><em>USDC</em></div></label>
+            </div>
+            <div className='plugin-policy-row'><span>Auto-approve</span><strong>{limits?.autoApprove ? 'Aktif' : 'Nonaktif'}</strong></div>
+            <div className='plugin-policy-row'><span>Whitelist</span><strong>{limits?.whitelist?.length || 0} alamat</strong></div>
+            <button type='button' className='action-button plugin-save-button' disabled={busyAction === 'limits'} onClick={handleSaveLimits}>{busyAction === 'limits' ? 'Menyimpan…' : 'Simpan batas'}</button>
+          </section>
+
+          <section className='plugin-panel-section'>
+            <div className='plugin-section-title'><div><span className='section-eyebrow'>Vault access</span><h3>Credential tersimpan</h3></div><span>{credentials.length} item</span></div>
+            <p className='plugin-muted-copy'>Nilai sensitif selalu dimasking. MCP agent tidak dapat mengelola credential owner.</p>
+            {credentials.length === 0 ? <div className='plugin-empty plugin-empty-small'><strong>Belum ada credential</strong><p>Credential wallet akan terdaftar setelah autentikasi berhasil.</p></div> : <div className='plugin-credential-list'>{credentials.map(credential => <div className='plugin-credential-row' key={credential.id}><span className='plugin-credential-icon'>{credential.type === 'api_key' ? 'AK' : 'WK'}</span><div><strong>{credential.label}</strong><small>{credential.type}</small></div><code>{credential.value || '••••••••'}</code></div>)}</div>}
+          </section>
+
+          <section className='plugin-panel-section plugin-security-wide'>
+            <div className='plugin-section-title'><div><span className='section-eyebrow'>Connection security</span><h3>Lapisan perlindungan aktif</h3></div></div>
+            <div className='plugin-security-checks'><div><b>✓</b><span><strong>Wallet terisolasi</strong><small>Setiap agent dikunci ke MSCA masing-masing.</small></span></div><div><b>✓</b><span><strong>Token scoped</strong><small>Revoke satu agent tidak mematikan agent lain.</small></span></div><div><b>✓</b><span><strong>PKCE + passkey</strong><small>Koneksi OAuth diverifikasi terhadap request asli.</small></span></div><div><b>✓</b><span><strong>Session aktif</strong><small>{mcpSessions.length} sesi MCP terdeteksi oleh backend.</small></span></div></div>
+          </section>
+        </div>
+      )}
+
+      {connectionToken && <ConnectionTokenDialog token={connectionToken} onClose={() => setConnectionToken(null)} />}
+      {revokeTarget && <RevokeModal agent={revokeTarget} busy={busyAction === `revoke:${revokeTarget.agentKey}`} onConfirm={async () => { const target = revokeTarget; setRevokeTarget(null); await revokeAgent(target.agentKey) }} onCancel={() => setRevokeTarget(null)} />}
+    </div>
+  )
+}

@@ -64,9 +64,8 @@ export const useAgentStore = create<AgentStoreState>()(
       name: 'arx-agents',
       partialize: (state) => ({
         agents: state.agents.map((agent) => {
-          // Do not persist sessionToken
-          const { sessionToken, ...rest } = agent as any;
-          return rest as AgentState;
+          // Do not persist any transient session fields.
+          return agent as AgentState;
         }),
       }),
     }

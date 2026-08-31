@@ -30,7 +30,7 @@ export function getAuthToken(): string | null {
           token = parsed;
         }
       }
-    } catch (e) {
+    } catch {
       // If it fails to parse, it might just be a raw string token, so we proceed with it as-is
     }
   }

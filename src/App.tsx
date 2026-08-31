@@ -15,7 +15,8 @@ import { PaySandbox } from './components/PaySandbox'
 import { IntelPanel } from './components/IntelPanel'
 import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
 import { AiRouterPanel } from './components/AiRouterPanel'
-import { PluginPanel } from './components/PluginPanel'
+// PluginPanel is deprecated and intentionally not rendered — see the header
+// comment in src/components/PluginPanel.tsx. PluginPage owns the Plugin route.
 import PluginPage from './pages/PluginPage'
 import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
@@ -91,9 +92,6 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const [agentIdentities, setAgentIdentities] = useState<AgentIdentity[]>([])
   const [activeAgentIdentity, setActiveAgentIdentity] = useState<AgentIdentity|null>(null)
-  const [solanaAddress] = useState<string|null>(() => {
-    try { return (window as any).solflare?.publicKey?.toString() || null } catch { return null }
-  })
   const connectInFlightRef = useRef('')
   const balanceRequestRef = useRef({ circle: 0, eoa: 0 })
 

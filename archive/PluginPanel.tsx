@@ -1,10 +1,25 @@
+/**
+ * DEPRECATED — NOT RENDERED.
+ *
+ * The Plugin page is now src/pages/PluginPage.tsx (+ src/hooks/useAgentManager
+ * and src/hooks/useOAuthApproval). This file is kept ONLY as the reference for
+ * features that have not been ported yet:
+ *   - credential vault list, spending limits editor
+ *   - per-agent card linking (link/unlink owner cards)
+ *   - pending-tx signing queue (/api/pending-txs)
+ *   - per-agent activity drill-down and MCP session table
+ *
+ * Do not wire this component back into App.tsx: rendering both it and
+ * PluginPage would run two competing passkey/session flows on the same page.
+ * Port what is needed into features/plugin/* instead, then delete this file.
+ */
 import { useEffect, useRef, useState } from 'react'
+
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
 import { AgentWalletList, type AgentWalletEntry } from './AgentWalletList'
-import { disconnectWalletConnect, getWalletConnectProviderSync, isMobile } from '../services/walletConnect'
 import { findConnectedWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
 import { createAgentConnectionToken, createBootstrapConnectionToken, getAgentActivity, getAgentCards, linkCardToAgent, listVaultAgents, listVaultCards, revokeVaultAgent, unlinkCardFromAgent, type AgentActivityEntry, type AgentConnectionToken, type LinkedAgentCard, type OwnerAgentCard, type VaultAgent } from '../vaultAgentsApi'
