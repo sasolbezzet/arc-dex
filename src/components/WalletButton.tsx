@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
 import { findConnectedWalletProvider, getWalletProvider, setWalletProvider } from '../walletProvider'
-import { connectWalletConnect, restoreWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile, redirectToWalletForSign } from '../services/walletConnect'
+import { connectWalletConnect, restoreWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isWalletConnectAvailable, isMobile } from '../services/walletConnect'
 
 declare global { interface Window { ethereum?: any } }
 
@@ -84,14 +84,16 @@ export function WalletButton({ address, onConnect, onDisconnect, onConnected }: 
         if (wcProv) setWalletProvider(wcProv)
 
         if (isMobile()) {
-          // Reuse WalletConnect's peer metadata to foreground the wallet app.
-          // This is only the connection flow; the OAuth SIWE request remains
-          // owned by PluginPanel and is not interrupted by a second redirect.
+          // Do not navigate to the wallet peer's home deep-link here. OKX
+          // reports `okx://wallet/wallet/home` as peer metadata, which would
+          // leave ARCOX before ensureAuthSession() can finish personal_sign.
+          // WalletConnect owns the signing relay; keep this web page alive so
+          // the signature response can return to ARCOX.
           setMobileSignHint(true)
-          redirectToWalletForSign()
           await onConnect(addr)
           setMobileSignHint(false)
-      } else {
+          onConnected?.()
+        } else {
           await onConnect(addr)
           onConnected?.()
         }
