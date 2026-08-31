@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Approval } from '../../types/agent';
+import { Loader2, ExternalLink, ArrowRightLeft, Send, Repeat, Check, X } from 'lucide-react';
 
 export interface ApprovalsListProps {
   approvals: Approval[];
@@ -40,8 +41,12 @@ export const ApprovalsList: React.FC<ApprovalsListProps> = ({
 }) => {
   if (!approvals || approvals.length === 0) {
     return (
-      <div className="text-gray-500 text-sm italic py-4">
-        Tidak ada permintaan pending
+      <div className="flex flex-col items-center justify-center p-8 text-gray-500 bg-gray-900/50 rounded-xl border border-gray-800">
+        <div className="w-16 h-16 mb-4 rounded-full bg-gray-800 flex items-center justify-center">
+          <Check className="w-8 h-8 text-gray-600" />
+        </div>
+        <p className="text-sm font-medium">No pending approvals</p>
+        <p className="text-xs text-gray-600 mt-1">You're all caught up!</p>
       </div>
     );
   }
@@ -51,75 +56,111 @@ export const ApprovalsList: React.FC<ApprovalsListProps> = ({
   });
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {sortedApprovals.map((approval) => {
         const isSigning = signingId === approval.id;
+        const isDisabled = !!signingId;
         
-        let borderClass = 'border-l-gray-400';
-        let icon = '📝';
-        let typeLabel = approval.type;
+        let typeInfo = {
+          icon: <Send className="w-5 h-5 text-blue-400" />,
+          label: 'Send',
+          bg: 'bg-blue-500/10',
+          border: 'border-blue-500/20'
+        };
 
-        if (approval.type === 'send') {
-          borderClass = 'border-l-blue-500';
-          icon = '💸';
-          typeLabel = 'Send';
-        } else if (approval.type === 'swap') {
-          borderClass = 'border-l-purple-500';
-          icon = '🔄';
-          typeLabel = 'Swap';
+        if (approval.type === 'swap') {
+          typeInfo = {
+            icon: <Repeat className="w-5 h-5 text-purple-400" />,
+            label: 'Swap',
+            bg: 'bg-purple-500/10',
+            border: 'border-purple-500/20'
+          };
         } else if (approval.type === 'bridge') {
-          borderClass = 'border-l-green-500';
-          icon = '🌉';
-          typeLabel = 'Bridge';
+          typeInfo = {
+            icon: <ArrowRightLeft className="w-5 h-5 text-emerald-400" />,
+            label: 'Bridge',
+            bg: 'bg-emerald-500/10',
+            border: 'border-emerald-500/20'
+          };
         }
 
         return (
-          <div key={approval.id} className={`bg-white rounded-lg shadow-sm border border-gray-200 border-l-4 ${borderClass} p-4 flex flex-col gap-3`}>
-            <div className="flex justify-between items-start">
+          <div 
+            key={approval.id} 
+            className="group bg-gray-900 rounded-xl border border-gray-800 overflow-hidden hover:border-gray-700 transition-colors shadow-lg"
+          >
+            {/* Header */}
+            <div className={`px-4 py-3 border-b border-gray-800 flex justify-between items-center ${typeInfo.bg}`}>
               <div className="flex items-center gap-2">
-                <span className="text-xl" role="img" aria-label={typeLabel}>{icon}</span>
-                <span className="font-semibold text-gray-800 capitalize">{typeLabel}</span>
+                <div className={`p-1.5 rounded-lg bg-gray-900 border ${typeInfo.border}`}>
+                  {typeInfo.icon}
+                </div>
+                <span className="font-medium text-gray-200">{typeInfo.label} Operation</span>
               </div>
-              <span className="text-xs text-gray-500 font-medium">
+              <span className="text-xs text-gray-500 font-medium bg-gray-800 px-2 py-1 rounded-md">
                 {timeAgo(approval.createdAt)}
               </span>
             </div>
             
-            <div className="text-sm text-gray-700">
-              <div className="font-medium text-base">
-                {approval.amount} {approval.token}
+            {/* Body */}
+            <div className="p-4">
+              <div className="flex items-baseline gap-2 mb-4">
+                <span className="text-3xl font-bold text-white tracking-tight">
+                  {approval.amount}
+                </span>
+                <span className="text-sm font-semibold px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  {approval.token}
+                </span>
               </div>
-              {approval.type === 'send' && approval.destination && (
-                <div className="text-xs text-gray-500 truncate mt-1 bg-gray-50 p-1.5 rounded border border-gray-100">
-                  <span className="font-semibold mr-1">To:</span> 
-                  {truncateAddress(approval.destination)}
-                </div>
-              )}
-            </div>
 
-            <div className="mt-1 flex gap-2 w-full">
-              {isSigning ? (
-                <div className="flex-1 bg-gray-100 text-gray-600 rounded-md py-2 text-center text-sm font-medium animate-pulse border border-gray-200">
-                  Signing...
+              {approval.type === 'send' && approval.destination && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-gray-800/50 border border-gray-700/50 mb-4">
+                  <div className="flex flex-col">
+                    <span className="text-xs text-gray-500 font-medium mb-1">Destination Address</span>
+                    <div className="flex items-center gap-2 text-sm text-gray-300 font-mono">
+                      {truncateAddress(approval.destination)}
+                      <a 
+                        href={`https://basescan.org/address/${approval.destination}`} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-indigo-400 hover:text-indigo-300 transition-colors p-1"
+                        title="View on Explorer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <>
-                  <button
-                    onClick={() => onApprove(approval.id)}
-                    disabled={!!signingId}
-                    className="flex-1 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-md py-2 text-center text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500"
-                  >
-                    <span>✅</span> Approve
-                  </button>
-                  <button
-                    onClick={() => onReject(approval.id)}
-                    disabled={!!signingId}
-                    className="flex-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-md py-2 text-center text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-red-500"
-                  >
-                    <span>❌</span> Reject
-                  </button>
-                </>
               )}
+
+              {/* Actions */}
+              <div className="flex gap-3 mt-2">
+                <button
+                  onClick={() => onReject(approval.id)}
+                  disabled={isDisabled}
+                  className="flex-1 px-4 py-2.5 rounded-lg border border-rose-500/50 text-rose-400 font-medium text-sm hover:bg-rose-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-rose-500/50"
+                >
+                  <X className="w-4 h-4" />
+                  Reject
+                </button>
+                <button
+                  onClick={() => onApprove(approval.id)}
+                  disabled={isDisabled}
+                  className="flex-1 px-4 py-2.5 rounded-lg bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-medium text-sm transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                >
+                  {isSigning ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Signing...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      Approve
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         );
