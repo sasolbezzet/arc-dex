@@ -16,6 +16,7 @@ import { IntelPanel } from './components/IntelPanel'
 import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
 import { AiRouterPanel } from './components/AiRouterPanel'
 import { PluginPanel } from './components/PluginPanel'
+import PluginPage from './pages/PluginPage'
 import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken, getAuthSession } from './auth'
@@ -375,7 +376,7 @@ export default function App() {
                       : page === 'ai-router'
                         ? <AiRouterPanel address={address!} activeAgentIdentity={activeAgentIdentity} />
                       : page === 'plugin'
-                        ? <PluginPanel address={address} circleWallet={circleWallet} solanaAddress={solanaAddress} />
+                        ? <PluginPage />
                       : page === 'agentic'
                         ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} identities={agentIdentities} activeIdentity={activeAgentIdentity} onSelectIdentity={chooseAgentIdentity} onIdentityRefresh={() => refreshAgentIdentities(true)} />
                         : page === 'intel'
