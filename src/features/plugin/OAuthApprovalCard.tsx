@@ -78,7 +78,7 @@ export function OAuthApprovalCard({
       </div>
 
       <p style={{ color: '#71809a', fontSize: 11, margin: 0 }}>
-        Anda hanya perlu satu kali passkey. ARCOX tidak meminta tanda tangan wallet utama untuk koneksi ini.
+        Hubungkan wallet utama terlebih dahulu. ARCOX memakai wallet utama untuk membuktikan owner dan passkey untuk membuktikan Agent Wallet.
       </p>
     </section>
   )

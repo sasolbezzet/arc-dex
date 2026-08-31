@@ -802,24 +802,15 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
 
   // Reserve the automation signer on the backend. The private key never enters
   // the browser; only its public address is returned for passkey authorization.
-  let reserveRes = await fetch(`${API}/api/session/generate-key`, {
+  const reserveRes = await fetch(`${API}/api/session/generate-key`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
     body: JSON.stringify({ walletAddress: state.walletAddress, ownerAddress, ownerSessionToken }),
   })
-  let reserved = await reserveRes.json()
-  // An EOA SIWE token can expire independently from the passkey/MSCA token.
-  // Owner binding is optional, so discard only the stale EOA proof and retry
-  // the MSCA reservation without ownerAddress instead of blocking activation.
-  if (!reserveRes.ok && ownerAddress && ownerSessionToken && reserveRes.status === 403 && /Verified EOA session|ownerAddress is not authenticated/i.test(String(reserved.error || ''))) {
-    localStorage.removeItem('arx_eoa_vault_token')
-    reserveRes = await fetch(`${API}/api/session/generate-key`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
-      body: JSON.stringify({ walletAddress: state.walletAddress }),
-    })
-    reserved = await reserveRes.json()
-  }
+  const reserved = await reserveRes.json()
+  // Owner proof is mandatory. Never retry without it: doing so would recreate
+  // the historical bug where an MSCA passkey was silently attached to a stale
+  // or foreign owner identity.
   if (!reserveRes.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
   const delegateAddress = reserved.delegateAddress
 

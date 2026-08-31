@@ -102,7 +102,7 @@ export async function activateAgentSession(
   walletAddress: string,
   vaultToken: string,
   agentKey: string,
-  options: { eoaAddress?: string; skipDestinationChains?: boolean } = {},
+  options: { eoaAddress?: string; ownerSessionToken?: string; skipDestinationChains?: boolean } = {},
 ): Promise<SessionActivation> {
   if (!vaultToken) throw new Error('Sesi Agent Wallet belum tersedia')
 
@@ -126,9 +126,8 @@ export async function activateAgentSession(
 
   // Binding an EOA is optional and requires a separate signature proof in this
   // browser. The passkey/MSCA token is not an EOA proof and must not be sent.
-  const ownerSessionToken = options.eoaAddress
-    ? localStorage.getItem('arx_eoa_vault_token') || undefined
-    : undefined
+  const ownerSessionToken = options.ownerSessionToken
+    || (options.eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined)
   const verifiedEoaAddress = ownerSessionToken ? options.eoaAddress : undefined
 
   const result = await setupSessionKey(vaultToken, verifiedEoaAddress, ownerSessionToken, agentKey)

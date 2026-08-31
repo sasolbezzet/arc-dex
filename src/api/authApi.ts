@@ -17,6 +17,8 @@ export interface PasskeyResult {
 export interface OAuthVerifyParams {
   mscaWalletAddress: string;
   mscaSessionToken: string;
+  ownerAddress: string;
+  ownerSessionToken: string;
   requestId: string;
   clientId: string;
   redirectUri: string;

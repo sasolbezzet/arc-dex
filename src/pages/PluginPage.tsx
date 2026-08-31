@@ -135,11 +135,11 @@ export default function PluginPage() {
           <div><span className='section-eyebrow'>Panduan pertama kali</span><strong id='plugin-first-run-title'>Satu urutan untuk semua agent</strong></div>
           <span className='plugin-secure-label'>● tidak ada private key</span>
         </div>
-        <p className='plugin-muted-copy'>Pisahkan tiga hal ini: wallet utama untuk fitur DEX, Agent Wallet yang dikunci passkey, dan koneksi MCP ke agent AI.</p>
+        <p className='plugin-muted-copy'>Pisahkan tiga hal ini: wallet utama yang membuktikan owner, Agent Wallet yang dikunci passkey, dan koneksi MCP ke agent AI.</p>
         <div className='plugin-first-run-grid'>
           <div className='plugin-first-run-step'><b>01</b><div><strong>Aktifkan Agent Wallet</strong><span>Tekan <em>Buat Agent Wallet</em> atau buka kartu agent yang ingin dipakai. Pilih Login jika wallet sudah ada; pilih Buat baru hanya untuk agent baru.</span></div></div>
           <div className='plugin-first-run-step'><b>02</b><div><strong>Mulai dari aplikasi agent</strong><span>Hermes memakai token dari ARCOX. Claude dan ChatGPT dimulai dari pengaturan MCP mereka, lalu otomatis kembali ke halaman approval ARCOX.</span></div></div>
-          <div className='plugin-first-run-step'><b>03</b><div><strong>Setujui satu kali</strong><span>Di halaman ARCOX, periksa nama agent lalu pilih Login passkey atau Buat wallet baru. Tidak perlu SIWE wallet utama untuk koneksi MCP.</span></div></div>
+          <div className='plugin-first-run-step'><b>03</b><div><strong>Setujui dua identitas</strong><span>Di halaman ARCOX, hubungkan wallet utama lalu pilih Login passkey atau Buat wallet baru. Wallet utama membuktikan owner; passkey membuktikan Agent Wallet.</span></div></div>
           <div className='plugin-first-run-step'><b>04</b><div><strong>Selesai dan pantau</strong><span>Hermes menerima token satu kali. Claude/ChatGPT kembali ke aplikasinya; status, approval, limit, dan activity terlihat di tab ini.</span></div></div>
         </div>
       </section>
@@ -149,7 +149,7 @@ export default function PluginPage() {
           <div className='plugin-session-icon'>⌁</div>
           <div>
             <strong>Aktifkan Agent Wallet dengan passkey</strong>
-            <p>Ini berbeda dari wallet utama. Passkey mengunci wallet khusus agent dan membuka kontrol keamanan.</p>
+            <p>Ini berbeda dari wallet utama. Hubungkan wallet utama untuk membuktikan owner, lalu passkey mengunci wallet khusus agent.</p>
           </div>
           <div className='plugin-session-actions'>
             <button type='button' className='mini-button mini-button-primary' onClick={() => handleConnect('hermes')}>Buat Agent Wallet</button>

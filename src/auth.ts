@@ -229,6 +229,25 @@ export function getAuthToken() {
   return getAuthSession()?.token || ''
 }
 
+/**
+ * Return a session for the wallet that is actually connected in this browser.
+ * A cached SIWE token alone is intentionally insufficient for agent linking:
+ * passkey ownership must be attached to the currently connected owner EOA,
+ * never to an address left in an environment variable or stale localStorage.
+ */
+export async function ensureConnectedOwnerSession(): Promise<{ address: string; token: string }> {
+  const provider = await findConnectedWalletProvider()
+  if (!provider) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum mengakses Agent Wallet.')
+  const accounts = await provider.request({ method: 'eth_accounts' })
+  const address = String(accounts?.[0] || '').trim()
+  if (!address) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum mengakses Agent Wallet.')
+  const token = await ensureAuthSession(address)
+  // Keep this owner proof separate from the currently selected Agent Wallet
+  // passkey token. Agent-management APIs can then use the EOA scope only.
+  try { localStorage.setItem('arx_owner_vault_token', token) } catch { /* ignore storage errors */ }
+  return { address: getAddress(address), token }
+}
+
 export function clearAuthSession() {
   localStorage.removeItem(STORAGE_KEY)
 }

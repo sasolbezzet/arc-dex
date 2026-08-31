@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { registerPasskey, loginPasskey } from '../services/modularWallet'
 import { activateAgentSession, readSessionStatus } from '../services/agentSession'
+import { ensureConnectedOwnerSession } from '../auth'
 
 /**
  * Claude / ChatGPT connector approval (MCP OAuth).
@@ -15,9 +16,9 @@ import { activateAgentSession, readSessionStatus } from '../services/agentSessio
  *     -> POST /api/auth/passkey-verify to mint the authorization code
  *     -> redirect back to the agent
  *
- * One signature is enough: the passkey alone proves the Agent Wallet identity,
- * so no separate wallet/SIWE signature is requested. The backend re-validates
- * the token against the exact MSCA before issuing a code.
+ * Two identities are checked: the connected owner wallet proves the account,
+ * and the passkey proves the selected Agent Wallet MSCA. The backend validates
+ * both sessions before issuing a code.
  *
  * REGRESSION GUARD: this flow used to live inside PluginPanel.tsx. When the
  * Plugin page was rewritten, PluginPanel stopped being rendered and the whole
@@ -96,6 +97,11 @@ export function useOAuthApproval() {
     const agentKey = `oauth:${request.clientId}`
 
     try {
+      // The MSCA passkey proves the agent wallet, while the connected EOA
+      // proves which ARCOX owner may attach it. Requiring both prevents a
+      // passkey-only login from adopting an MSCA that belongs to another
+      // owner's old/env-derived binding.
+      const owner = await ensureConnectedOwnerSession()
       let walletAddress = ''
       let sessionToken = ''
       let verified = false
@@ -113,7 +119,11 @@ export function useOAuthApproval() {
         setStep('checking')
         // A brand-new agent has no delegate yet; activation is idempotent for
         // an existing one and never adds a duplicate owner.
-        await activateAgentSession(walletAddress, sessionToken, agentKey, { skipDestinationChains: true })
+        await activateAgentSession(walletAddress, sessionToken, agentKey, {
+          eoaAddress: owner.address,
+          ownerSessionToken: owner.token,
+          skipDestinationChains: true,
+        })
         const session = await readSessionStatus(sessionToken)
         verified = Boolean(
           session?.active
@@ -141,6 +151,8 @@ export function useOAuthApproval() {
           redirectUri: request.redirectUri,
           state: request.state,
           codeChallenge: request.codeChallenge,
+          ownerAddress: owner.address,
+          ownerSessionToken: owner.token,
         }),
         signal: AbortSignal.timeout(30_000),
       })

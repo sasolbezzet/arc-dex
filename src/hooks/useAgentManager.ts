@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAgentStore } from '../stores/agentStore'
 import { useAuthStore } from '../stores/authStore'
+import { ensureConnectedOwnerSession } from '../auth'
 import {
   listVaultAgents,
   listMcpSessions,
@@ -52,7 +53,7 @@ function deriveAgentStatus(agent: VaultAgent, sessions: McpSession[]): AgentStat
   return live ? 'connected' : 'idle'
 }
 
-export function canonicalAgentKey(agent: VaultAgent): string {
+export function canonicalAgentKey(agent: Pick<VaultAgent, 'agentKey' | 'walletAddress'>): string {
   const rawKey = String(agent.agentKey || '').trim().toLowerCase()
   if (rawKey.startsWith('oauth:')) {
     const clientId = rawKey.slice('oauth:'.length).split('|')[0]
@@ -133,15 +134,23 @@ function storedVaultTokens(primary: string | null): string[] {
     const token = String(value || '').trim()
     if (token && !tokens.includes(token)) tokens.push(token)
   }
-  add(primary)
-  if (typeof window === 'undefined') return tokens
+  if (typeof window === 'undefined') {
+    add(primary)
+    return tokens
+  }
   try {
+    // Once the owner EOA is authenticated, use only that scope for dashboard
+    // reads. Per-agent OAuth/passkey tokens are intentionally not merged into
+    // owner management queries, otherwise an MSCA token can reintroduce a
+    // foreign legacy binding into the dashboard.
+    const ownerToken = localStorage.getItem('arx_owner_vault_token')
+    if (ownerToken) {
+      add(ownerToken)
+      return tokens
+    }
+    add(primary)
     add(localStorage.getItem('arx_vault_token'))
     add(localStorage.getItem('arx_passkey_vault_token'))
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const key = localStorage.key(index)
-      if (key?.startsWith('arx_oauth_vault_token:')) add(localStorage.getItem(key))
-    }
   } catch { /* storage can be unavailable in privacy mode */ }
   return tokens
 }
@@ -183,7 +192,6 @@ export function useAgentManager() {
 
   const vaultToken = useAuthStore(state => state.vaultToken)
   const setVaultToken = useAuthStore(state => state.setVaultToken)
-  const agentsRef = useRef(agents)
   const clearVaultToken = useAuthStore(state => state.clearVaultToken)
 
   const tokenForAgent = useCallback((agentKey: string): string | null => {
@@ -199,10 +207,6 @@ export function useAgentManager() {
       return vaultToken
     }
   }, [vaultToken])
-
-  useEffect(() => {
-    agentsRef.current = agents
-  }, [agents])
 
   const safeSet = useCallback(<T,>(setter: (value: T) => void, value: T) => {
     if (mounted.current) setter(value)
@@ -304,22 +308,12 @@ export function useAgentManager() {
     const sessions = [...sessionMap.values()]
     const nextAgents = [...agentMap.values()].map(agent => toAgentState(agent, sessions))
 
-    // Each passkey token is scoped to one MSCA. A successful read for the
-    // currently selected GPT wallet must not erase Claude's previously loaded
-    // card from the dashboard. Keep the persisted card as display fallback;
-    // fresh backend rows always win and revokeAgent removes its own cache first.
-    const mergedAgents = [...nextAgents]
-    const knownIdentities = new Set(nextAgents.map(agent => agentIdentity(agent)))
-    for (const cached of agentsRef.current) {
-      const identity = agentIdentity(cached)
-      if (!knownIdentities.has(identity)) {
-        knownIdentities.add(identity)
-        mergedAgents.push(cached)
-      }
-    }
-
+    // The backend response is authoritative. Never retain cached cards that are
+    // absent from a successful owner-scoped read: this guarantees revoke and
+    // owner switching cannot resurrect a stale agent. Revoke refs remain useful
+    // for suppressing delayed balance updates, but not for inventing rows.
     setMcpSessions(sessions)
-    setAgents(mergedAgents)
+    setAgents(nextAgents)
     setApprovals([...approvalMap.values()])
     setActivity([...activityMap.values()].sort((left, right) => right.ts - left.ts).slice(0, 5))
     setCredentials([...credentialMap.values()])
@@ -344,7 +338,7 @@ export function useAgentManager() {
     // to this tab instead of waiting for the next ten-second poll.
     if (typeof window === 'undefined') return
     const onStorage = (event: StorageEvent) => {
-      if (event.key?.startsWith('arx_oauth_vault_token:') || event.key === 'arx_vault_token') void refreshAll()
+      if (event.key?.startsWith('arx_oauth_vault_token:') || event.key === 'arx_vault_token' || event.key === 'arx_owner_vault_token') void refreshAll()
     }
     const onVisibility = () => {
       if (document.visibilityState === 'visible') void refreshAll()
@@ -362,16 +356,24 @@ export function useAgentManager() {
     agentType: AgentType,
     mode: 'login' | 'register',
   ): Promise<{ walletAddress: string; sessionToken: string }> => {
+    // Establish the owner boundary before the passkey ceremony. A passkey can
+    // prove control of an MSCA, but it must not silently attach that MSCA to a
+    // stale/foreign owner identity from localStorage or server environment.
+    const owner = await ensureConnectedOwnerSession()
     const agentKey = AGENT_KEYS[agentType as keyof typeof AGENT_KEYS] || agentType
     const passkey = mode === 'register'
       ? await registerPasskey(agentKey)
       : await loginPasskey(agentKey)
 
-    setVaultToken(passkey.sessionToken)
-    localStorage.setItem('arx_vault_token', passkey.sessionToken)
-    localStorage.setItem('arx_passkey_vault_token', passkey.sessionToken)
-
-    const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey)
+    const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {
+      eoaAddress: owner.address,
+      ownerSessionToken: owner.token,
+    })
+    // Owner-scoped dashboard reads use the verified EOA session. Keep the
+    // passkey token only for the exact agent operation that needed it.
+    setVaultToken(owner.token)
+    localStorage.setItem('arx_vault_token', owner.token)
+    localStorage.setItem('arx_owner_vault_token', owner.token)
     if (activation.warnings.length > 0 && mounted.current) {
       setNotice(`Agent Wallet aktif di Arc. Jaringan lain belum siap: ${activation.warnings.join('; ')}`)
     }
@@ -417,12 +419,16 @@ export function useAgentManager() {
   /** Re-open an existing agent's wallet with its passkey (per-agent login). */
   const loginAgent = useCallback((agentKeyOrType: string) =>
     run(`login:${agentKeyOrType}`, async () => {
+      const owner = await ensureConnectedOwnerSession()
       const agentKey = AGENT_KEYS[agentKeyOrType as keyof typeof AGENT_KEYS] || agentKeyOrType
       const passkey = await loginPasskey(agentKey)
-      setVaultToken(passkey.sessionToken)
-      localStorage.setItem('arx_vault_token', passkey.sessionToken)
-      localStorage.setItem('arx_passkey_vault_token', passkey.sessionToken)
-      const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey)
+      const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {
+        eoaAddress: owner.address,
+        ownerSessionToken: owner.token,
+      })
+      setVaultToken(owner.token)
+      localStorage.setItem('arx_vault_token', owner.token)
+      localStorage.setItem('arx_passkey_vault_token', owner.token)
       if (activation.warnings.length > 0) {
         safeSet(setNotice, `Aktif di Arc. Jaringan lain belum siap: ${activation.warnings.join('; ')}`)
       }
@@ -443,6 +449,8 @@ export function useAgentManager() {
       const token = tokenForAgent(agentKey)
       if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
       await revokeVaultAgent(agentKey, token)
+      // Remove the targeted card immediately; the next successful refresh is
+      // authoritative and cannot reintroduce a deleted row.
       removeAgent(agentKey)
       safeSet(setNotice, 'Akses agent dicabut. Agent lain tidak terpengaruh.')
       await refreshAll()
