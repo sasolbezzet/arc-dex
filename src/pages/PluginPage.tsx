@@ -197,7 +197,6 @@ export default function PluginPage() {
                   agent={agent}
                   busyAction={busyAction}
                   onConnect={() => loginAgent(agent.agentKey)}
-                  onCreateWallet={() => loginAgent(agent.agentKey)}
                   onLogin={() => loginAgent(agent.agentKey)}
                   onCreateToken={() => createToken(agent.agentKey)}
                   onRevoke={() => setRevokeTarget(agent)}
@@ -227,7 +226,7 @@ export default function PluginPage() {
                   {connected
                     ? <button type='button' className='mini-button' onClick={() => setTab('activity')}>Lihat koneksi</button>
                     : type === 'hermes'
-                      ? <button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleConnect(type)}>Buat Agent Wallet</button>
+                      ? <div className='plugin-provider-actions'><button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleConnect(type)}>Buat Agent Wallet</button><button type='button' className='text-button' disabled={Boolean(busyAction)} onClick={() => handleLogin(type)}>Login passkey</button></div>
                       : <div className='agent-external-note'>Mulai dari {config.name}, lalu kembali ke sini</div>}
                 </article>
               )

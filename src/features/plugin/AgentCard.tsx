@@ -9,7 +9,6 @@ export interface AgentCardProps {
   knownWallet?: string
   busyAction: string | null
   onConnect: () => void
-  onCreateWallet: () => void
   onLogin: () => void
   onCreateToken: () => void
   onRevoke: () => void
@@ -40,7 +39,6 @@ export function AgentCard({
   knownWallet,
   busyAction,
   onConnect,
-  onCreateWallet,
   onLogin,
   onCreateToken,
   onRevoke,
@@ -126,9 +124,14 @@ export function AgentCard({
 
       <div className='agent-actions'>
         {isHermes && !agent && (
-          <button type='button' className='action-button' disabled={anyBusy} onClick={onConnect}>
-            {busy ? 'Menyiapkan…' : 'Buat koneksi Hermes'}
-          </button>
+          <>
+            <button type='button' className='action-button' disabled={anyBusy} onClick={onConnect}>
+              {busy ? 'Menyiapkan…' : 'Buat Agent Wallet'}
+            </button>
+            <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
+              {busy ? 'Membuka passkey…' : 'Login passkey'}
+            </button>
+          </>
         )}
         {isHermes && agent && (
           <button type='button' className='action-button' disabled={anyBusy} onClick={onCreateToken}>
@@ -156,9 +159,7 @@ export function AgentCard({
       </div>
 
       {!agent && isHermes && (
-        <button type='button' className='text-button agent-secondary-action' disabled={anyBusy} onClick={onCreateWallet}>
-          Login dengan passkey yang sudah ada
-        </button>
+        <p className='agent-action-hint'>Login passkey memakai Agent Wallet Hermes yang sudah terdaftar; Buat Agent Wallet membuat wallet baru.</p>
       )}
     </article>
   )
