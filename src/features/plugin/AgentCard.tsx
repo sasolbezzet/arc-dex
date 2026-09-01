@@ -96,7 +96,7 @@ export function AgentCard({
             </div>
             <div className='agent-health-item'>
               <span>MCP</span>
-              <strong className={agent.status === 'connected' ? 'is-good' : ''}>{agent.status === 'connected' ? 'Online' : 'Menunggu koneksi'}</strong>
+              <strong className={agent.status === 'connected' ? 'is-good' : ''}>{agent.status === 'connected' ? 'Online' : agent.status === 'revoked' ? 'Session nonaktif' : 'Menunggu koneksi'}</strong>
             </div>
             <div className='agent-health-item'>
               <span>Spend hari ini</span>
@@ -146,11 +146,11 @@ export function AgentCard({
         {agent && (
           <>
             <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
-              Buka wallet
+              {agent.status === 'revoked' ? 'Login passkey' : 'Buka wallet'}
             </button>
-            <button type='button' className='mini-button mini-button-danger' disabled={anyBusy} onClick={onRevoke}>
-              Cabut akses
-            </button>
+            {agent.status !== 'revoked' && <button type='button' className='mini-button mini-button-danger' disabled={anyBusy} onClick={onRevoke}>
+              Cabut session
+            </button>}
           </>
         )}
         {!agent && !isHermes && (

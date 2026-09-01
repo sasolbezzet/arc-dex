@@ -64,6 +64,9 @@ export interface VaultAgent {
   lastUsedAt?: string | number
   clientName?: string
   spentToday?: string | number
+  active?: boolean
+  revokedAt?: string | number
+  revokeReason?: string
 }
 
 /** GET /api/vault/sessions item. */

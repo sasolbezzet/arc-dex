@@ -102,12 +102,13 @@ function toAgentState(agent: VaultAgent, sessions: McpSession[]): AgentState {
   const clientId = clientIdFromAgentKey(agent.agentKey)
   const session = sessions.find(item => item.clientId === clientId)
   const isConnectionToken = clientId.startsWith('arcox_conn_')
+  const revoked = agent.active === false || Boolean((agent as VaultAgent & { revokedAt?: string | number }).revokedAt)
   return {
     agentKey: agent.agentKey,
     agentType: agentTypeFromKey(agent.agentKey, agent.clientName),
     clientName: agent.clientName || clientId || 'Agent',
     walletAddress: agent.walletAddress,
-    status: deriveAgentStatus(agent, sessions),
+    status: revoked ? 'revoked' : deriveAgentStatus(agent, sessions),
     clientId,
     boundAt: toNumber(agent.boundAt),
     lastUsedAt: toNumber(agent.lastUsedAt),
@@ -187,7 +188,6 @@ export function useAgentManager() {
     setActivity,
     setConnectionToken,
     updateAgent,
-    removeAgent,
   } = useAgentStore()
 
   const vaultToken = useAuthStore(state => state.vaultToken)
@@ -449,12 +449,11 @@ export function useAgentManager() {
       const token = tokenForAgent(agentKey)
       if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
       await revokeVaultAgent(agentKey, token)
-      // Remove the targeted card immediately; the next successful refresh is
-      // authoritative and cannot reintroduce a deleted row.
-      removeAgent(agentKey)
-      safeSet(setNotice, 'Akses agent dicabut. Agent lain tidak terpengaruh.')
+      // Revoke disables the active session but intentionally retains the
+      // binding/card so the same wallet can be reactivated with Login passkey.
+      safeSet(setNotice, 'Session agent dinonaktifkan. Wallet tetap tersimpan; gunakan Login passkey untuk mengaktifkannya kembali.')
       await refreshAll()
-    }), [run, tokenForAgent, removeAgent, refreshAll, safeSet])
+    }), [run, tokenForAgent, refreshAll, safeSet])
 
   const saveLimits = useCallback((next: Partial<Limits>) =>
     run('limits', async () => {

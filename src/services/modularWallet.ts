@@ -319,7 +319,7 @@ function loginPublicKeyOptions(options: any) {
   // (Windows Hello / Touch ID / Google Password Manager) shows its own prompt
   // instead of silently resolving or declining when the flow is run from a
   // progressive web app / headless context (Hermes device pairing).
-  result.userVerification = options.userVerification || 'required'
+  result.userVerification = options.userVerification || 'preferred'
   // Do not consume a conditional mediation: a discoverable-credential prompt
   // must appear on demand.
   delete result.mediation
