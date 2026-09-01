@@ -51,6 +51,7 @@ export function AgentCard({
   const [balanceChain, setBalanceChain] = useState<SupportedChain>('arc-testnet')
   const config = AGENT_CONFIGS[agentType]
   const wallet = agent?.walletAddress || knownWallet || ''
+  const safeAgentKey = String(agent?.agentKey || '').trim()
   const status = agent?.status || (wallet ? 'idle' : 'not_connected')
   const isHermes = agentType === 'hermes'
   const busy = Boolean(busyAction && (busyAction.includes(agentType) || (agent && busyAction.includes(agent.agentKey))))
@@ -85,7 +86,7 @@ export function AgentCard({
       {agent ? (
         <>
           <div className='agent-balance-panel'>
-            <div className='agent-balance-head'><span>Saldo Agent Wallet</span><small>{agent.balanceUpdatedAt ? 'Diperbarui' : 'Memuat…'}</small></div>
+            <div className='agent-balance-head'><span>Saldo Agent Wallet</span><small>{balanceChain === 'arc-testnet' ? 'Arc Testnet' : balanceChain === 'base-sepolia' ? 'Base Sepolia' : 'Arbitrum Sepolia'} · {agent.balanceUpdatedAt ? 'Diperbarui' : 'Memuat…'}</small></div>
             <div className='agent-chain-tabs' role='tablist' aria-label='Pilih chain saldo'>
               {SUPPORTED_CHAINS.map(chain => <button key={chain} type='button' className={balanceChain === chain ? 'active' : ''} onClick={() => { setBalanceChain(chain); onBalanceChainChange(chain) }} role='tab' aria-selected={balanceChain === chain}>{chain === 'arc-testnet' ? 'Arc' : chain === 'base-sepolia' ? 'Base' : 'Arbitrum'}</button>)}
             </div>
@@ -145,7 +146,12 @@ export function AgentCard({
         )}
         {isHermes && agent && (
           <button type='button' className='action-button' disabled={anyBusy} onClick={onCreateToken}>
-            {busyAction === `token:${agent.agentKey}` ? 'Membuat token…' : 'Rotasi token koneksi'}
+            {busyAction === `token:${safeAgentKey}` ? 'Membuat token…' : 'Rotasi token koneksi'}
+          </button>
+        )}
+        {agent && (
+          <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
+            {busy ? 'Membuka passkey…' : 'Login passkey'}
           </button>
         )}
         {agent && (
