@@ -1,4 +1,5 @@
-import { AGENT_CONFIGS, type AgentState, type AgentType } from '../../types/agent'
+import { useState } from 'react'
+import { AGENT_CONFIGS, SUPPORTED_CHAINS, type AgentState, type AgentType, type SupportedChain } from '../../types/agent'
 import { AgentStatusBadge } from './AgentStatusBadge'
 import { CopyField, shortAddress } from './CopyField'
 
@@ -12,6 +13,8 @@ export interface AgentCardProps {
   onLogin: () => void
   onCreateToken: () => void
   onRevoke: () => void
+  onDelete: () => void
+  onBalanceChainChange: (chain: SupportedChain) => void
 }
 
 function formatTime(value: number | null): string {
@@ -42,7 +45,10 @@ export function AgentCard({
   onLogin,
   onCreateToken,
   onRevoke,
+  onDelete,
+  onBalanceChainChange,
 }: AgentCardProps) {
+  const [balanceChain, setBalanceChain] = useState<SupportedChain>('arc-testnet')
   const config = AGENT_CONFIGS[agentType]
   const wallet = agent?.walletAddress || knownWallet || ''
   const status = agent?.status || (wallet ? 'idle' : 'not_connected')
@@ -78,7 +84,10 @@ export function AgentCard({
       {agent ? (
         <>
           <div className='agent-balance-panel'>
-            <div className='agent-balance-head'><span>Saldo Agent Wallet · Arc</span><small>{agent.balanceUpdatedAt ? 'Diperbarui' : 'Memuat…'}</small></div>
+            <div className='agent-balance-head'><span>Saldo Agent Wallet</span><small>{agent.balanceUpdatedAt ? 'Diperbarui' : 'Memuat…'}</small></div>
+            <div className='agent-chain-tabs' role='tablist' aria-label='Pilih chain saldo'>
+              {SUPPORTED_CHAINS.map(chain => <button key={chain} type='button' className={balanceChain === chain ? 'active' : ''} onClick={() => { setBalanceChain(chain); onBalanceChainChange(chain) }} role='tab' aria-selected={balanceChain === chain}>{chain === 'arc-testnet' ? 'Arc' : chain === 'base-sepolia' ? 'Base' : 'Arbitrum'}</button>)}
+            </div>
             {agent.balance
               ? <div className='agent-balance-values'>
                   <div><strong>{agent.balance.USDC ?? '0'}</strong><span>USDC</span></div>
@@ -146,11 +155,14 @@ export function AgentCard({
         {agent && (
           <>
             <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
-              {agent.status === 'revoked' ? 'Login passkey' : 'Buka wallet'}
+              Login passkey
             </button>
             {agent.status !== 'revoked' && <button type='button' className='mini-button mini-button-danger' disabled={anyBusy} onClick={onRevoke}>
               Cabut session
             </button>}
+            <button type='button' className='mini-button mini-button-danger' disabled={anyBusy} onClick={onDelete}>
+              Hapus agent
+            </button>
           </>
         )}
         {!agent && !isHermes && (

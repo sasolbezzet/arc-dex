@@ -40,6 +40,7 @@ export default function PluginPage() {
     loginAgent,
     createToken,
     revokeAgent,
+    deleteAgent,
     approveRequest,
     rejectRequest,
     saveLimits,
@@ -200,6 +201,8 @@ export default function PluginPage() {
                   onLogin={() => loginAgent(agent.agentKey)}
                   onCreateToken={() => createToken(agent.agentKey)}
                   onRevoke={() => setRevokeTarget(agent)}
+                  onDelete={() => void deleteAgent(agent.agentKey)}
+                  onBalanceChainChange={(chain) => void fetch(`/api/balance/${encodeURIComponent(agent.walletAddress)}?chain=${encodeURIComponent(chain)}`, { cache: 'no-store' }).then(() => undefined)}
                 />
               ))}
             </div>

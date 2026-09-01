@@ -13,6 +13,7 @@ import {
   createAgentConnectionToken,
   createBootstrapConnectionToken,
   revokeVaultAgent,
+  deleteVaultAgent,
   approveVaultRequest,
   rejectVaultRequest,
   VaultApiError,
@@ -444,6 +445,15 @@ export function useAgentManager() {
       safeSet(setConnectionToken, issued)
     }), [run, tokenForAgent, safeSet, setConnectionToken])
 
+  const deleteAgent = useCallback((agentKey: string) =>
+    run(`delete:${agentKey}`, async () => {
+      const token = tokenForAgent(agentKey)
+      if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
+      await deleteVaultAgent(agentKey, token)
+      safeSet(setNotice, 'Agent dihapus dari dashboard dan session dinonaktifkan.')
+      await refreshAll()
+    }), [run, tokenForAgent, refreshAll, safeSet])
+
   const revokeAgent = useCallback((agentKey: string) =>
     run(`revoke:${agentKey}`, async () => {
       const token = tokenForAgent(agentKey)
@@ -519,6 +529,7 @@ export function useAgentManager() {
     loginAgent,
     createToken,
     revokeAgent,
+    deleteAgent,
     approveRequest,
     rejectRequest,
     refreshAll,

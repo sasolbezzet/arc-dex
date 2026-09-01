@@ -155,9 +155,15 @@ export const createBootstrapConnectionToken = (
   })
 
 export const revokeVaultAgent = (agentKey: string, token: string) =>
-  request<{ ok: boolean; removed: boolean; agentKey: string }>(
+  request<{ ok: boolean; revoked: boolean; agentKey: string }>(
     `/api/vault/agents/${encodeURIComponent(agentKey)}`,
-    { method: 'DELETE', token },
+    { method: 'DELETE', token, body: { action: 'revoke' } },
+  )
+
+export const deleteVaultAgent = (agentKey: string, token: string) =>
+  request<{ ok: boolean; deleted: boolean; agentKey: string }>(
+    `/api/vault/agents/${encodeURIComponent(agentKey)}`,
+    { method: 'DELETE', token, body: { action: 'delete' } },
   )
 
 export const approveVaultRequest = (
