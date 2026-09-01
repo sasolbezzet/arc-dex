@@ -305,9 +305,9 @@ function loginPublicKeyOptions(options: any) {
     challenge: base64UrlToBytes(options.challenge),
     ...(typeof options.rpId === 'string' ? { rpId: normalizeRpId(options.rpId) } : {}),
   }
-  // An empty allowCredentials list is not equivalent across platform
-  // authenticators. Omit it so discoverable passkeys can be selected normally.
-  if (Array.isArray(options.allowCredentials) && options.allowCredentials.length > 0) {
+  // Keep an explicit credential list when the backend supplies one. When it
+  // is empty, omit it so the platform can enumerate discoverable passkeys.
+  if (Array.isArray(options.allowCredentials)) {
     result.allowCredentials = options.allowCredentials.map((credential: any) => ({
       ...credential,
       id: base64UrlToBytes(credential.id),

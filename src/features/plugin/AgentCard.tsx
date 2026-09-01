@@ -54,6 +54,7 @@ export function AgentCard({
   const status = agent?.status || (wallet ? 'idle' : 'not_connected')
   const isHermes = agentType === 'hermes'
   const busy = Boolean(busyAction && (busyAction.includes(agentType) || (agent && busyAction.includes(agent.agentKey))))
+  const selectedBalance = agent?.balances?.[balanceChain] ?? (agent?.balanceChain === balanceChain ? agent.balance : undefined)
   const anyBusy = Boolean(busyAction)
 
   return (
@@ -88,12 +89,12 @@ export function AgentCard({
             <div className='agent-chain-tabs' role='tablist' aria-label='Pilih chain saldo'>
               {SUPPORTED_CHAINS.map(chain => <button key={chain} type='button' className={balanceChain === chain ? 'active' : ''} onClick={() => { setBalanceChain(chain); onBalanceChainChange(chain) }} role='tab' aria-selected={balanceChain === chain}>{chain === 'arc-testnet' ? 'Arc' : chain === 'base-sepolia' ? 'Base' : 'Arbitrum'}</button>)}
             </div>
-            {agent.balance
+            {selectedBalance
               ? <div className='agent-balance-values'>
-                  <div><strong>{agent.balance.USDC ?? '0'}</strong><span>USDC</span></div>
-                  <div><strong>{agent.balance.EURC ?? '0'}</strong><span>EURC</span></div>
-                  <div><strong>{agent.balance.USYC ?? '0'}</strong><span>USYC</span></div>
-                  <div><strong>{agent.balance.cirBTC ?? '0'}</strong><span>cirBTC</span></div>
+                  <div><strong>{selectedBalance.USDC ?? '0'}</strong><span>USDC</span></div>
+                  <div><strong>{selectedBalance.EURC ?? '0'}</strong><span>EURC</span></div>
+                  <div><strong>{selectedBalance.USYC ?? '0'}</strong><span>USYC</span></div>
+                  <div><strong>{selectedBalance.cirBTC ?? '0'}</strong><span>cirBTC</span></div>
                 </div>
               : <p className='agent-balance-unavailable'>Saldo belum tersedia. Muat ulang setelah backend RPC merespons.</p>}
           </div>
@@ -147,16 +148,8 @@ export function AgentCard({
             {busyAction === `token:${agent.agentKey}` ? 'Membuat token…' : 'Rotasi token koneksi'}
           </button>
         )}
-        {!isHermes && agent && (
-          <button type='button' className='action-button' disabled={anyBusy} onClick={onLogin}>
-            {busy ? 'Membuka passkey…' : 'Login passkey'}
-          </button>
-        )}
         {agent && (
           <>
-            <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
-              Login passkey
-            </button>
             {agent.status !== 'revoked' && <button type='button' className='mini-button mini-button-danger' disabled={anyBusy} onClick={onRevoke}>
               Cabut session
             </button>}

@@ -32,6 +32,7 @@ import {
   type VaultAgent,
   type Credential,
   type Limits,
+  type SupportedChain,
 } from '../types/agent'
 
 const REFRESH_MS = 10_000
@@ -223,19 +224,29 @@ export function useAgentManager() {
     safeSet(setError, message || fallback)
   }, [clearVaultToken, safeSet])
 
-  const refreshAgentBalances = useCallback((nextAgents: AgentState[]) => {
+  const refreshAgentBalances = useCallback((nextAgents: AgentState[], chain: SupportedChain = 'arc-testnet') => {
     void Promise.all(nextAgents.map(async agent => {
       try {
-        const response = await fetch(`/api/balance/${encodeURIComponent(agent.walletAddress)}`, {
+        const response = await fetch(`/api/balance/${encodeURIComponent(agent.walletAddress)}?chain=${encodeURIComponent(chain)}`, {
           cache: 'no-store',
           signal: AbortSignal.timeout(12_000),
         })
         const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data?.error || `Balance request failed (${response.status})`)
-        if (mounted.current) updateAgent(agent.agentKey, { balance: data, balanceUpdatedAt: Date.now() })
+        if (mounted.current) updateAgent(agent.agentKey, {
+          balance: data,
+          balanceChain: chain,
+          balances: { ...(agent.balances || {}), [chain]: data },
+          balanceUpdatedAt: Date.now(),
+        })
       } catch {
         // Keep the card honest: unavailable is distinct from a real zero.
-        if (mounted.current) updateAgent(agent.agentKey, { balance: null, balanceUpdatedAt: Date.now() })
+        if (mounted.current) updateAgent(agent.agentKey, {
+          balance: null,
+          balanceChain: chain,
+          balances: { ...(agent.balances || {}), [chain]: null },
+          balanceUpdatedAt: Date.now(),
+        })
       }
     }))
   }, [updateAgent])
@@ -533,6 +544,7 @@ export function useAgentManager() {
     approveRequest,
     rejectRequest,
     refreshAll,
+    refreshAgentBalances,
     saveLimits,
     walletForAgentType,
     setConnectionToken,

@@ -47,6 +47,7 @@ export default function PluginPage() {
     setConnectionToken,
     dismissError,
     dismissNotice,
+    refreshAgentBalances,
   } = useAgentManager()
 
   const oauth = useOAuthApproval()
@@ -202,7 +203,7 @@ export default function PluginPage() {
                   onCreateToken={() => createToken(agent.agentKey)}
                   onRevoke={() => setRevokeTarget(agent)}
                   onDelete={() => void deleteAgent(agent.agentKey)}
-                  onBalanceChainChange={(chain) => void fetch(`/api/balance/${encodeURIComponent(agent.walletAddress)}?chain=${encodeURIComponent(chain)}`, { cache: 'no-store' }).then(() => undefined)}
+                  onBalanceChainChange={(chain) => refreshAgentBalances([agent], chain)}
                 />
               ))}
             </div>

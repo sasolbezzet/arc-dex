@@ -49,7 +49,9 @@ export interface AgentState {
   passkeyBound?: boolean
   /** Connection-token agents can rotate a token; OAuth agents use browser approval. */
   connectionMode?: 'token' | 'oauth' | 'unknown'
-  /** Public Arc balance for this Agent Wallet; null means the read was unavailable. */
+  /** Balance keyed by selected chain; null means that chain read was unavailable. */
+  balances?: Partial<Record<SupportedChain, Record<string, string> | null>>
+  balanceChain?: SupportedChain
   balance?: Record<string, string> | null
   balanceUpdatedAt?: number | null
 }
