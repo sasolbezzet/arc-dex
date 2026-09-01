@@ -58,8 +58,9 @@ describe('Plugin agent identity normalization', () => {
       mcpUrl: 'https://arcoxdex.vercel.app/mcp',
     })
 
-    expect(command).toContain('ARCOX_MCP_URL=')
-    expect(command).toContain('npx --yes arcox-agent@0.1.20 connect --prompt-token')
+    expect(command).toContain('mktemp -d')
+    expect(command).toContain('arcox-agent@0.1.23')
+    expect(command).toContain('connect --prompt-token')
     expect(command).not.toContain('arx_at_0123456789abcdef0123456789abcdef')
     expect(command).not.toContain('printf')
   })

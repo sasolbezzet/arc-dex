@@ -10,7 +10,7 @@ function shellQuote(value: string): string {
 /** Build a command that never embeds the bearer token in shell history. */
 export function buildHermesConnectionCommand(token: Pick<AgentConnectionToken, 'token' | 'mcpUrl'>): string {
   void token.token
-  return `ARCOX_MCP_URL=${shellQuote(token.mcpUrl || DEFAULT_MCP_URL)} npx --yes arcox-agent@0.1.20 connect --prompt-token`
+  return `tmp=$(mktemp -d) && npm install --prefix "$tmp" --no-save --no-package-lock --ignore-scripts --no-audit --no-fund arcox-agent@0.1.23 >/dev/null && ARCOX_MCP_URL=${shellQuote(token.mcpUrl || DEFAULT_MCP_URL)} node "$tmp/node_modules/arcox-agent/bin/arcox-agent.mjs" connect --prompt-token; status=$?; rm -rf "$tmp"; exit $status`
 }
 
 export interface ConnectionTokenDialogProps {
