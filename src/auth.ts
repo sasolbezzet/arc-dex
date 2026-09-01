@@ -250,14 +250,23 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
   // user switches to a different EOA.
   const existing = getAuthSession()
   if (existing?.token && existing.address.toLowerCase() === normalizedAddress.toLowerCase()) {
-    try { localStorage.setItem('arx_owner_vault_token', existing.token) } catch { /* ignore */ }
+    // Keep the canonical owner token in every legacy storage location used by
+    // older session-key callers. This prevents an old/stale EOA token from
+    // being paired with the current connected wallet.
+    try {
+      localStorage.setItem('arx_owner_vault_token', existing.token)
+      localStorage.setItem('arx_eoa_vault_token', existing.token)
+    } catch { /* ignore */ }
     return { address: normalizedAddress, token: existing.token }
   }
 
   const token = await ensureAuthSession(normalizedAddress)
   // Keep this owner proof separate from the currently selected Agent Wallet
   // passkey token. Agent-management APIs can then use the EOA scope only.
-  try { localStorage.setItem('arx_owner_vault_token', token) } catch { /* ignore */ }
+  try {
+    localStorage.setItem('arx_owner_vault_token', token)
+    localStorage.setItem('arx_eoa_vault_token', token)
+  } catch { /* ignore */ }
   return { address: normalizedAddress, token }
 }
 

@@ -126,9 +126,14 @@ export async function activateAgentSession(
 
   // Binding an EOA is optional and requires a separate signature proof in this
   // browser. The passkey/MSCA token is not an EOA proof and must not be sent.
+  // The owner proof is passed explicitly by the caller. Never substitute the
+  // passkey/MSCA token or the legacy `arx_eoa_vault_token` key: those tokens
+  // authenticate a different identity and cause the backend owner mismatch.
   const ownerSessionToken = options.ownerSessionToken
-    || (options.eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined)
-  const verifiedEoaAddress = ownerSessionToken ? options.eoaAddress : undefined
+  const verifiedEoaAddress = ownerSessionToken && options.eoaAddress ? options.eoaAddress : undefined
+  if (!verifiedEoaAddress || !ownerSessionToken) {
+    throw new Error('Sesi wallet utama belum tervalidasi. Hubungkan wallet utama dan login ulang sebelum membuat Agent Wallet.')
+  }
 
   const result = await setupSessionKey(vaultToken, verifiedEoaAddress, ownerSessionToken, agentKey)
 

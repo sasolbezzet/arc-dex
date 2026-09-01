@@ -67,7 +67,7 @@ export function OAuthApprovalCard({
 
       <div className='plugin-modal-actions' style={{ justifyContent: 'flex-start' }}>
         <button type='button' className='action-button' disabled={busy} onClick={() => onApprove('login')}>
-          {busy ? 'Memproses…' : 'Izinkan dengan passkey saya'}
+          {busy ? 'Memproses…' : 'Login passkey'}
         </button>
         <button type='button' className='mini-button' disabled={busy} onClick={() => onApprove('register')}>
           Buat wallet baru untuk agent ini
