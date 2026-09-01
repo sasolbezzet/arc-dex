@@ -372,7 +372,11 @@ export function useAgentManager() {
     // prove control of an MSCA, but it must not silently attach that MSCA to a
     // stale/foreign owner identity from localStorage or server environment.
     const owner = await ensureConnectedOwnerSession()
-    const agentKey = AGENT_KEYS[agentType as keyof typeof AGENT_KEYS] || agentType
+    const rawAgentKey = typeof agentType === 'string'
+      ? (AGENT_KEYS[agentType as keyof typeof AGENT_KEYS] || agentType)
+      : ''
+    const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
+    if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
     const passkey = mode === 'register'
       ? await registerPasskey(agentKey)
       : await loginPasskey(agentKey)
@@ -432,7 +436,11 @@ export function useAgentManager() {
   const loginAgent = useCallback((agentKeyOrType: string) =>
     run(`login:${agentKeyOrType}`, async () => {
       const owner = await ensureConnectedOwnerSession()
-      const agentKey = AGENT_KEYS[agentKeyOrType as keyof typeof AGENT_KEYS] || agentKeyOrType
+      const rawAgentKey = typeof agentKeyOrType === 'string'
+        ? (AGENT_KEYS[agentKeyOrType as keyof typeof AGENT_KEYS] || agentKeyOrType)
+        : ''
+      const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
+      if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
       const passkey = await loginPasskey(agentKey)
       const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {
         eoaAddress: owner.address,

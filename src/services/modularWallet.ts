@@ -60,9 +60,11 @@ const AGENT_STORAGE_KEY = 'arx_active_agent_key'
 const DEFAULT_AGENT_KEY = 'dashboard:primary'
 
 function resolveAgentKey(agentKey?: string) {
+  const explicit = typeof agentKey === 'string' ? agentKey.trim() : ''
   try {
-    return agentKey || localStorage.getItem(AGENT_STORAGE_KEY) || DEFAULT_AGENT_KEY
-  } catch { return agentKey || DEFAULT_AGENT_KEY }
+    const stored = localStorage.getItem(AGENT_STORAGE_KEY)
+    return explicit || (typeof stored === 'string' ? stored.trim() : '') || DEFAULT_AGENT_KEY
+  } catch { return explicit || DEFAULT_AGENT_KEY }
 }
 
 function stateStorageKey(agentKey?: string) {
@@ -746,7 +748,9 @@ export async function deploySmartAccountOnChain(chainKey: string, agentKey = DEF
 // ── Login with existing passkey ──
 export async function loginPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
-  const selectedAgentKey = resolveAgentKey(agentKey)
+  const requestedAgentKey = typeof agentKey === 'string' ? agentKey.trim() : ''
+  if (!requestedAgentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
+  const selectedAgentKey = resolveAgentKey(requestedAgentKey)
   localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
   const state = loadState(selectedAgentKey)
   return runPasskeyOperation(async () => {
