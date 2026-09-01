@@ -263,18 +263,24 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
           localStorage.setItem('arx_owner_vault_token', existing.token)
           localStorage.setItem('arx_eoa_vault_token', existing.token)
         } catch { /* ignore */ }
-        return { address: normalizedAddress, token: existing.token }
+        const ownerToken = localStorage.getItem('arx_owner_vault_token') || ''
+        if (ownerToken) return { address: normalizedAddress, token: ownerToken }
+        // Old HMAC-only sessions cannot prove vault ownership; fall through to
+        // a fresh owner login so the backend issues both token namespaces.
+        localStorage.removeItem(STORAGE_KEY)
       }
     } catch { /* re-authenticate below */ }
   }
-  const token = await ensureAuthSession(normalizedAddress)
-  // Keep this owner proof separate from the currently selected Agent Wallet
-  // passkey token. Agent-management APIs can then use the EOA scope only.
-  try {
-    localStorage.setItem('arx_owner_vault_token', token)
-    localStorage.setItem('arx_eoa_vault_token', token)
-  } catch { /* ignore */ }
-  return { address: normalizedAddress, token }
+  await ensureAuthSession(normalizedAddress)
+  // `ensureAuthSession` stores the HMAC dapp token. The owner vault token is
+  // returned separately by `/api/auth/session` and is copied above by
+  // authenticate(); do not confuse the two token namespaces.
+  const ownerToken = (() => {
+    try { return localStorage.getItem('arx_owner_vault_token') || '' } catch { return '' }
+  })()
+  if (!ownerToken) throw new Error('Owner vault session tidak diterbitkan oleh backend. Silakan login wallet utama lagi.')
+  try { localStorage.setItem('arx_eoa_vault_token', ownerToken) } catch { /* ignore */ }
+  return { address: normalizedAddress, token: ownerToken }
 }
 
 export function clearAuthSession() {
@@ -310,7 +316,7 @@ async function authenticate(
     method: 'personal_sign',
     params: [message, address],
   })
-  return safePost('', '/api/auth/session', {
+  const result = await safePost('', '/api/auth/session', {
     address,
     issuedAt,
     expiresAt,
@@ -319,6 +325,13 @@ async function authenticate(
     mode,
     ...(mode === 'siwe' ? { message } : {}),
   })
+  // Prefer the durable owner-session token returned by the backend. The HMAC
+  // token remains the dapp auth token; arx_vs_* is the token accepted by vault
+  // and session-key middleware across API workers.
+  if (result?.ownerSessionToken) {
+    try { localStorage.setItem('arx_owner_vault_token', result.ownerSessionToken) } catch { /* ignore */ }
+  }
+  return result
 }
 
 export async function ensureAuthSession(address: string, forceNew = false) {

@@ -117,6 +117,8 @@ describe('auth utilities', () => {
       const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
       localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))
       mockProvider.request.mockResolvedValueOnce([OWNER])
+      localStorage.setItem('arx_owner_vault_token', token)
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200 } as any)
 
       const result = await ensureConnectedOwnerSession()
 
