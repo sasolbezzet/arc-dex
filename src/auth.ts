@@ -241,11 +241,24 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
   const accounts = await provider.request({ method: 'eth_accounts' })
   const address = String(accounts?.[0] || '').trim()
   if (!address) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum mengakses Agent Wallet.')
-  const token = await ensureAuthSession(address)
+  const normalizedAddress = getAddress(address)
+
+  // The connected EOA session is the owner proof. Reuse it for every agent
+  // operation while it is still valid; do not ask the owner to sign SIWE again
+  // merely because a passkey flow (Hermes/Claude/GPT) starts. A new SIWE is
+  // required only on the first owner connection, after expiry, or after the
+  // user switches to a different EOA.
+  const existing = getAuthSession()
+  if (existing?.token && existing.address.toLowerCase() === normalizedAddress.toLowerCase()) {
+    try { localStorage.setItem('arx_owner_vault_token', existing.token) } catch { /* ignore */ }
+    return { address: normalizedAddress, token: existing.token }
+  }
+
+  const token = await ensureAuthSession(normalizedAddress)
   // Keep this owner proof separate from the currently selected Agent Wallet
   // passkey token. Agent-management APIs can then use the EOA scope only.
-  try { localStorage.setItem('arx_owner_vault_token', token) } catch { /* ignore storage errors */ }
-  return { address: getAddress(address), token }
+  try { localStorage.setItem('arx_owner_vault_token', token) } catch { /* ignore */ }
+  return { address: normalizedAddress, token }
 }
 
 export function clearAuthSession() {

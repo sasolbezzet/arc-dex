@@ -97,10 +97,11 @@ export function useOAuthApproval() {
     const agentKey = `oauth:${request.clientId}`
 
     try {
-      // The MSCA passkey proves the agent wallet, while the connected EOA
-      // proves which ARCOX owner may attach it. Requiring both prevents a
-      // passkey-only login from adopting an MSCA that belongs to another
-      // owner's old/env-derived binding.
+      // The connected EOA proves which ARCOX owner may attach the agent. The
+      // helper reuses the already-verified owner session, so this step does not
+      // open SIWE again after the first wallet connection. SIWE is requested
+      // only when the owner session is absent, expired, or belongs to another
+      // connected EOA. The MSCA passkey then proves the selected Agent Wallet.
       const owner = await ensureConnectedOwnerSession()
       let walletAddress = ''
       let sessionToken = ''

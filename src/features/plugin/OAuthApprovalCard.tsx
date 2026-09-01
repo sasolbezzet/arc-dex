@@ -44,7 +44,7 @@ export function OAuthApprovalCard({
           <strong style={{ color: '#fde68a', fontSize: 14 }}>{agentLabel} meminta akses</strong>
           <p style={{ margin: '4px 0 0', color: '#a8b3c7', fontSize: 12 }}>
             Setujui hanya jika Anda memang baru saja memulai koneksi ini dari {agentLabel}.
-            Agent akan bisa memakai Agent Wallet ini sesuai batas yang Anda tetapkan.
+            Agent akan bisa memakai Agent Wallet ini sesuai batas yang Anda tetapkan. Jika wallet utama sudah terverifikasi di ARCOX, langkah ini tidak meminta SIWE lagi.
           </p>
         </div>
       </div>
@@ -78,7 +78,7 @@ export function OAuthApprovalCard({
       </div>
 
       <p style={{ color: '#71809a', fontSize: 11, margin: 0 }}>
-        Hubungkan wallet utama terlebih dahulu. ARCOX memakai wallet utama untuk membuktikan owner dan passkey untuk membuktikan Agent Wallet.
+        Wallet utama hanya perlu menandatangani SIWE saat koneksi owner pertama atau saat session kedaluwarsa. Setelah itu, tombol ini langsung memakai passkey untuk Agent Wallet; owner session tetap dipakai sebagai bukti owner.
       </p>
     </section>
   )
