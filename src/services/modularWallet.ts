@@ -416,24 +416,28 @@ const ADD_OWNERS_ABI = [{
 // (low/medium/high); use the medium level so deployment/authorization does not
 // wait on a second attempt. Other chains leave fee selection to Circle Gas
 // Station exactly as before.
+export function normalizeArbitrumUserOperationFees(maxFeePerGas: bigint, maxPriorityFeePerGas: bigint, minimumPriority = 1_000_000_000n) {
+  const priority = maxPriorityFeePerGas > minimumPriority ? maxPriorityFeePerGas : minimumPriority
+  // EIP-1559 requires maxFee >= priority. Add the priority to the observed
+  // base fee so a rapidly changing Arbitrum base fee cannot invalidate the op.
+  const max = maxFeePerGas >= priority ? maxFeePerGas + priority : priority * 2n
+  return { maxPriorityFeePerGas: priority, maxFeePerGas: max }
+}
+
 async function circleGasFees(chainKey: string): Promise<{ maxPriorityFeePerGas?: bigint; maxFeePerGas?: bigint }> {
   if (chainKey !== 'arbitrum-sepolia') return {}
   try {
     const config = chainConfig(chainKey)
     const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
-    const price = await (client as any).request({ method: 'circle_getUserOperationGasPrice', params: [] }).catch(() => null) as { medium?: { maxPriorityFeePerGas: string; maxFeePerGas: string } } | null
-    const level = price?.medium
-    if (level?.maxPriorityFeePerGas && level?.maxFeePerGas) {
-      const maxPriorityFeePerGas = BigInt(level.maxPriorityFeePerGas)
-      const maxFeePerGas = BigInt(level.maxFeePerGas)
-      if (maxPriorityFeePerGas > 0n && maxFeePerGas >= maxPriorityFeePerGas) {
-        return { maxPriorityFeePerGas, maxFeePerGas }
-      }
+    const price = await (client as any).request({ method: 'circle_getUserOperationGasPrice', params: [] }).catch(() => null) as any
+    for (const level of [price?.medium, price?.fast, price?.slow]) {
+      if (!level) continue
+      const maxFeePerGas = BigInt(level.maxFeePerGas || 0)
+      const maxPriorityFeePerGas = BigInt(level.maxPriorityFeePerGas || 0)
+      if (maxFeePerGas > 0n || maxPriorityFeePerGas > 0n) return normalizeArbitrumUserOperationFees(maxFeePerGas, maxPriorityFeePerGas)
     }
   } catch { /* fall through to the safe floor */ }
-  // Comfortably above the observed Circle Arbitrum minimums without hardcoding
-  // a chain-wide price. Only used when Circle's price endpoint is unreachable.
-  return { maxPriorityFeePerGas: 1_000_000_000n, maxFeePerGas: 2_000_000_000n }
+  return normalizeArbitrumUserOperationFees(2_000_000_000n, 1_000_000_000n)
 }
 
 const EVM_CHAIN_CONFIG = {

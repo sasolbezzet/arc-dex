@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../../i18n'
 import { AGENT_CONFIGS, SUPPORTED_CHAINS, type AgentState, type AgentType, type SupportedChain } from '../../types/agent'
 import { AgentStatusBadge } from './AgentStatusBadge'
 import { CopyField, shortAddress } from './CopyField'
@@ -15,6 +16,12 @@ export interface AgentCardProps {
   onRevoke: () => void
   onDelete: () => void
   onBalanceChainChange: (chain: SupportedChain) => void
+}
+
+const CHAIN_LABELS: Record<SupportedChain, { short: string; tone: string; fullKey: 'plugin.arcTestnet' | 'plugin.baseSepolia' | 'plugin.arbitrumSepolia' }> = {
+  'arc-testnet': { short: 'Arc', fullKey: 'plugin.arcTestnet', tone: 'arc' },
+  'base-sepolia': { short: 'Base', fullKey: 'plugin.baseSepolia', tone: 'base' },
+  'arbitrum-sepolia': { short: 'Arbitrum', fullKey: 'plugin.arbitrumSepolia', tone: 'arb' },
 }
 
 function formatTime(value: number | null): string {
@@ -49,6 +56,7 @@ export function AgentCard({
   onBalanceChainChange,
 }: AgentCardProps) {
   const [balanceChain, setBalanceChain] = useState<SupportedChain>('arc-testnet')
+  const { t } = useI18n()
   const config = AGENT_CONFIGS[agentType]
   const wallet = agent?.walletAddress || knownWallet || ''
   const safeAgentKey = String(agent?.agentKey || '').trim()
@@ -86,10 +94,16 @@ export function AgentCard({
       {agent ? (
         <>
           <div className='agent-balance-panel'>
-            <div className='agent-balance-head'><span>Saldo Agent Wallet</span><small>{balanceChain === 'arc-testnet' ? 'Arc Testnet' : balanceChain === 'base-sepolia' ? 'Base Sepolia' : 'Arbitrum Sepolia'} · {agent.balanceUpdatedAt ? 'Diperbarui' : 'Memuat…'}</small></div>
-            <div className='agent-chain-tabs' role='tablist' aria-label='Pilih chain saldo'>
-              {SUPPORTED_CHAINS.map(chain => <button key={chain} type='button' className={balanceChain === chain ? 'active' : ''} onClick={() => { setBalanceChain(chain); onBalanceChainChange(chain) }} role='tab' aria-selected={balanceChain === chain}>{chain === 'arc-testnet' ? 'Arc' : chain === 'base-sepolia' ? 'Base' : 'Arbitrum'}</button>)}
+            <div className='agent-balance-head'>
+              <div><span>{t('plugin.balanceTitle')}</span><small>{t('plugin.balancePerChain')}</small></div>
+              <strong className={`agent-selected-chain agent-selected-chain--${CHAIN_LABELS[balanceChain].tone}`}>{t(CHAIN_LABELS[balanceChain].fullKey)}</strong>
             </div>
+            <div className='agent-chain-tabs' role='tablist' aria-label={t('plugin.selectBalanceNetwork')}>
+              {SUPPORTED_CHAINS.map(chain => <button key={chain} type='button' className={`agent-chain-tab agent-chain-tab--${CHAIN_LABELS[chain].tone} ${balanceChain === chain ? 'active' : ''}`} onClick={() => { setBalanceChain(chain); onBalanceChainChange(chain) }} role='tab' aria-selected={balanceChain === chain}>
+                <span className='agent-chain-dot' /><span>{CHAIN_LABELS[chain].short}</span><small>{chain === 'arc-testnet' ? 'Testnet' : 'Sepolia'}</small>
+              </button>)}
+            </div>
+            <div className='agent-balance-updated'>{agent.balanceUpdatedAt ? t('plugin.balanceUpdated') : t('plugin.loadingBalance')}</div>
             {selectedBalance
               ? <div className='agent-balance-values'>
                   <div><strong>{selectedBalance.USDC ?? '0'}</strong><span>USDC</span></div>
@@ -97,7 +111,7 @@ export function AgentCard({
                   <div><strong>{selectedBalance.USYC ?? '0'}</strong><span>USYC</span></div>
                   <div><strong>{selectedBalance.cirBTC ?? '0'}</strong><span>cirBTC</span></div>
                 </div>
-              : <p className='agent-balance-unavailable'>Saldo belum tersedia. Muat ulang setelah backend RPC merespons.</p>}
+              : <p className='agent-balance-unavailable'>{t('plugin.walletBalanceUnavailable')}</p>}
           </div>
 
           <div className='agent-health-grid'>
