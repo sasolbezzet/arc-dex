@@ -42,6 +42,17 @@ describe('Plugin agent identity normalization', () => {
     expect(rows.map(row => row.walletAddress)).toEqual([CLAUDE_WALLET, GPT_WALLET])
   })
 
+  it('deduplicates Claude rows when the OAuth client ID rotated but wallet stayed the same', () => {
+    const rows = mergeAgentRows([
+      agent({ agentKey: 'claude-mcp|0x1111111111111111111111111111111111111111', clientName: 'claude-mcp' }),
+      agent({ agentKey: 'arcox_b1f7ca68-5b7|0x2222222222222222222222222222222222222222', clientName: 'claude-mcp', walletAddress: CLAUDE_WALLET }),
+      agent({ agentKey: 'arcox_d2021362-9bb|0x3333333333333333333333333333333333333333', clientName: 'claude-mcp', walletAddress: CLAUDE_WALLET }),
+    ])
+
+    expect(rows).toHaveLength(1)
+    expect(rows.filter(row => row.walletAddress === CLAUDE_WALLET)).toHaveLength(1)
+  })
+
   it('deduplicates the same wallet even when a legacy owner key changed', () => {
     const rows = mergeAgentRows([
       agent({ agentKey: 'oauth:claude|0x1111111111111111111111111111111111111111', clientName: 'Agent MCP' }),

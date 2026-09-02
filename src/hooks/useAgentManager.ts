@@ -72,9 +72,13 @@ function isGenericAgentLabel(agent: VaultAgent): boolean {
 
 function agentIdentity(agent: Pick<VaultAgent, 'agentKey' | 'walletAddress' | 'clientName'>): string {
   const wallet = String(agent.walletAddress || '').trim().toLowerCase()
-  const clientId = clientIdFromAgentKey(canonicalAgentKey(agent))
+  // OAuth client registrations can rotate their generated client ID. For the
+  // dashboard, the durable identity is the provider plus owner wallet; this
+  // prevents Claude/GPT from gaining a second card after a fresh passkey or
+  // OAuth registration while still keeping providers isolated.
+  const provider = agentTypeFromKey(canonicalAgentKey(agent), agent.clientName)
   return /^0x[0-9a-f]{40}$/.test(wallet)
-    ? `client:${clientId}|wallet:${wallet}`
+    ? `provider:${provider}|wallet:${wallet}`
     : `key:${canonicalAgentKey(agent)}`
 }
 
