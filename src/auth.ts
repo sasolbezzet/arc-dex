@@ -265,8 +265,14 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
         } catch { /* ignore */ }
         const ownerToken = localStorage.getItem('arx_owner_vault_token') || ''
         if (ownerToken) return { address: normalizedAddress, token: ownerToken }
-        // Old HMAC-only sessions cannot prove vault ownership; fall through to
-        // a fresh owner login so the backend issues both token namespaces.
+        // The connected-wallet session itself is still valid. Reuse it for
+        // agent actions on deployments whose backend does not mint a separate
+        // owner vault token; do not trigger another SIWE ceremony.
+        if (existing.token) {
+          localStorage.setItem('arx_owner_vault_token', existing.token)
+          localStorage.setItem('arx_eoa_vault_token', existing.token)
+          return { address: normalizedAddress, token: existing.token }
+        }
         localStorage.removeItem(STORAGE_KEY)
       }
     } catch { /* re-authenticate below */ }
@@ -278,7 +284,18 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
   const ownerToken = (() => {
     try { return localStorage.getItem('arx_owner_vault_token') || '' } catch { return '' }
   })()
-  if (!ownerToken) throw new Error('Owner vault session tidak diterbitkan oleh backend. Silakan login wallet utama lagi.')
+  if (!ownerToken) {
+    // Older backend responses may only return the authenticated dapp token.
+    // Reuse it when the live wallet session is already verified; forcing SIWE
+    // here would make every Agent Wallet button sign again.
+    const fallbackToken = getAuthSession()?.token || ''
+    if (!fallbackToken) throw new Error('Owner vault session tidak diterbitkan oleh backend. Silakan login wallet utama lagi.')
+    try {
+      localStorage.setItem('arx_owner_vault_token', fallbackToken)
+      localStorage.setItem('arx_eoa_vault_token', fallbackToken)
+    } catch { /* ignore */ }
+    return { address: normalizedAddress, token: fallbackToken }
+  }
   try { localStorage.setItem('arx_eoa_vault_token', ownerToken) } catch { /* ignore */ }
   return { address: normalizedAddress, token: ownerToken }
 }

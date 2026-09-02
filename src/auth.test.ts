@@ -128,6 +128,19 @@ describe('auth utilities', () => {
       expect(mockProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'personal_sign' }))
       expect(localStorage.getItem('arx_owner_vault_token')).toBe(token)
     })
+
+    it('reuses the connected wallet session when the backend omits ownerSessionToken', async () => {
+      const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))
+      localStorage.removeItem('arx_owner_vault_token')
+      mockProvider.request.mockResolvedValueOnce([OWNER])
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200 } as any)
+
+      await expect(ensureConnectedOwnerSession()).resolves.toEqual({ address: OWNER, token })
+      expect(mockProvider.request).toHaveBeenCalledTimes(1)
+      expect(mockProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'personal_sign' }))
+      expect(localStorage.getItem('arx_owner_vault_token')).toBe(token)
+    })
   })
 
   describe('getAuthToken', () => {
