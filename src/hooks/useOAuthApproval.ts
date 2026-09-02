@@ -123,7 +123,6 @@ export function useOAuthApproval() {
         await activateAgentSession(walletAddress, sessionToken, agentKey, {
           eoaAddress: owner.address,
           ownerSessionToken: owner.token,
-          skipDestinationChains: true,
         })
         const session = await readSessionStatus(sessionToken)
         verified = Boolean(

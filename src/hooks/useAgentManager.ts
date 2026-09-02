@@ -395,7 +395,7 @@ export function useAgentManager() {
     localStorage.setItem('arx_vault_token', owner.token)
     localStorage.setItem('arx_owner_vault_token', owner.token)
     if (activation.warnings.length > 0 && mounted.current) {
-      setNotice(`Agent Wallet aktif di Arc. Jaringan lain belum siap: ${activation.warnings.join('; ')}`)
+      setNotice(`Agent Wallet aktif di Arc, Base, dan Arbitrum. ${activation.warnings.join('; ')}`)
     }
     return { walletAddress: passkey.walletAddress, sessionToken: passkey.sessionToken }
   }, [setVaultToken])
@@ -454,7 +454,7 @@ export function useAgentManager() {
       localStorage.setItem('arx_vault_token', owner.token)
       localStorage.setItem('arx_passkey_vault_token', owner.token)
       if (activation.warnings.length > 0) {
-        safeSet(setNotice, `Aktif di Arc. Jaringan lain belum siap: ${activation.warnings.join('; ')}`)
+        safeSet(setNotice, `Aktif di Arc, Base, dan Arbitrum. ${activation.warnings.join('; ')}`)
       }
       await refreshAll()
     }), [run, refreshAll, setVaultToken, safeSet])

@@ -2,6 +2,7 @@ import {
   setupSessionKey,
   registerDelegateOwner,
   getDeploymentStatus,
+  deploySmartAccountOnChain,
 } from './modularWallet'
 import type { ChainAuthStatus } from '../types/agent'
 
@@ -143,6 +144,11 @@ export async function activateAgentSession(
   if (!options.skipDestinationChains) {
     for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
       try {
+        // A newly created wallet must exist on the destination chain before the
+        // delegate authorization UserOperation is submitted. Login/reconnect
+        // remains idempotent because this call returns immediately when already
+        // deployed.
+        await deploySmartAccountOnChain(chainKey, agentKey)
         await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, vaultToken, agentKey)
         chainAuthorizationStatus[chainKey] = 'authorized'
       } catch (error) {
