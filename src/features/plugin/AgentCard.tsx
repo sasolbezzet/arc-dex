@@ -24,15 +24,15 @@ const CHAIN_LABELS: Record<SupportedChain, { short: string; tone: string; fullKe
   'arbitrum-sepolia': { short: 'Arbitrum', fullKey: 'plugin.arbitrumSepolia', tone: 'arb' },
 }
 
-function formatTime(value: number | null): string {
-  if (!value) return 'Belum ada'
+function formatTime(value: number | null, locale: string): string {
+  if (!value) return '—'
   const date = new Date(value < 1e12 ? value * 1000 : value)
-  if (Number.isNaN(date.getTime())) return 'Belum ada'
-  return date.toLocaleString('id-ID', { hour12: false, dateStyle: 'short', timeStyle: 'short' })
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString(locale, { hour12: false, dateStyle: 'short', timeStyle: 'short' })
 }
 
 function shortAgentKey(value: string): string {
-  if (!value) return 'Belum terdaftar'
+  if (!value) return '—'
   return value.length <= 30 ? value : `${value.slice(0, 18)}…${value.slice(-8)}`
 }
 
@@ -56,7 +56,7 @@ export function AgentCard({
   onBalanceChainChange,
 }: AgentCardProps) {
   const [balanceChain, setBalanceChain] = useState<SupportedChain>('arc-testnet')
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const config = AGENT_CONFIGS[agentType]
   const wallet = agent?.walletAddress || knownWallet || ''
   const safeAgentKey = String(agent?.agentKey || '').trim()
@@ -83,11 +83,11 @@ export function AgentCard({
       </div>
 
       {wallet
-        ? <CopyField label='Agent Wallet' value={wallet} display={shortAddress(wallet)} ariaLabel='Salin alamat Agent Wallet' />
+        ? <CopyField label={t('plugin.agentWallet')} value={wallet} display={shortAddress(wallet)} ariaLabel={t('plugin.copyAgentWalletAddress')} />
         : (
           <div className='agent-wallet-row'>
-            <span>Agent Wallet</span>
-            <code>Belum dibuat</code>
+            <span>{t('plugin.agentWallet')}</span>
+            <code>{t('common.missing')}</code>
           </div>
         )}
 
@@ -116,34 +116,34 @@ export function AgentCard({
 
           <div className='agent-health-grid'>
             <div className='agent-health-item'>
-              <span>Passkey</span>
-              <strong className='is-good'>{agent.passkeyBound === false ? 'Belum terikat' : 'Terikat'}</strong>
+              <span>{t('plugin.passkeyLabel')}</span>
+              <strong className='is-good'>{agent.passkeyBound === false ? t('common.notConnected') : t('plugin.passkeyRegistered')}</strong>
             </div>
             <div className='agent-health-item'>
-              <span>MCP</span>
-              <strong className={agent.status === 'connected' ? 'is-good' : ''}>{agent.status === 'connected' ? 'Online' : agent.status === 'revoked' ? 'Session nonaktif' : 'Menunggu koneksi'}</strong>
+              <span>{t('plugin.mcpAgent')}</span>
+              <strong className={agent.status === 'connected' ? 'is-good' : ''}>{agent.status === 'connected' ? t('plugin.connected') : agent.status === 'revoked' ? t('plugin.sessionInactive') : t('plugin.waitingMcp')}</strong>
             </div>
             <div className='agent-health-item'>
-              <span>Spend hari ini</span>
+              <span>{t('plugin.spendToday')}</span>
               <strong>{agent.spentToday} USDC</strong>
             </div>
           </div>
 
           <div className='agent-meta'>
             <div>
-              <small>Terakhir dipakai</small>
-              <strong>{formatTime(agent.lastUsedAt || agent.lastActivity)}</strong>
+              <small>{t('plugin.lastUsed')}</small>
+              <strong>{formatTime(agent.lastUsedAt || agent.lastActivity, lang === 'zh' ? 'zh-CN' : lang)}</strong>
             </div>
             <div>
-              <small>Terhubung sejak</small>
-              <strong>{formatTime(agent.boundAt || agent.connectedAt)}</strong>
+              <small>{t('plugin.connectedSince')}</small>
+              <strong>{formatTime(agent.boundAt || agent.connectedAt, lang === 'zh' ? 'zh-CN' : lang)}</strong>
             </div>
           </div>
         </>
       ) : (
         <div className='agent-setup-copy'>
           <span className='setup-dot' />
-          <p>{isHermes ? 'Buat Agent Wallet lalu salin token koneksi ke terminal Hermes.' : `Mulai koneksi dari aplikasi ${config.name}. Permintaan izin akan kembali ke halaman ini.`}</p>
+          <p>{isHermes ? t('plugin.flowHermesStep1') : t('plugin.flowClaudeStep1')}</p>
         </div>
       )}
 
@@ -151,10 +151,10 @@ export function AgentCard({
         {isHermes && !agent && (
           <>
             <button type='button' className='action-button' disabled={anyBusy} onClick={onConnect}>
-              {busy ? 'Menyiapkan…' : 'Buat Agent Wallet'}
+              {busy ? t('common.preparing') : t('plugin.newWalletButton')}
             </button>
             <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
-              {busy ? 'Membuka passkey…' : 'Login passkey'}
+              {busy ? t('plugin.waitingPasskey') : t('plugin.loginPasskey')}
             </button>
           </>
         )}
@@ -165,16 +165,16 @@ export function AgentCard({
         )}
         {agent && (
           <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
-            {busy ? 'Membuka passkey…' : 'Login passkey'}
+            {busy ? t('plugin.waitingPasskey') : t('plugin.loginPasskey')}
           </button>
         )}
         {agent && (
           <>
             {agent.status !== 'revoked' && <button type='button' className='mini-button mini-button-danger' disabled={anyBusy} onClick={onRevoke}>
-              Cabut session
+              {t('plugin.revoke')}
             </button>}
             <button type='button' className='mini-button mini-button-danger' disabled={anyBusy} onClick={onDelete}>
-              Hapus agent
+              {t('common.delete')}
             </button>
           </>
         )}
@@ -184,7 +184,7 @@ export function AgentCard({
       </div>
 
       {!agent && isHermes && (
-        <p className='agent-action-hint'>Login passkey memakai Agent Wallet Hermes yang sudah terdaftar; Buat Agent Wallet membuat wallet baru.</p>
+        <p className='agent-action-hint'>{t('plugin.flowHermesNote')}</p>
       )}
     </article>
   )
