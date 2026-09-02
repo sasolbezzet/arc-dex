@@ -734,9 +734,11 @@ export async function deploySmartAccountOnChain(chainKey: string, agentKey = DEF
   // Destination chains do not inherit the WebAuthn sender mapping from Arc;
   // create it (idempotent, off-chain) so the plugin can validate the UserOp.
   await ensureWebAuthnOwnerMapping(chainKey, agentKey)
+  const fees = await circleGasFees(chainKey)
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
     paymaster: true,
+    ...fees,
   })
   const previousDeployment = loadState(agentKey).deploymentStatus?.[chainKey]
   saveDeploymentStatus(chainKey, { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
