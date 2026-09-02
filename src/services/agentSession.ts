@@ -115,13 +115,25 @@ export async function activateAgentSession(
     && existing.delegateAddress
     && String(existing.walletAddress || '').toLowerCase() === walletAddress.toLowerCase()
   ) {
+    const chainAuthorizationStatus: Record<string, ChainAuthStatus> = { 'arc-testnet': 'authorized' }
+    const warnings: string[] = []
+    for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+      try {
+        await deploySmartAccountOnChain(chainKey, agentKey)
+        await authorizeDelegateOnChain(chainKey, walletAddress, existing.delegateAddress, vaultToken, agentKey)
+        chainAuthorizationStatus[chainKey] = 'authorized'
+      } catch (error) {
+        chainAuthorizationStatus[chainKey] = 'failed'
+        warnings.push(error instanceof Error ? error.message : `${chainKey}: gagal`)
+      }
+    }
     return {
       walletAddress,
       delegateAddress: existing.delegateAddress,
       sessionActive: true,
-      chainAuthorizationStatus: { 'arc-testnet': 'authorized' },
+      chainAuthorizationStatus,
       deploymentStatus: getDeploymentStatus(agentKey),
-      warnings: [],
+      warnings,
     }
   }
 
