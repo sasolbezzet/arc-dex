@@ -2,6 +2,7 @@ import type { AgentConnectionToken } from '../../types/agent'
 import { CopyField } from './CopyField'
 
 const DEFAULT_MCP_URL = 'https://arcoxdex.vercel.app/mcp'
+const ARCOX_AGENT_VERSION = '0.1.26'
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -10,7 +11,7 @@ function shellQuote(value: string): string {
 /** Build a command that never embeds the bearer token in shell history. */
 export function buildHermesConnectionCommand(token: Pick<AgentConnectionToken, 'token' | 'mcpUrl'>): string {
   void token.token
-  return `tmp=$(mktemp -d) && npm install --prefix "$tmp" --no-save --no-package-lock --ignore-scripts --no-audit --no-fund arcox-agent@0.1.23 >/dev/null && ARCOX_MCP_URL=${shellQuote(token.mcpUrl || DEFAULT_MCP_URL)} node "$tmp/node_modules/arcox-agent/bin/arcox-agent.mjs" connect --prompt-token; status=$?; rm -rf "$tmp"; exit $status`
+  return `tmp=$(mktemp -d) && npm install --prefix "$tmp" --no-save --no-package-lock --ignore-scripts --no-audit --no-fund arcox-agent@${ARCOX_AGENT_VERSION} >/dev/null && ARCOX_MCP_URL=${shellQuote(token.mcpUrl || DEFAULT_MCP_URL)} node "$tmp/node_modules/arcox-agent/bin/arcox-agent.mjs" connect --prompt-token; status=$?; rm -rf "$tmp"; exit $status`
 }
 
 export interface ConnectionTokenDialogProps {
@@ -52,7 +53,7 @@ export function ConnectionTokenDialog({ token, onClose }: ConnectionTokenDialogP
         {token.walletAddress && <CopyField label='Wallet' value={token.walletAddress} display={`${token.walletAddress.slice(0, 8)}…${token.walletAddress.slice(-6)}`} ariaLabel='Salin alamat wallet' />}
         <p style={{ color: '#71809a', fontSize: 11 }}>Berlaku sampai {formatExpiry(token.expiresAt)}.</p>
         <div className='plugin-modal-actions'>
-          <button type='button' className='action-button' onClick={onClose}>Sudah disimpan</button>
+          <button type='button' className='action-button' onClick={onClose}>Kembali ke Plugin ARCOX</button>
         </div>
       </div>
     </div>

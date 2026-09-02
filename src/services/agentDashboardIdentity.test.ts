@@ -70,7 +70,7 @@ describe('Plugin agent identity normalization', () => {
     })
 
     expect(command).toContain('mktemp -d')
-    expect(command).toContain('arcox-agent@0.1.23')
+    expect(command).toContain('arcox-agent@0.1.26')
     expect(command).toContain('connect --prompt-token')
     expect(command).not.toContain('arx_at_0123456789abcdef0123456789abcdef')
     expect(command).not.toContain('printf')
