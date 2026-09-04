@@ -229,6 +229,77 @@ export function getAuthToken() {
   return getAuthSession()?.token || ''
 }
 
+/**
+ * Return a session for the wallet that is actually connected in this browser.
+ * A cached SIWE token alone is intentionally insufficient for agent linking:
+ * passkey ownership must be attached to the currently connected owner EOA,
+ * never to an address left in an environment variable or stale localStorage.
+ */
+export async function ensureConnectedOwnerSession(): Promise<{ address: string; token: string }> {
+  const provider = await findConnectedWalletProvider()
+  if (!provider) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum mengakses Agent Wallet.')
+  const accounts = await provider.request({ method: 'eth_accounts' })
+  const address = String(accounts?.[0] || '').trim()
+  if (!address) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum mengakses Agent Wallet.')
+  const normalizedAddress = getAddress(address)
+
+  // The connected EOA session is the owner proof. Reuse it for every agent
+  // operation while it is still valid; do not ask the owner to sign SIWE again
+  // merely because a passkey flow (Hermes/Claude/GPT) starts. A new SIWE is
+  // required only on the first owner connection, after expiry, or after the
+  // user switches to a different EOA.
+  const existing = getAuthSession()
+  if (existing?.token && existing.address.toLowerCase() === normalizedAddress.toLowerCase()) {
+    // Confirm the owner token against the live backend before using it for
+    // agent binding. A stale local token can have the right address but belong
+    // to a different API worker/session store after deployment.
+    try {
+      const probe = await fetch('/api/vault/limits', {
+        headers: { Authorization: `Bearer ${existing.token}` },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (probe.ok) {
+        try {
+          localStorage.setItem('arx_owner_vault_token', existing.token)
+          localStorage.setItem('arx_eoa_vault_token', existing.token)
+        } catch { /* ignore */ }
+        const ownerToken = localStorage.getItem('arx_owner_vault_token') || ''
+        if (ownerToken) return { address: normalizedAddress, token: ownerToken }
+        // The connected-wallet session itself is still valid. Reuse it for
+        // agent actions on deployments whose backend does not mint a separate
+        // owner vault token; do not trigger another SIWE ceremony.
+        if (existing.token) {
+          localStorage.setItem('arx_owner_vault_token', existing.token)
+          localStorage.setItem('arx_eoa_vault_token', existing.token)
+          return { address: normalizedAddress, token: existing.token }
+        }
+        localStorage.removeItem(STORAGE_KEY)
+      }
+    } catch { /* re-authenticate below */ }
+  }
+  await ensureAuthSession(normalizedAddress)
+  // `ensureAuthSession` stores the HMAC dapp token. The owner vault token is
+  // returned separately by `/api/auth/session` and is copied above by
+  // authenticate(); do not confuse the two token namespaces.
+  const ownerToken = (() => {
+    try { return localStorage.getItem('arx_owner_vault_token') || '' } catch { return '' }
+  })()
+  if (!ownerToken) {
+    // Older backend responses may only return the authenticated dapp token.
+    // Reuse it when the live wallet session is already verified; forcing SIWE
+    // here would make every Agent Wallet button sign again.
+    const fallbackToken = getAuthSession()?.token || ''
+    if (!fallbackToken) throw new Error('Owner vault session tidak diterbitkan oleh backend. Silakan login wallet utama lagi.')
+    try {
+      localStorage.setItem('arx_owner_vault_token', fallbackToken)
+      localStorage.setItem('arx_eoa_vault_token', fallbackToken)
+    } catch { /* ignore */ }
+    return { address: normalizedAddress, token: fallbackToken }
+  }
+  try { localStorage.setItem('arx_eoa_vault_token', ownerToken) } catch { /* ignore */ }
+  return { address: normalizedAddress, token: ownerToken }
+}
+
 export function clearAuthSession() {
   localStorage.removeItem(STORAGE_KEY)
 }
@@ -262,7 +333,7 @@ async function authenticate(
     method: 'personal_sign',
     params: [message, address],
   })
-  return safePost('', '/api/auth/session', {
+  const result = await safePost('', '/api/auth/session', {
     address,
     issuedAt,
     expiresAt,
@@ -271,6 +342,13 @@ async function authenticate(
     mode,
     ...(mode === 'siwe' ? { message } : {}),
   })
+  // Prefer the durable owner-session token returned by the backend. The HMAC
+  // token remains the dapp auth token; arx_vs_* is the token accepted by vault
+  // and session-key middleware across API workers.
+  if (result?.ownerSessionToken) {
+    try { localStorage.setItem('arx_owner_vault_token', result.ownerSessionToken) } catch { /* ignore */ }
+  }
+  return result
 }
 
 export async function ensureAuthSession(address: string, forceNew = false) {

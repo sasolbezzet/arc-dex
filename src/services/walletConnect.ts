@@ -268,51 +268,6 @@ export async function resumeWalletConnect(): Promise<boolean> {
   return relayOpenPromise
 }
 
-export function redirectToWalletForSign(openedWindow?: Window | null): boolean {
-  if (!isMobile() || !wcProvider?.session) return false
-
-  const peer = wcProvider.session?.peer?.metadata
-  const redirect = peer?.redirect
-  const name = (peer?.name || '').toLowerCase()
-  let target = ''
-
-  // 1. Try the session peer's own redirect metadata (most reliable)
-  if (redirect?.native) target = redirect.native
-  else if (redirect?.universal) target = redirect.universal
-  // 2. Fallback: known wallet deep-links by name
-  else if (name.includes('metamask')) target = 'https://metamask.app.link'
-  else if (name.includes('trust')) target = 'https://link.trustwallet.com'
-  else if (name.includes('okx') || name.includes('okex')) target = 'okex://main'
-  else if (name.includes('bitget') || name.includes('bitkeep')) target = 'https://bkcode.vip'
-  else if (name.includes('rainbow')) target = 'https://rnbwapp.com'
-
-  if (!target) {
-    // No redirect metadata is still valid for wallets that rely on push
-    // notifications; do not replace the active approval page in that case.
-    console.log('[WC] No redirect available for wallet:', peer?.name)
-    return false
-  }
-
-  // Never navigate the OAuth page itself. It owns the pending personal_sign
-  // promise and must remain alive to receive the response when the user returns
-  // from the wallet app. A blank tab opened during the original click is reused
-  // when available, which avoids mobile popup blockers after async WebAuthn and
-  // relay work has completed.
-  const opened = openedWindow && !openedWindow.closed
-    ? openedWindow
-    : window.open(target, '_blank', 'noopener,noreferrer')
-  if (opened) {
-    opened.location.href = target
-    return true
-  }
-  const anchor = document.createElement('a')
-  anchor.href = target
-  anchor.target = '_blank'
-  anchor.rel = 'noopener noreferrer'
-  anchor.click()
-  return true
-}
-
 // Setelah connect: tambah + pindah ke Arc Testnet (best effort, non-blocking)
 async function ensureArcChain(provider: any): Promise<void> {
   try {
@@ -372,7 +327,7 @@ export async function connectWalletConnect(): Promise<string | null> {
     if (!provider) throw new Error('WalletConnect tidak tersedia — pastikan VITE_WC_PROJECT_ID sudah dikonfigurasi')
 
     pendingUri = null
-
+  
     // enable() = connect + session settle + accounts terisi.
     const enablePromise: Promise<string[]> = provider.enable()
 
@@ -419,9 +374,10 @@ export async function connectWalletConnect(): Promise<string | null> {
     console.log('[WC] address:', address)
     hideQRModal()
 
-    // Switch ke Arc Testnet di background — jangan block login kalau wallet menolak
-    ensureArcChain(provider).catch(() => {})
-
+    // Complete the connection first. Chain switching is best-effort and must
+    // not block or redirect away from the wallet app before the caller can
+    // establish the authenticated ARCOX session.
+    try { await ensureArcChain(provider) } catch { /* wallet may decline switch */ }
     return address
   } catch (e: any) {
     hideQRModal()
@@ -429,7 +385,7 @@ export async function connectWalletConnect(): Promise<string | null> {
       resetProvider()
       return null
     }
-    resetProvider()
+      resetProvider()
     if (/Koneksi ke relay WalletConnect gagal/.test(e?.message || '')) {
       throw new Error('Relay WalletConnect tidak merespons. Periksa jaringan/VPN/ad blocker lalu coba lagi.')
     }

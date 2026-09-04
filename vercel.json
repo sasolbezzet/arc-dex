@@ -1,5 +1,5 @@
 {
-  "buildCommand": "VITE_BASE_PATH=/ npm run build",
+  "buildCommand": "VITE_BASE_PATH=/ npm run test && VITE_BASE_PATH=/ npm run build",
   "installCommand": "npm install --legacy-peer-deps",
   "outputDirectory": "dist",
   "rewrites": [

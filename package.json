@@ -10,7 +10,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "test": "tsc --noEmit -p tsconfig.app.json && vitest run"
   },
   "dependencies": {
     "@circle-fin/adapter-solana-kit": "^1.5.1",
@@ -21,14 +22,19 @@
     "@solana/kit": "^5.5.1",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
+    "@tanstack/react-query": "^5.102.8",
     "@walletconnect/ethereum-provider": "^2.23.10",
     "buffer": "^6.0.3",
     "ethers": "^6.17.0",
     "fastestsmallesttextencoderdecoder": "^1.0.22",
+    "lucide-react": "^1.37.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "react-router-dom": "^7.18.3",
     "siwe": "^3.0.0",
-    "viem": "^2.54.3"
+    "sonner": "^2.0.8",
+    "viem": "^2.54.3",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

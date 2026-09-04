@@ -1,25 +1,43 @@
+/**
+ * DEPRECATED — NOT RENDERED.
+ *
+ * The Plugin page is now src/pages/PluginPage.tsx (+ src/hooks/useAgentManager
+ * and src/hooks/useOAuthApproval). This file is kept ONLY as the reference for
+ * features that have not been ported yet:
+ *   - credential vault list, spending limits editor
+ *   - per-agent card linking (link/unlink owner cards)
+ *   - pending-tx signing queue (/api/pending-txs)
+ *   - per-agent activity drill-down and MCP session table
+ *
+ * Do not wire this component back into App.tsx: rendering both it and
+ * PluginPage would run two competing passkey/session flows on the same page.
+ * Port what is needed into features/plugin/* instead, then delete this file.
+ */
 import { useEffect, useRef, useState } from 'react'
+
 import { sendTokenFromEoa } from '../services/eoaTransactions'
 import { swapFromEoa } from '../services/swapService'
 import { registerPasskey, loginPasskey, deployAllSmartAccounts, deploySmartAccountOnChain, registerDelegateOwner, setupSessionKey, revokeSessionKey, getMscaState, getDeploymentStatus, signPendingTx } from '../services/modularWallet'
 import { MultiChainBalances } from './MultiChainBalances'
-import { connectWalletConnect, disconnectWalletConnect, getWalletConnectProviderSync, isMobile, isWalletConnectAvailable, redirectToWalletForSign, resumeWalletConnect } from '../services/walletConnect'
+import { AgentWalletList, type AgentWalletEntry } from './AgentWalletList'
 import { findConnectedWalletProvider } from '../walletProvider'
 import { useI18n } from '../i18n'
+import { createAgentConnectionToken, createBootstrapConnectionToken, getAgentActivity, getAgentCards, linkCardToAgent, listVaultAgents, listVaultCards, revokeVaultAgent, unlinkCardFromAgent, type AgentActivityEntry, type AgentConnectionToken, type LinkedAgentCard, type OwnerAgentCard, type VaultAgent } from '../vaultAgentsApi'
 
 type Credential = { id: string; type: 'eoa' | 'circle' | 'solana' | 'api_key'; label: string; value: string }
 type Approval = { id: string; agent: string; action: string; amount: string; token: string; source: string; to: string; status: string; createdAt: number; approvedAt?: number; txHash?: string; explorerUrl?: string; details?: string }
 type Limits = { maxPerTx: number; dailyLimit: number; autoApprove: boolean; whitelist: string[] }
 type Activity = { id: string; type: string; data: any; ts: number }
 type McpSession = { clientId: string; agent: string; connectedAt: number; lastActivity: number; active: boolean }
+type AgentDetails = { activity: AgentActivityEntry[]; cards: LinkedAgentCard[] }
+type AgentCardDraft = { cardId: string; maxPerTx: string; daily: string }
 type PendingTx = { txId: string; walletAddress: string; calls: Array<{ to: string; data: string; value: string }>; chainKey: string; paymaster: boolean; status: string; createdAt: number }
 
 const API = ''
 // Use the public web origin in the user-facing setup instructions. Vercel
 // forwards this route to the non-Vercel backend without exposing its VPS URL.
 const MCP_URL = 'https://arcoxdex.vercel.app/mcp'
-const SERVER_URL = 'https://arcoxdex.vercel.app'
-const AUTH_URL = `${SERVER_URL}/api/auth/authorize`
+const AGENT_KEYS = { claude: 'oauth:claude', gpt: 'oauth:chatgpt', hermes: 'hermes-mcp' } as const
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -35,20 +53,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-// WalletConnect disconnect can itself wait on a dead relay. Never await that
-// cleanup before updating the UI: otherwise a completed/expired signature can
-// leave the OAuth card forever on "Menunggu persetujuan wallet".
-function cleanupWalletConnectInBackground(t: ReturnType<typeof useI18n>['t']) {
-  if (!isMobile() || !getWalletConnectProviderSync()) return
-  void withTimeout(
-    disconnectWalletConnect(),
-    4_000,
-    t('plugin.relayTimeout'),
-  ).catch(() => {})
-}
-
-const Section = ({ title, children, badge }: { title: string; children: React.ReactNode; badge?: React.ReactNode }) => (
-  <div className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14 }}>
+const Section = ({ title, children, badge, style }: { title: string; children: React.ReactNode; badge?: React.ReactNode; style?: React.CSSProperties }) => (
+  <div className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14, ...style }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
       <span style={{ fontWeight: 600, fontSize: 14, color: '#e2e8f0' }}>{title}</span>
       {badge}
@@ -106,31 +112,23 @@ async function siweLogin(address: string, t: ReturnType<typeof useI18n>['t']): P
 
 export function PluginPanel({ address, circleWallet, solanaAddress }: { address: string | null; circleWallet: { id: string; address: string } | null; solanaAddress: string | null }) {
   const { t } = useI18n()
-  // ── OAuth callback params (from ChatGPT/Claude redirect) ──
+  // OAuth approval for Claude/ChatGPT stays available whenever the browser was
+  // redirected here with ?auth=mcp&…; only the ambient Hermes guidance was
+  // removed. Without parsing these params the connector approval never shows.
   const [oauthParams, setOauthParams] = useState<{ request_id: string; client_id: string; redirect_uri: string; state: string; code_challenge: string } | null>(null)
-  // RFC 8628 device pairing (Hermes on a headless VPS): the agent shows a
-  // short user code that the user enters here; approval binds the same SIWE +
-  // passkey identity as the loopback flow without any redirect URL.
-  const [deviceUserCode, setDeviceUserCode] = useState<string | null>(null)
-  const [deviceClientName, setDeviceClientName] = useState<string>('')
   // OAuth approval has two deliberate signing steps: the passkey binds the
   // Agent Wallet, then the connected EOA signs SIWE for the MCP identity. Keep
   // these phases separate so the UI never says "wallet" while WebAuthn is open.
   const [oauthStatus, setOauthStatus] = useState<'idle' | 'passkey' | 'checking' | 'wallet' | 'approving' | 'done' | 'error'>('idle')
-  const [oauthPasskeyMode, setOauthPasskeyMode] = useState<'Login' | 'Register'>('Login')
+  const [, setOauthPasskeyMode] = useState<'Login' | 'Register'>('Login')
   const [deepLink, setDeepLink] = useState(false)
   const [highlightApproval, setHighlightApproval] = useState<string | null>(null)
   const oauthAttempt = useRef(0)
-  // Device pairing: keep the SIWE challenge + MSCA binding in refs so the
-  // "Sudah tanda tangan? Lanjutkan" button can re-drive the wallet signature
-  // without re-running the passkey/session phases.
-  const deviceMessageRef = useRef('')
-  const deviceMessageHexRef = useRef('')
-  const deviceMscaWalletRef = useRef('')
-  const deviceMscaTokenRef = useRef('')
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search)
+    // Claude/ChatGPT connector: the agent redirects the user here with
+    // ?auth=mcp&request_id=… to run the passkey + SIWE approval.
     if (p.get('auth') === 'mcp' && p.get('request_id') && p.get('client_id') && p.get('redirect_uri')) {
       setOauthParams({
         request_id: p.get('request_id') || '',
@@ -139,14 +137,6 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         state: p.get('state') || '',
         code_challenge: p.get('code_challenge') || '',
       })
-    }
-    if (p.get('auth') === 'device' && p.get('user_code')) {
-      const userCode = p.get('user_code') || ''
-      setDeviceUserCode(userCode)
-      fetch(`${API}/api/auth/device/status?user_code=${encodeURIComponent(userCode)}`)
-        .then(r => r.json())
-        .then(d => { if (d?.clientName) setDeviceClientName(String(d.clientName)) })
-        .catch(() => { /* status is cosmetic; approve reports real errors */ })
     }
     // Deep-link from the AI agent: /plugin?tab=approvals&approval=<id>
     // Highlight the referenced approval so the user lands right on it.
@@ -172,11 +162,44 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   const [error, setError] = useState<string | null>(null)
   const [newWhitelist, setNewWhitelist] = useState('')
   const [mscaState, setMscaState] = useState<{ walletAddress?: string; delegateAddress?: string; sessionActive: boolean; deployed?: boolean; deploymentStatus?: Record<string, { status: 'deployed' | 'failed' | 'unsupported'; error?: string; userOpHash?: string; authorizationUserOpHash?: string; authorizationDelegateAddress?: string; authorizationStatus?: 'pending' | 'authorized' | 'failed'; authorizationError?: string; updatedAt: number }>; chainAuthorizationStatus?: Record<string, 'authorized' | 'failed'> }>(() => {
-    const s = getMscaState()
+    const s = getMscaState(AGENT_KEYS.claude)
     return { walletAddress: s.walletAddress, delegateAddress: s.delegateAddress, sessionActive: s.sessionActive ?? false, deployed: s.deployed, deploymentStatus: s.deploymentStatus, chainAuthorizationStatus: undefined }
   })
   const [busy, setBusy] = useState<string | null>(null)
   const [destinationReady, setDestinationReady] = useState(false)
+  const [vaultAgents, setVaultAgents] = useState<VaultAgent[]>([])
+  const [ownerCards, setOwnerCards] = useState<OwnerAgentCard[]>([])
+  const [agentDetails, setAgentDetails] = useState<Record<string, AgentDetails>>({})
+  const [agentCardDrafts, setAgentCardDrafts] = useState<Record<string, AgentCardDraft>>({})
+  const [expandedAgentKey, setExpandedAgentKey] = useState<string | null>(null)
+  const [connectionToken, setConnectionToken] = useState<AgentConnectionToken | null>(null)
+  const [agentAction, setAgentAction] = useState<string | null>(null)
+  const [bootstrapAgentName, setBootstrapAgentName] = useState('Hermes Agent')
+  const [hermesWallet, setHermesWallet] = useState<{ walletAddress: string; sessionToken: string } | null>(() => {
+    try {
+      const walletAddress = localStorage.getItem('arx_hermes_wallet_address') || ''
+      const sessionToken = localStorage.getItem('arx_hermes_vault_token') || ''
+      return walletAddress && sessionToken ? { walletAddress, sessionToken } : null
+    } catch { return null }
+  })
+
+  // "1 wallet = 1 agent" overview: every Agent Wallet is labeled with the
+  // agent that owns it and stays visible no matter which passkey session is
+  // active in this browser. The active browser wallet is appended when it is
+  // not bound to an agent yet (freshly created, awaiting first connection).
+  const agentWalletEntries: AgentWalletEntry[] = Array.from(new Map(vaultAgents.map(agent => [agent.walletAddress.toLowerCase(), agent])).values()).map(agent => ({
+    address: agent.walletAddress,
+    label: /claude/i.test(agent.clientName || agent.agentKey) ? 'Claude' : /chatgpt|gpt/i.test(agent.clientName || agent.agentKey) ? 'ChatGPT' : /hermes/i.test(agent.clientName || agent.agentKey) ? 'Hermes' : (agent.clientName || agent.agentKey.split('|')[0] || t('plugin.mcpAgent')),
+    live: mcpSessions.some(s => s.active && s.clientId === agent.agentKey.split('|')[0]),
+  }))
+  // Keep every backend binding visible. The active passkey wallet is only an
+  // unbound extra row; it must never replace or hide Claude/Hermes bindings.
+  if (mscaState.walletAddress && !agentWalletEntries.some(w => w.address.toLowerCase() === mscaState.walletAddress!.toLowerCase())) {
+    agentWalletEntries.push({ address: mscaState.walletAddress, label: 'Claude', live: false })
+  }
+  if (hermesWallet?.walletAddress && !agentWalletEntries.some(w => w.address.toLowerCase() === hermesWallet!.walletAddress.toLowerCase())) {
+    agentWalletEntries.push({ address: hermesWallet.walletAddress, label: 'Hermes', live: false })
+  }
 
   const authHeaders = (): Record<string, string> => sessionToken ? { 'Authorization': `Bearer ${sessionToken}` } : {}
 
@@ -200,13 +223,13 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     finally { setBusy(null) }
   }
-  const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string) => {
+  const authorizeDelegateOnChain = async (chainKey: 'base-sepolia' | 'arbitrum-sepolia', walletAddress: string, delegateAddress: string, token: string, agentKey = AGENT_KEYS.claude) => {
     // registerDelegateOwner sends a single addOwners UserOperation that both
     // deploys the deterministic MSCA (first UserOp carries factory initCode)
     // and adds the delegate owner, so no separate deployment is required.
     let authorization
     try {
-      authorization = await registerDelegateOwner(delegateAddress, chainKey, token)
+      authorization = await registerDelegateOwner(delegateAddress, chainKey, token, agentKey)
     } catch (error: any) {
       throw new Error(`${chainKey}: authorization UserOp gagal: ${error?.message || 'unknown error'}`)
     }
@@ -220,7 +243,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     return data
   }
 
-  const autoActivateSession = async (walletAddress: string, eoaAddress?: string, existingToken?: string) => {
+  const autoActivateSession = async (walletAddress: string, eoaAddress?: string, existingToken?: string, agentKey = AGENT_KEYS.claude) => {
     // Login activation: one addOwners UserOp on Arc deploys the MSCA and
     // authorizes the delegate in a single operation, then activates the
     // session. Base and Arbitrum are prepared immediately afterwards in the
@@ -228,20 +251,33 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const token = existingToken
     if (!token) throw new Error(t('plugin.passkeyTokenFailed'))
 
+    // Already-active shortcut: re-running setup revokes and re-authorizes the
+    // delegate, leaving a window where MCP tools fail with no_session (and a
+    // failed UserOp could even deactivate a working wallet). If this exact
+    // wallet already has an active Arc session, just adopt it.
+    try {
+      const st = await fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json())
+      const sess = st?.session
+      if (sess?.active && sess.delegateAddress && String(sess.walletAddress || '').toLowerCase() === String(walletAddress).toLowerCase()) {
+        setMscaState(prev => ({ ...prev, walletAddress, delegateAddress: sess.delegateAddress, sessionActive: true, deployed: true }))
+        return token
+      }
+    } catch { /* fall through to the full setup flow */ }
+
     // Binding an EOA is optional. Only send ownerAddress when this browser has
     // a separate SIWE proof; the passkey/MSCA token is never an EOA proof.
     const ownerSessionToken = eoaAddress ? localStorage.getItem('arx_eoa_vault_token') || undefined : undefined
     const verifiedEoaAddress = ownerSessionToken ? eoaAddress : undefined
 
     // Arc: reserve delegate + addOwners (deploy+authorize) + backend setup.
-    const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken)
+    const result = await setupSessionKey(token, verifiedEoaAddress, ownerSessionToken, agentKey)
     setMscaState(prev => ({
       ...prev,
       walletAddress,
       delegateAddress: result.delegateAddress,
       sessionActive: result.active,
       deployed: true,
-      deploymentStatus: getDeploymentStatus(),
+      deploymentStatus: getDeploymentStatus(agentKey),
       chainAuthorizationStatus: { 'arc-testnet': 'authorized' },
     }))
 
@@ -251,65 +287,89 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     const errors: string[] = []
     for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
       try {
-        await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token)
+        await authorizeDelegateOnChain(chainKey, walletAddress, result.delegateAddress, token, agentKey)
         chainAuthorizationStatus[chainKey] = 'authorized'
       } catch (error: any) {
         chainAuthorizationStatus[chainKey] = 'failed'
         errors.push(error?.message || `${chainKey}: authorization gagal`)
       }
     }
-    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(agentKey), chainAuthorizationStatus }))
     if (errors.length) setError(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
     return token
   }
   const registerMsca = async () => {
-    const existing = getMscaState()
+    const existing = getMscaState(AGENT_KEYS.claude)
     if (existing.walletAddress) {
-      // MSCA sudah terkunci — jangan buat baru tanpa konfirmasi eksplisit.
-      throw new Error('Agent Wallet sudah ada. Gunakan "Login Passkey". Buat wallet baru hanya via "Buat Wallet Baru" yang menyertakan konfirmasi, karena dana wallet lama tidak berpindah.')
+      // MSCA already locked — never create a new one without explicit confirmation.
+      throw new Error(t('plugin.walletExists'))
     }
-    const { walletAddress, sessionToken } = await registerPasskey()
+    const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
     // Publish the newly derived MSCA before setting the token. Token polling
     // starts immediately and must not persist an intermediate empty address.
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     localStorage.setItem('arx_passkey_vault_token', sessionToken)
-    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken, AGENT_KEYS.claude)
   }
   const forceRegisterMsca = async () => {
     // Perlu konfirmasi eksplisit dari user di tombol: dana wallet lama tidak pindah.
-    const { walletAddress, sessionToken } = await registerPasskey()
+    const { walletAddress, sessionToken } = await registerPasskey(AGENT_KEYS.claude)
     // Publish the newly derived MSCA before setting the token. Token polling
     // starts immediately and must not persist an intermediate empty address.
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     localStorage.setItem('arx_passkey_vault_token', sessionToken)
-    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken, AGENT_KEYS.claude)
   }
   const loginMsca = async () => {
     // Login Passkey (WebAuthn) → pilih passkey/MSCA yang telah terdaftar di device.
     // MSCA yang dipilih otomatis jadi session key aktif; yang lain di-off.
-    const { walletAddress, sessionToken } = await loginPasskey()
+    const { walletAddress, sessionToken } = await loginPasskey(AGENT_KEYS.claude)
     setMscaState(prev => ({ ...prev, walletAddress, sessionActive: false }))
     setSessionToken(sessionToken)
     localStorage.setItem('arx_vault_token', sessionToken)
     localStorage.setItem('arx_passkey_vault_token', sessionToken)
-    await autoActivateSession(walletAddress, address ?? undefined, sessionToken)
+    await autoActivateSession(walletAddress, address ?? undefined, sessionToken, AGENT_KEYS.claude)
   }
   const revokeSession = async () => {
     if (!sessionToken) throw new Error(t('plugin.vaultLoginFailed'))
-    await revokeSessionKey(sessionToken)
+    await revokeSessionKey(sessionToken, AGENT_KEYS.claude)
     setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '', deployed: prev.deployed }))
   }
 
+  const retryMscaDeploymentsFor = async (walletAddress: string, token: string, agentKey: string = AGENT_KEYS.claude) => {
+    const deployment = await deployAllSmartAccounts(agentKey)
+    if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal.')
+    const delegateAddress = getMscaState(agentKey).delegateAddress
+    const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
+    const errors: string[] = []
+    if (delegateAddress) {
+      for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+        try {
+          await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token, agentKey)
+          chainAuthorizationStatus[chainKey] = 'authorized'
+        } catch (error: any) {
+          chainAuthorizationStatus[chainKey] = 'failed'
+          errors.push(error?.message || `${chainKey}: authorization gagal`)
+        }
+      }
+    }
+    setMscaState(prev => ({ ...prev, deploymentStatus: getDeploymentStatus(agentKey), chainAuthorizationStatus }))
+    if (errors.length) throw new Error(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
+  }
+
   const retryMscaDeployments = async () => {
-    const deployment = await deployAllSmartAccounts()
+    // Retry uses the dashboard agent (Claude by default). Hermes has its own
+    // retry path inside createHermesWallet / loginAgent with agentKey=hermes.
+    const agentKey = AGENT_KEYS.claude
+    const deployment = await deployAllSmartAccounts(agentKey)
     if (deployment.results['arc-testnet']?.status !== 'deployed') throw new Error('Deployment Arc masih gagal. Periksa policy Gas Station dan coba lagi.')
     const walletAddress = mscaState.walletAddress
     const delegateAddress = mscaState.delegateAddress
-    const token = sessionToken || (walletAddress ? (await loginPasskey()).sessionToken : '')
+    const token = sessionToken || (walletAddress ? (await loginPasskey(agentKey)).sessionToken : '')
     const chainAuthorizationStatus: Record<string, 'authorized' | 'failed'> = { 'arc-testnet': 'authorized' }
     const errors: string[] = []
     if (walletAddress && delegateAddress && token) {
@@ -320,27 +380,27 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           errors.push(deployment.results[chainKey]?.error || `${chainKey}: deployment belum berhasil`)
           continue
         }
-        try { await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token); chainAuthorizationStatus[chainKey] = 'authorized' }
+        try { await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, token, agentKey); chainAuthorizationStatus[chainKey] = 'authorized' }
         catch (error: any) { chainAuthorizationStatus[chainKey] = 'failed'; errors.push(error?.message || `${chainKey}: authorization gagal`) }
       }
     }
-    setMscaState(prev => ({ ...prev, deployed: true, deploymentStatus: getDeploymentStatus(), chainAuthorizationStatus }))
+    setMscaState(prev => ({ ...prev, deployed: true, deploymentStatus: getDeploymentStatus(agentKey), chainAuthorizationStatus }))
     if (errors.length) setError(`Deployment/authorization belum lengkap: ${errors.join('; ')}`)
   }
 
   const prepareBaseSepoliaBridge = async () => {
     if (!mscaState.walletAddress || !mscaState.delegateAddress || !mscaState.sessionActive) throw new Error(t('plugin.sessionActivateFirst'))
-    const fresh = sessionToken ? null : await loginPasskey()
+    const fresh = sessionToken ? null : await loginPasskey(AGENT_KEYS.claude)
     const token = sessionToken || fresh!.sessionToken
     if (!token) throw new Error('Passkey token gagal.')
-    await deploySmartAccountOnChain('base-sepolia')
+    await deploySmartAccountOnChain('base-sepolia', AGENT_KEYS.claude)
     await authorizeDelegateOnChain('base-sepolia', mscaState.walletAddress, mscaState.delegateAddress, token)
     setMscaState(prev => ({ ...prev, chainAuthorizationStatus: { ...(prev.chainAuthorizationStatus || {}), 'base-sepolia': 'authorized' } }))
     setDestinationReady(true)
   }
 
   const approvePendingTx = async (tx: PendingTx) => {
-    const result = await signPendingTx(tx.txId, tx.calls, tx.chainKey)
+    const result = await signPendingTx(tx.txId, tx.calls, tx.chainKey, AGENT_KEYS.claude)
     // Remove from pending list immediately
     setPendingTxs(prev => prev.filter(t => t.txId !== tx.txId))
     if (result.error) throw new Error(result.error)
@@ -399,6 +459,232 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     setLoading(false)
   }
 
+  const refreshVaultAgents = async () => {
+    // The vault agent list must be reachable from any active agent session,
+    // not only from the Claude/GPT dashboard session. A user who only created
+    // a Hermes wallet (no Claude session) must still see their agents.
+    const token = sessionToken || hermesWallet?.sessionToken || ''
+    if (!token) return
+    try {
+      // Do not let an optional cards failure hide the authoritative agent list.
+      const agents = await listVaultAgents(token)
+      // Keep previously loaded bindings until the refresh succeeds; login of a
+      // different agent must not make Claude disappear during the request.
+
+      setVaultAgents(agents)
+      try {
+        setOwnerCards(await listVaultCards(token))
+      } catch (cardsError) {
+        console.warn('[plugin] cards refresh failed; preserving agent list', cardsError)
+      }
+    } catch (e: any) {
+      if (!String(e?.message || '').includes('401')) setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    }
+  }
+
+  const refreshAgentDetails = async (agentKey: string) => {
+    const token = sessionToken || hermesWallet?.sessionToken || ''
+    if (!token) return
+    try {
+      const [activityRows, cards] = await Promise.all([getAgentActivity(agentKey, token), getAgentCards(agentKey, token)])
+      setAgentDetails(prev => ({ ...prev, [agentKey]: { activity: activityRows, cards } }))
+      setAgentCardDrafts(prev => {
+        if (prev[agentKey]) return prev
+        const first = ownerCards.find(card => !cards.some(link => link.cardId === card.cardId)) || ownerCards[0]
+        return {
+          ...prev,
+          [agentKey]: {
+            cardId: first?.cardId || '',
+            maxPerTx: String(first?.maxPerTx || ''),
+            daily: String(first?.daily || ''),
+          },
+        }
+      })
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    }
+  }
+
+  const toggleAgentDetails = (agentKey: string) => {
+    const next = expandedAgentKey === agentKey ? null : agentKey
+    setExpandedAgentKey(next)
+    if (next && !agentDetails[next]) void refreshAgentDetails(next)
+  }
+
+  const updateAgentCardDraft = (agentKey: string, patch: Partial<AgentCardDraft>) => {
+    setAgentCardDrafts(prev => ({ ...prev, [agentKey]: { ...(prev[agentKey] || { cardId: '', maxPerTx: '', daily: '' }), ...patch } }))
+  }
+
+  const linkAgentCard = async (agent: VaultAgent) => {
+    const draft = agentCardDrafts[agent.agentKey]
+    if (!draft?.cardId || !sessionToken) return
+    setAgentAction(`link:${agent.agentKey}`)
+    try {
+      await linkCardToAgent(agent.agentKey, { cardId: draft.cardId, maxPerTx: draft.maxPerTx, daily: draft.daily }, sessionToken)
+      await refreshAgentDetails(agent.agentKey)
+      await refreshVaultAgents()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const unlinkAgentCard = async (agent: VaultAgent, cardId: string) => {
+    if (!sessionToken) return
+    setAgentAction(`unlink:${agent.agentKey}:${cardId}`)
+    try {
+      await unlinkCardFromAgent(cardId, sessionToken)
+      await refreshAgentDetails(agent.agentKey)
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const createConnectionToken = async (agent: VaultAgent) => {
+    // Connection tokens are issued from the selected binding only. Never infer
+    // a wallet from the currently active dashboard session.
+    if (!agent.walletAddress) throw new Error(t('plugin.agentWalletRequired'))
+    if (!agent.agentKey) return
+    // Use the agent's own session token: Hermes agents use the Hermes vault
+    // token, Claude/GPT agents use the dashboard session token.
+    const isHermes = /hermes/i.test(agent.clientName || agent.agentKey)
+    const token = isHermes ? (hermesWallet?.sessionToken ?? '') : sessionToken
+    if (!token) return
+    setAgentAction(`token:${agent.agentKey}`)
+    setConnectionToken(null)
+    setError(null)
+    try {
+      const issued = await createAgentConnectionToken(agent.agentKey, 90, token)
+      const agentName = issued.agentName || agent.clientName || t('plugin.mcpAgent')
+      const issuedToken = issued.token || ''
+      setConnectionToken({
+        ...issued,
+        setupMessage: `Hubungkan Hermes ke Agent Wallet ${agentName} saya.\nURL MCP: ${MCP_URL}\nToken akses Hermes: ${issuedToken}\nToken ini hanya memberi akses ke agent/wallet ini dan berlaku sampai: ${issued.expiresAt || ''}\nDi Hermes jalankan: hermes mcp add arcox --url ${MCP_URL} --auth header\nSaat diminta, tempel Token akses Hermes ini. Lalu jalankan: hermes mcp test arcox\nJangan gunakan token ini untuk agent lain.`,
+      })
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const createHermesWallet = async () => {
+    // Hermes MSCA can be created without a primary EOA wallet. The EOA
+    // binding is optional — only used for SIWE in the Claude/GPT OAuth flow.
+    setAgentAction('hermes-wallet')
+    setError(null)
+    try {
+      const passkey = await registerPasskey(AGENT_KEYS.hermes)
+      const hermesToken = passkey.sessionToken
+      localStorage.setItem('arx_hermes_vault_token', hermesToken)
+      await autoActivateSession(passkey.walletAddress, address, hermesToken, AGENT_KEYS.hermes)
+      setHermesWallet({ walletAddress: passkey.walletAddress, sessionToken: hermesToken })
+      localStorage.setItem('arx_hermes_wallet_address', passkey.walletAddress)
+      await refreshVaultAgents()
+    } catch (e: any) { setError(e?.message || t('plugin.vaultAgentsLoadFailed')) }
+    finally { setAgentAction(null) }
+  }
+
+  const createBootstrapToken = async () => {
+    // Hermes connection tokens must be issued from the Hermes Agent Wallet
+    // session, never from the Claude/GPT dashboard session.
+    if (!hermesWallet?.walletAddress || !hermesWallet.sessionToken) {
+      setError(t('plugin.agentWalletRequired'))
+      return
+    }
+    const clientName = bootstrapAgentName.trim() || 'Hermes Agent'
+    setAgentAction('bootstrap-token')
+    setConnectionToken(null)
+    setError(null)
+    try {
+      const issued = await createBootstrapConnectionToken(clientName, 90, hermesWallet.sessionToken, hermesWallet.walletAddress)
+      setConnectionToken({
+        ...issued,
+        setupMessage: `Hubungkan Hermes ke Agent Wallet saya (${clientName}).\nURL MCP: ${MCP_URL}\nToken akses Hermes: ${issued.token}\nToken ini hanya memberi akses ke agent/wallet ini dan berlaku sampai: ${issued.expiresAt || ''}\nDi Hermes jalankan: hermes mcp add arcox --url ${MCP_URL} --auth header\nSaat diminta, tempel Token akses Hermes ini. Lalu jalankan: hermes mcp test arcox\nJangan gunakan token ini untuk agent lain.`,
+      })
+      await refreshVaultAgents()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const loginAgent = async (agent: VaultAgent) => {
+    if (!agent.agentKey) return
+    setAgentAction(`login:${agent.agentKey}`)
+    setError(null)
+    try {
+      const isHermes = /hermes/i.test(agent.clientName || agent.agentKey)
+      const agentKey = isHermes ? AGENT_KEYS.hermes : agent.agentKey
+      const result = await loginPasskey(agentKey)
+      if (isHermes) {
+        setHermesWallet({ walletAddress: result.walletAddress, sessionToken: result.sessionToken })
+        localStorage.setItem('arx_hermes_vault_token', result.sessionToken)
+        localStorage.setItem('arx_hermes_wallet_address', result.walletAddress)
+      } else {
+        // Non-Hermes agents from the vault list are scoped by their own
+        // agentKey. Do not overwrite the dashboard sessionToken/mscaState
+        // (which belongs to the primary Claude wallet) — store the token
+        // under the agent's own OAuth namespace instead.
+        const oauthStorageKey = `arx_oauth_vault_token:${agent.agentKey}`
+        localStorage.setItem(oauthStorageKey, result.sessionToken)
+      }
+      await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken, agentKey)
+      await retryMscaDeploymentsFor(result.walletAddress, result.sessionToken, agentKey)
+      await refreshVaultAgents()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultLoginFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  const revokeAgent = async (agent: VaultAgent) => {
+    if (!agent.agentKey) return
+    const token = sessionToken || hermesWallet?.sessionToken || ''
+    if (!token) return
+    if (!window.confirm(`${t('plugin.agentRevokeConfirm')}\n\n${agent.clientName || t('plugin.mcpAgent')}`)) return
+    setAgentAction(`revoke:${agent.agentKey}`)
+    setError(null)
+    try {
+      await revokeVaultAgent(agent.agentKey, token)
+      // Revoke is scoped to the selected agent. If this browser is currently
+      // using that exact Agent Wallet, clear its local session too so the UI
+      // cannot appear active after the backend has revoked it.
+      if (agent.walletAddress && mscaState.walletAddress && agent.walletAddress.toLowerCase() === mscaState.walletAddress.toLowerCase()) {
+        localStorage.removeItem('arx_vault_token')
+        localStorage.removeItem('arx_passkey_vault_token')
+        setSessionToken(null)
+        setMscaState(prev => ({ ...prev, sessionActive: false, delegateAddress: '' }))
+      }
+      if (expandedAgentKey === agent.agentKey) setExpandedAgentKey(null)
+      if (connectionToken) setConnectionToken(null)
+      await refreshVaultAgents()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.vaultAgentsLoadFailed'))
+    } finally {
+      setAgentAction(null)
+    }
+  }
+
+  useEffect(() => {
+    if (sessionToken) refreshVaultAgents()
+    else {
+      // Keep the last known agent list visible while reconnecting. Clearing it
+      // here made Claude/Hermes cards disappear during wallet switches or a
+      // short-lived session refresh; the backend remains the source of truth.
+      setOwnerCards([])
+      setAgentDetails({})
+      setAgentCardDrafts({})
+      setExpandedAgentKey(null)
+      setConnectionToken(null)
+    }
+  }, [sessionToken])
+
   // Auto-poll MCP sessions + approvals + pending txs every 8s for live status.
   // Approvals must be polled: an agent (ChatGPT/Claude) can create a pending
   // approval while the user is looking at the page — without polling it never
@@ -441,7 +727,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       const resolved = typeof patch === 'function' ? patch(prev) : patch
       const next = { ...prev, ...resolved }
       try {
-        const stored: Record<string, any> = JSON.parse(localStorage.getItem('arx_msca_state') || '{}')
+        const stored: Record<string, any> = JSON.parse(localStorage.getItem('arx_msca_state:oauth:claude') || '{}')
         // React state can legitimately lag a just-completed passkey operation.
         // Never let an undefined field erase a newer persisted value, and
         // merge per-chain maps so status polling cannot erase deployment data.
@@ -456,7 +742,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             chainAuthorizationStatus: { ...(stored.chainAuthorizationStatus || {}), ...(definedPatch.chainAuthorizationStatus || {}) },
           } : {}),
         }
-        localStorage.setItem('arx_msca_state', JSON.stringify(merged))
+        localStorage.setItem('arx_msca_state:oauth:claude', JSON.stringify(merged))
       } catch { /* localStorage is best effort; API remains authoritative */ }
       return next
     })
@@ -557,6 +843,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
   // Fetch data when token changes
   useEffect(() => { if (sessionToken) fetchAll() }, [sessionToken])
 
+  // Restore the vault session across page reloads. Without this, Connected
+  // Agents (and every vault panel) vanished on refresh until the next passkey
+  // login, because sessionToken only lived in React memory.
+  useEffect(() => {
+    const storedClaude = localStorage.getItem('arx_passkey_vault_token') || localStorage.getItem('arx_vault_token') || ''
+    const storedHermes = localStorage.getItem('arx_hermes_vault_token') || ''
+    // Restore vault agents from whichever session is available. A Hermes-only
+    // user (no Claude session) must still see their agent list.
+    const stored = storedClaude || storedHermes
+    if (!stored || sessionTokenRef.current) return
+    if (storedClaude) setSessionToken(storedClaude)
+    void listVaultAgents(stored).then(setVaultAgents).catch(() => {})
+  }, [])
+
   async function syncWalletCredentials() {
     if (!address || !sessionToken) return
     const existing = credentials.find(c => c.type === 'eoa' && c.label === 'MetaMask EOA')
@@ -638,15 +938,19 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       } else {
         throw new Error(t('plugin.unknownAction', { action: a.action }))
       }
-      // Record the signed tx on the backend approval (flips status → approved).
-      try {
-        await fetch(`${API}/api/vault/approvals/${a.id}/approve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ txHash, explorerUrl }),
-        })
-      } catch {}
-      fetchAll()
+      // Record approval only after the transaction succeeded and the backend
+      // explicitly confirms the state transition. A swallowed 401/500 used to
+      // make a successful wallet transaction appear as rejected/pending.
+      const approvalResponse = await fetch(`${API}/api/vault/approvals/${a.id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ txHash, explorerUrl }),
+      })
+      const approvalData = await approvalResponse.json().catch(() => ({}))
+      if (!approvalResponse.ok || approvalData.success === false) {
+        throw new Error(approvalData.error || `Approval update failed (${approvalResponse.status})`)
+      }
+      await fetchAll()
     } catch (e: any) {
       // User rejected in MetaMask or tx failed — leave approval pending.
       const msg = e?.code === 4001 ? t('plugin.signatureCancelled') : (e?.message || t('plugin.transactionFailed'))
@@ -654,73 +958,77 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
     }
     setSigningId(null)
   }
-  const reject = async (id: string) => { try { await fetch(`${API}/api/vault/approvals/${id}/reject`, { method: 'POST', headers: authHeaders() }) } catch {}; fetchAll() }
+  const reject = async (id: string) => {
+    try {
+      const response = await fetch(`${API}/api/vault/approvals/${id}/reject`, { method: 'POST', headers: authHeaders() })
+      if (!response.ok) throw new Error(`Reject failed (${response.status})`)
+      await fetchAll()
+    } catch (e: any) {
+      setError(e?.message || t('plugin.transactionFailed'))
+    }
+  }
   const fmtTime = (ts: number) => new Date(ts).toLocaleString('id-ID', { hour12: false })
 
   // Connection status badge
   const chatgptConnected = mcpSessions.some(s => s.active && s.agent?.includes('chatgpt'))
   const claudeConnected = mcpSessions.some(s => s.active && s.agent?.includes('claude'))
   const anyConnected = mcpSessions.some(s => s.active)
-  // ── OAuth approve flow: passkey → sign SIWE → get auth code → redirect ──
-  // The caller chooses Login for an existing user or Register for a new user;
-  // WebAuthn must never guess which browser ceremony the user intended.
+  // Onboarding progress: brand-new users need wallet first, then an agent,
+  // then live MCP traffic — same three states drive the stepper card.
+  // The generic Agent Wallet card is the Claude/GPT OAuth wallet. Hermes has
+  // its own wallet state and must never be represented by this global card.
+  const walletReady = Boolean(mscaState.walletAddress)
+  const agentsReady = vaultAgents.length > 0
+  const scrollToAgentConnect = () => document.getElementById('arx-agent-connect')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // ── OAuth approve flow: passkey فقط → auth code → redirect ──
+  // یک امضا: passkey به‌تنهایی هویت Agent Wallet را ثابت می‌کند. دیگر نیازی به
+  // امضای SIWE با wallet اصلی نیست — EOA فقط برای تراکنش‌های ارزش دستی استفاده
+  // می‌شود. Caller انتخاب می‌کند Login (کاربر قدیمی) یا Register (کاربر جدید)؛
+  // WebAuthn هرگز حدس نمی‌زند کدام مراسم مرورگر مدنظر بوده است.
   const approveOAuth = async (passkeyMode: 'Login' | 'Register' = 'Login') => {
     setOauthPasskeyMode(passkeyMode)
     if (!address || !oauthParams) return
     const attempt = ++oauthAttempt.current
-    // Do not open a wallet tab before WebAuthn. On mobile Chrome that new tab
-    // can take focus while the Passkey prompt belongs to the OAuth page, making
-    // the required first approval appear to be skipped.
     setOauthStatus('checking')
     setError(null)
     try {
       // Claude may open this approval page in a separate browser context from
       // Plugin, so its localStorage can lack the passkey/MSCA binding. Never
-      // issue an unbound OAuth token in that case: authenticate the selected
-      // Agent Wallet in this context first and verify that its session is active.
-      let oauthMscaWalletAddress = mscaState.walletAddress || ''
-      let oauthMscaSessionToken = localStorage.getItem('arx_passkey_vault_token') || ''
-      let hydratedPasskey = false
+      // issue an unbound OAuth token: authenticate the selected Agent Wallet
+      // in this context first and verify that its session is active.
+      const oauthStorageKey = `arx_oauth_vault_token:${oauthParams.client_id}`
+      let oauthMscaWalletAddress = ''
+      let oauthMscaSessionToken = localStorage.getItem(oauthStorageKey) || ''
       let sessionData: any = null
       let sessionVerified = false
       for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
         // Every new MCP authorization must freshly prove control of the Agent
         // Wallet. Do not trust a persisted MSCA address/token pair here: Claude
         // may reuse the OAuth page while localStorage still contains an older
-        // session, which previously skipped WebAuthn and jumped straight to
-        // the EOA wallet signature.
-        const needsPasskey = true
-        if (needsPasskey) {
-          // Render this phase before opening WebAuthn. The previous code used a
-          // single `signing` state for both WebAuthn and SIWE, so the page kept
-          // displaying "Menunggu persetujuan wallet" while the passkey prompt
-          // was the active request.
-          setOauthStatus('passkey')
-          if (passkeyAttempt > 0) {
-            // A stale token/address pair must not block the one allowed retry.
-            localStorage.removeItem('arx_vault_token')
-            localStorage.removeItem('arx_passkey_vault_token')
-            oauthMscaWalletAddress = ''
-            oauthMscaSessionToken = ''
-          }
-          const passkey = await withTimeout(
-            passkeyMode === 'Register' ? registerPasskey() : loginPasskey(),
-            60_000,passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
-          )
-          oauthMscaWalletAddress = passkey.walletAddress
-          oauthMscaSessionToken = passkey.sessionToken
-          hydratedPasskey = true
-          // A new user has no delegate/session yet. The same explicit passkey
-          // flow can safely initialize it; existing users take the idempotent
-          // active/reconcile path and do not receive a duplicate owner.
-          await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken)
-          // WebAuthn/session setup is complete; status lookup is a separate
-          // network phase before the SIWE wallet signature.
-          setOauthStatus('checking')
+        // session.
+        setOauthStatus('passkey')
+        if (passkeyAttempt > 0) {
+          // A stale token/address pair must not block the one allowed retry.
+          localStorage.removeItem(oauthStorageKey)
+          oauthMscaWalletAddress = ''
+          oauthMscaSessionToken = ''
         }
-        // Always verify the exact token/address pair, including when storage was
-        // present. This prevents stale localStorage from producing an OAuth token
-        // bound to an inactive or different MSCA.
+        // Claude/GPT OAuth must authenticate the agent selected by the OAuth
+        // request, never whichever Hermes state was last active in storage.
+        const oauthAgentKey = `oauth:${oauthParams.client_id}|${address.toLowerCase()}`
+        const passkey = await withTimeout(
+          passkeyMode === 'Register' ? registerPasskey(oauthAgentKey) : loginPasskey(oauthAgentKey),
+          60_000,
+          passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
+        )
+        oauthMscaWalletAddress = passkey.walletAddress
+        oauthMscaSessionToken = passkey.sessionToken
+        // A new user has no delegate/session yet. The same explicit passkey
+        // flow can safely initialize it; existing users take the idempotent
+        // active/reconcile path and do not receive a duplicate owner.
+        await autoActivateSession(oauthMscaWalletAddress, undefined, oauthMscaSessionToken, `oauth:${oauthParams.client_id}|${address.toLowerCase()}`)
+        // WebAuthn/session setup complete; verify the exact token/address pair.
+        setOauthStatus('checking')
         const sessionResponse = await withTimeout(
           fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${oauthMscaSessionToken}` } }),
           20_000,
@@ -739,122 +1047,21 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         }
         throw new Error(t('plugin.passkeySessionMismatch'))
       }
-      if (hydratedPasskey) {
-        localStorage.setItem('arx_vault_token', oauthMscaSessionToken)
-        localStorage.setItem('arx_passkey_vault_token', oauthMscaSessionToken)
-        setSessionToken(oauthMscaSessionToken)
-        setMscaState(prev => ({
-          ...prev,
-          walletAddress: oauthMscaWalletAddress,
-          delegateAddress: sessionData.session.delegateAddress || prev.delegateAddress,
-          sessionActive: true,
-        }))
-      }
-
-      // 1. Get SIWE challenge from MCP server. Every network/provider step is
-      // bounded so a suspended mobile tab cannot leave the button stuck forever.
-      const msgResp = await withTimeout(
-        fetch(`${API}/api/auth/siwe-message?address=${encodeURIComponent(address)}&client_id=${encodeURIComponent(oauthParams.client_id)}&request_id=${encodeURIComponent(oauthParams.request_id)}`, { headers: authHeaders() }),
-        20_000,
-        t('plugin.challengeTimeout'),
-      )
-      if (!msgResp.ok) throw new Error(`Gagal mendapat challenge (${msgResp.status})`)
-      const msgData = await withTimeout(msgResp.json(), 10_000, t('plugin.challengeResponseTimeout'))
-      if (!msgData.message) throw new Error(t('plugin.challengeFailed'))
-
-      // 2. Sign with the already-connected wallet provider. This is a separate
-      // SIWE proof from the passkey step above; it proves control of the EOA
-      // identity used by the MCP OAuth client.
-      // Do not use window.ethereum: on mobile it can trigger an unintended app switch.
-      setOauthStatus('wallet')
-      let provider = await withTimeout(
-        findConnectedWalletProvider(address),
-        20_000,
-        t('plugin.providerTimeout'),
-      )
-      // Claude can open OAuth in a separate mobile browser context where the
-      // injected provider from the original Plugin tab is unavailable. Start
-      // a fresh WalletConnect pairing instead of waiting for a request with no
-      // provider transport to deliver it.
-      if (!provider && isMobile() && isWalletConnectAvailable()) {
-        const connectedAddress = await withTimeout(
-          connectWalletConnect(),
-          180_000,
-          t('plugin.walletConnectTimeout'),
-        )
-        if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) {
-          throw new Error(t('plugin.walletConnectMismatch'))
-        }
-        const connectedProvider = getWalletConnectProviderSync()
-        if (connectedProvider) {
-          ;(window as any).ethereum = connectedProvider
-          provider = await findConnectedWalletProvider(address)
-        }
-      }
-      if (!provider) throw new Error(t('plugin.walletMainMissing'))
-      const from = address
-      const messageHex = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
-      // Re-open the relay before creating the request. The approval helper
-      // opens the wallet universal link in a separate tab after the request is
-      // queued, keeping this page alive to receive the relay response.
-      const walletConnectProvider = getWalletConnectProviderSync()
-      const usingWalletConnect = Boolean(walletConnectProvider && provider === walletConnectProvider)
-      if (isMobile() && usingWalletConnect) {
-        // Opening the relay is asynchronous. Starting personal_sign before it
-        // is open creates a request that can be delivered to the wallet but
-        // whose response has no live transport to return through, leaving this
-        // card on "Menunggu persetujuan wallet app" after the user approved.
-        const relayReady = await withTimeout(
-          resumeWalletConnect(),
-          8_000,
-          t('plugin.relayTimeout'),
-        )
-        if (!relayReady) throw new Error(t('plugin.relayUnavailable'))
-      }
-      const signPromise = provider.request({ method: 'personal_sign', params: [messageHex, from] }) as Promise<string>
-      // Attach a rejection handler immediately. If the relay dies after the
-      // wallet has displayed/approved the request, the underlying provider
-      // promise may settle later than our timeout; it must not create an
-      // unhandled rejection or keep the UI in a stale signing state.
-      signPromise.catch(() => {})
-      // WalletConnect sends the request through the relay, but mobile Chrome
-      // does not always foreground the connected wallet app for a later
-      // personal_sign. Open the wallet's universal link in a new tab after the
-      // request is queued; the approval page remains alive to receive the
-      // relay response when the user returns from the wallet app.
-      if (isMobile() && usingWalletConnect) redirectToWalletForSign()
-      let timeoutId: ReturnType<typeof setTimeout> | null = null
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Wallet signature response timeout. Jika sudah menekan Approve di app, kembali ke browser; koneksi WalletConnect akan dipulihkan saat mencoba lagi.')), 90_000)
-      })
-      let signature: string
-      try {
-        signature = await Promise.race([signPromise, timeoutPromise])
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId)
-      }
-      if (attempt !== oauthAttempt.current) return
+      // OAuth session is local to the approval flow. Do not replace Hermes'
+      // token or its wallet state while Claude/GPT is being connected.
+      localStorage.setItem(oauthStorageKey, oauthMscaSessionToken)
       setOauthStatus('approving')
 
-      // Send only the token issued by passkey registration/login. The backend
-      // re-validates this token against the exact MSCA and active session before
-      // creating the EOA alias, so no client-side status preflight is needed.
-      // In particular, do not fall back to the EOA/SIWE token: that would bind
-      // an identity without proof of control of the selected Agent Wallet.
-      const mscaBinding: Record<string, string> = {}
-      if (oauthMscaSessionToken && oauthMscaWalletAddress) {
-        mscaBinding.mscaWalletAddress = oauthMscaWalletAddress
-        mscaBinding.mscaSessionToken = oauthMscaSessionToken
-      }
-
-      // 3. Verify → get auth code → redirect
-      const codeResp = await withTimeout(fetch(`${API}/api/auth/siwe-verify`, {
+      // یک امضا کافی است: توکن passkey هویت MSCA را ثابت می‌کند. بک‌اند توکن را
+      // نسبت به MSCA دقیق و session فعال re-validate می‌کند و کد OAuth صادر
+      // می‌شود — بدون هیچ امضای SIWE از wallet اصلی.
+      const codeResp = await withTimeout(fetch(`${API}/api/auth/passkey-verify`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          address: from, message: msgData.message, signature,
+          mscaWalletAddress: oauthMscaWalletAddress,
+          mscaSessionToken: oauthMscaSessionToken,
           requestId: oauthParams.request_id, clientId: oauthParams.client_id, redirectUri: oauthParams.redirect_uri,
           state: oauthParams.state, codeChallenge: oauthParams.code_challenge,
-          ...mscaBinding,
         }),
       }), 20_000, t('plugin.verifyTimeout'))
       const codeData = await withTimeout(codeResp.json(), 10_000, t('plugin.verificationIncomplete'))
@@ -867,260 +1074,113 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
       throw new Error(codeData.error || t('plugin.authorizationCodeFailed'))
     } catch (e: any) {
       if (attempt !== oauthAttempt.current) return
-      // Update React state before relay cleanup. A dead WalletConnect socket
-      // must never block the error/retry state from rendering.
-      setOauthStatus('error')
-      setError(e?.message || t('plugin.oauthFailed'))
-      // Reset only the WC transport so the next retry starts cleanly; injected
-      // desktop providers are left untouched. Cleanup is deliberately
-      // fire-and-forget and bounded because disconnect() may hang on a dead
-      // relay after the wallet already accepted the signature.
-      cleanupWalletConnectInBackground(t)
-    }
-  }
-
-  // ── Device pairing approval: same identity proof as approveOAuth, but the
-  // grant is approved server-side by user_code and no redirect happens. ──
-  const approveDevice = async (passkeyMode: 'Login' | 'Register' = 'Login') => {
-    if (!address || !deviceUserCode) return
-    setOauthStatus('checking')
-    setError(null)
-    try {
-      // Fresh WebAuthn ceremony every pairing — never trust stale localStorage.
-      let oauthMscaWalletAddress = ''
-      let oauthMscaSessionToken = ''
-      let sessionVerified = false
-      for (let passkeyAttempt = 0; passkeyAttempt < 2 && !sessionVerified; passkeyAttempt++) {
-        setOauthStatus('passkey')
-        if (passkeyAttempt > 0) {
-          localStorage.removeItem('arx_vault_token')
-          localStorage.removeItem('arx_passkey_vault_token')
-        }
-        const passkey = await withTimeout(
-          passkeyMode === 'Register' ? registerPasskey() : loginPasskey(),
-          60_000,
-          passkeyMode === 'Register' ? t('plugin.passkeyCreateTimeout') : t('plugin.passkeyTimeout'),
-        )
-        oauthMscaWalletAddress = passkey.walletAddress
-        oauthMscaSessionToken = passkey.sessionToken
-        await autoActivateSession(oauthMscaWalletAddress, address ?? undefined, oauthMscaSessionToken)
-        setOauthStatus('checking')
-        const sessionResponse = await withTimeout(
-          fetch(`${API}/api/session/status`, { headers: { Authorization: `Bearer ${oauthMscaSessionToken}` } }),
-          20_000,
-          t('plugin.passkeySessionTimeout'),
-        )
-        const sessionData = await sessionResponse.json().catch(() => ({}))
-        sessionVerified = sessionResponse.ok
-          && sessionData?.session?.active === true
-          && String(sessionData?.session?.walletAddress || '').toLowerCase() === oauthMscaWalletAddress.toLowerCase()
-      }
-      if (!sessionVerified) throw new Error(t('plugin.agentWalletInactive'))
-
-      // SIWE challenge bound to the device grant.
-      const msgResp = await withTimeout(fetch(`${API}/api/auth/device/message`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address, user_code: deviceUserCode }),
-      }), 20_000, t('plugin.challengeTimeout'))
-      if (!msgResp.ok) throw new Error(`Gagal mendapat challenge (${msgResp.status})`)
-      const msgData = await withTimeout(msgResp.json(), 10_000, t('plugin.challengeResponseTimeout'))
-      if (!msgData.message) throw new Error(t('plugin.challengeFailed'))
-
-      // Keep the SIWE challenge + MSCA binding in refs so the recovery button
-      // can re-finish the exact same approval without re-running passkey.
-      deviceMessageRef.current = msgData.message
-      deviceMessageHexRef.current = `0x${Array.from(new TextEncoder().encode(msgData.message)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
-      deviceMscaWalletRef.current = oauthMscaWalletAddress
-      deviceMscaTokenRef.current = oauthMscaSessionToken
-      await signAndApproveDevice()
-    } catch (e: any) {
       setOauthStatus('error')
       setError(e?.message || t('plugin.oauthFailed'))
     }
   }
 
-  // Wallet signature for device pairing. WalletConnect relays routinely drop
-  // the response right after the wallet signs, leaving the request promise
-  // pending forever (UI stuck at "Menunggu tanda tangan wallet…"). Rebuild
-  // the connection between attempts and cap each try so it can never hang.
-  const requestWalletSignature = async (): Promise<string> => {
-    if (!address || !deviceMessageHexRef.current) throw new Error(t('plugin.walletMainMissing'))
-    const messageHex = deviceMessageHexRef.current
-    let lastError: unknown = null
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const provider = await withTimeout(findConnectedWalletProvider(address), 20_000, t('plugin.providerTimeout'))
-        if (!provider) throw new Error(t('plugin.walletMainMissing'))
-        const signature = await Promise.race([
-          provider.request({ method: 'personal_sign', params: [messageHex, address] }) as Promise<string>,
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Wallet signature response timeout')), 60_000)),
-        ])
-        if (typeof signature === 'string' && /^0x[0-9a-fA-F]+$/.test(signature)) return signature
-        throw new Error('Wallet signature tidak valid')
-      } catch (e: any) {
-        lastError = e
-        if (attempt < 2) {
-          // WalletConnect relay is usually the part that hung; disconnect it so
-          // the next attempt starts with a fresh session.
-          cleanupWalletConnectInBackground(t)
-          await new Promise(resolve => setTimeout(resolve, 800))
-        }
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error('Wallet signature gagal')
-  }
-
-  // Finishes device pairing: signature → backend approve. Also callable from
-  // the recovery button once the user has already signed in the wallet.
-  const signAndApproveDevice = async (): Promise<void> => {
-    if (!address || !deviceUserCode || !deviceMscaWalletRef.current || !deviceMscaTokenRef.current || !deviceMessageRef.current) {
-      throw new Error(t('plugin.agentWalletInactive'))
-    }
-    setOauthStatus('wallet')
-    setError(null)
-    try {
-      const signature = await requestWalletSignature()
-      setOauthStatus('approving')
-      const approveResp = await withTimeout(fetch(`${API}/api/auth/device/approve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          address,
-          message: deviceMessageRef.current,
-          signature,
-          user_code: deviceUserCode,
-          mscaWalletAddress: deviceMscaWalletRef.current,
-          mscaSessionToken: deviceMscaTokenRef.current,
-          approve: true,
-        }),
-      }), 20_000, t('plugin.verifyTimeout'))
-      const approveData = await withTimeout(approveResp.json().catch(() => ({})), 10_000, t('plugin.verificationIncomplete'))
-      if (!approveResp.ok || !approveData.ok) throw new Error(approveData.error_description || approveData.error || t('plugin.oauthFailed'))
-      setOauthStatus('done')
-    } catch (e: any) {
-      setOauthStatus('error')
-      setError(e?.message || t('plugin.oauthFailed'))
-    }
-  }
-
-  // Wallet utama adalah identitas Plugin. Tidak ada login kedua di sini.
-  if (!address) return (
-    <div className='glass' style={{ borderRadius: 12, padding: 24, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-      {t('plugin.noWalletForPlugin')}
-    </div>
-  )
-
+  // Wallet utama (EOA) adalah identitas Plugin untuk Claude/GPT OAuth flow.
+  // Hermes flow tidak membutuhkan EOA — ia membuat MSCA sendiri via passkey
+  // dan dapat berdiri sendiri. Jangan blokir seluruh Plugin hanya karena
+  // user belum connect wallet utama; tampilkan Hermes section tetap.
   if (loading) return <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>{t('plugin.pluginLoading')}</div>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {error && <div style={{ color: '#f87171', fontSize: 12, padding: 10, background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>{error}</div>}
 
-      {/* RFC 8628 device pairing approval (Hermes headless agent) */}
-      {deviceUserCode && (
-        <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
-          <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>🖥️</div>
-            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Hubungkan Agent (Device Code)</div>
-            <div style={{ color: '#94a3b8', fontSize: 12 }}>Perangkat lain ingin terhubung ke ARCOX Anda</div>
-          </div>
-          <div style={{ background: 'rgba(18,18,26,0.6)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>Kode perangkat:</div>
-            <div style={{ color: '#e2e8f0', fontSize: 18, fontWeight: 700, letterSpacing: 2 }}>{deviceUserCode}</div>
-            {deviceClientName && (
-              <>
-                <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 10, marginBottom: 4 }}>Agent:</div>
-                <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{deviceClientName}</div>
-              </>
+      {/* Onboarding stepper — guides a brand-new user until the first live MCP session */}
+      {/* Claude/GPT onboarding requires a primary EOA wallet. Hermes has its own section below. */}
+      {!anyConnected && address && (
+        <div className='glass' style={{ borderRadius: 12, padding: 16, marginBottom: 14, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.06)', order: -50 }}>
+          <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700 }}>{t('plugin.onboardingTitle')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 12px' }}>{t('plugin.onboardingSub')}</div>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 14 }}>{walletReady ? '✅' : '1️⃣'}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{t('plugin.stepWalletTitle')}</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
+                {walletReady
+                  ? <>{t('plugin.stepWalletReady', { addr: `${mscaState.walletAddress?.slice(0, 10)}…${mscaState.walletAddress?.slice(-6)}` })}</>
+                  : t('plugin.stepWalletCopy')}
+              </div>
+            </div>
+            {!walletReady && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button className='btn btn-primary' disabled={busy !== null} onClick={() => run('register', registerMsca)}>{t('plugin.stepCreateWallet')}</button>
+                <button className='btn' disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>{t('plugin.stepLoginPasskey')}</button>
+              </div>
             )}
           </div>
-          <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            ⚠️ Setujui hanya jika Anda sendiri yang meminta kode ini di terminal.
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 14 }}>{agentsReady ? '✅' : '2️⃣'}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{t('plugin.stepAgentTitle')}</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
+                {agentsReady
+                  ? t('plugin.stepAgentCopyReady', { count: vaultAgents.length })
+                  : t('plugin.stepAgentCopyEmpty')}
+              </div>
+            </div>
+            <button type='button' onClick={scrollToAgentConnect} style={{ alignSelf: 'center', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: 11 }}>{t('plugin.openAgentList')}</button>
           </div>
-          {error && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 10 }}>{error}</div>}
-          {(oauthStatus === 'idle' || oauthStatus === 'error') && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type='button' onClick={() => approveDevice('Login')} style={{ flex: 1, padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
-                Setujui dengan Passkey
-              </button>
-              <button type='button' onClick={() => approveDevice('Register')} style={{ flex: 1, padding: 12, borderRadius: 8, border: '1px solid #6366f1', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>
-                Passkey Baru
-              </button>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 10px', background: 'rgba(18,18,26,0.55)', borderRadius: 8 }}>
+            <span style={{ fontSize: 14 }}>3️⃣</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{t('plugin.stepMcpTitle')}</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>{t('plugin.stepMcpCopy')}</div>
             </div>
-          )}
-          {oauthStatus === 'passkey' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
-          {oauthStatus === 'checking' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
-          {oauthStatus === 'wallet' && (
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Menunggu tanda tangan wallet…</div>
-              <div style={{ color: '#64748b', fontSize: 11, marginBottom: 10 }}>Sudah menandatangani di aplikasi wallet? Jika layar masih menggantung, lanjutkan untuk meminta tanda tangan sekali lagi.</div>
-              <button type='button' onClick={() => void signAndApproveDevice()} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #6366f1', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>
-                Sudah tanda tangan — Lanjutkan
-              </button>
-            </div>
-          )}
-          {oauthStatus === 'approving' && <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>Menyetujui…</div>}
-          {oauthStatus === 'done' && (
-            <div style={{ textAlign: 'center', color: '#4ade80', fontSize: 13, fontWeight: 600 }}>
-              ✓ Perangkat terhubung. Kembali ke terminal Hermes.
-            </div>
-          )}
+          </div>
         </div>
       )}
 
-      {/* OAuth approval modal (from ChatGPT/Claude) */}
-      {oauthParams && (
-        <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
-          <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>🔌</div>
-            <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{t('plugin.mcpConnectionRequest')}</div>
-            <div style={{ color: '#94a3b8', fontSize: 12 }}>{t('plugin.agentConnectionRequest')}</div>
+      {/* Claude/ChatGPT OAuth approval remains available only for an OAuth callback. */}
+      {oauthParams ? <div className='glass' style={{ borderRadius: 12, padding: 20, marginBottom: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)', order: -69 }}>
+        <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🔐 Otorisasi Claude / ChatGPT</div>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>Setujui koneksi yang diminta oleh Claude atau ChatGPT. Flow ini terpisah dari token koneksi Hermes.</div>
+        {(oauthStatus === 'idle' || oauthStatus === 'error') && (
+          <>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>{t('plugin.oauthWalletChoiceCopy')}</div>
+            <button type='button' onClick={() => void approveOAuth('Register')} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer', marginBottom: 8 }}>{t('plugin.oauthApproveNewWallet')}</button>
+            <button type='button' onClick={() => void approveOAuth('Login')} style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid rgba(99,102,241,0.4)', background: 'transparent', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer' }}>{t('plugin.oauthApproveExistingWallet')}</button>
+          </>
+        )}
+        {oauthStatus === 'passkey' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menunggu Passkey…</div>}
+        {oauthStatus === 'checking' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Memeriksa sesi Agent Wallet…</div>}
+        {oauthStatus === 'wallet' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menunggu tanda tangan wallet…</div>}
+        {oauthStatus === 'approving' && <div style={{ color: '#94a3b8', fontSize: 12 }}>Menyetujui…</div>}
+        {oauthStatus === 'done' && <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 600 }}>✓ Claude/ChatGPT terhubung. Kembali ke aplikasi agent.</div>}
+      </div> : null}
+
+      {/* Connection methods: the two flows run in opposite order and must
+          never be mixed. Hermes provisions the wallet first, then connects
+          with a token. Claude/ChatGPT connect first via OAuth and get their
+          own Agent Wallet created during approval (1 agent = 1 wallet). */}
+      <div style={{ display: 'grid', gap: 10, marginBottom: 14 }}>
+        <div className='glass' style={{ borderRadius: 12, padding: 16, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.05)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+            <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700 }}>🤖 Hermes</div>
+            <div style={{ color: '#818cf8', fontSize: 10, fontWeight: 600 }}>{t('plugin.flowHermesBadge')}</div>
           </div>
-          <div style={{ background: 'rgba(18,18,26,0.6)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}>{t('plugin.agent')}:</div>
-            <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{oauthParams.client_id.startsWith('arcox_') ? 'ChatGPT / Claude' : oauthParams.client_id}</div>
-            <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 8, marginBottom: 4 }}>{t('plugin.requestedAccess')}:</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.viewBalance')}</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.requestApproval')}</div>
-            <div style={{ color: '#e2e8f0', fontSize: 12 }}>• {t('plugin.viewCredentials')}</div>
-          </div>
-          <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 12, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-            ⚠️ {t('plugin.oauthNotice')}
-          </div>
-          {(['passkey', 'checking', 'wallet', 'approving', 'done'].includes(oauthStatus)) ? (
-            <button disabled style={{
-              width: '100%', padding: 14, borderRadius: 10, border: 'none',
-              background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-              color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'wait',
-            }}>
-              {oauthStatus === 'passkey' ? (oauthPasskeyMode === 'Register' ? `✨ ${t('plugin.creatingPasskeyWallet')}` : `🔐 ${t('plugin.waitingPasskey')}`) :
-               oauthStatus === 'checking' ? `⏳ ${t('plugin.checkingAgentSession')}` :
-               oauthStatus === 'wallet' ? `👛 ${t('plugin.openingWallet')}` :
-               oauthStatus === 'approving' ? `⏳ ${t('plugin.verifyingMcp')}` :
-               `✅ ${t('plugin.connectedRedirecting')}`}
-            </button>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <button onClick={() => approveOAuth('Login')} disabled={oauthStatus === 'done'} style={{
-                width: '100%', padding: 12, borderRadius: 10, border: 'none',
-                background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-                color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              }}>
-                {t('plugin.oldUser')}<br />{t('plugin.loginPasskey')}
-              </button>
-              <button onClick={() => approveOAuth('Register')} disabled={oauthStatus === 'done'} style={{
-                width: '100%', padding: 12, borderRadius: 10, border: '1px solid rgba(16,185,129,0.4)',
-                background: 'rgba(16,185,129,0.12)',
-                color: '#4ade80', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              }}>
-                ✨ {t('plugin.newUser')}<br />{t('plugin.newWalletButton')}
-              </button>
-            </div>
-          )}
-          {oauthStatus === 'error' && (
-            <button onClick={() => { setError(null); setOauthStatus('idle') }} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer', fontSize: 12 }}>{t('plugin.chooseFlow')}</button>
-          )}
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. {t('plugin.flowHermesStep1')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. {t('plugin.flowHermesStep2')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. {t('plugin.flowHermesStep3')}</div>
+          <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 8 }}>{t('plugin.flowHermesNote')}</div>
         </div>
-      )}
+        <div className='glass' style={{ borderRadius: 12, padding: 16, border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.05)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+            <div style={{ color: '#e2e8f0', fontSize: 15, fontWeight: 700 }}>💬 Claude / ChatGPT</div>
+            <div style={{ color: '#4ade80', fontSize: 10, fontWeight: 600 }}>{t('plugin.flowClaudeBadge')}</div>
+          </div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>1. {t('plugin.flowClaudeStep1')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>2. {t('plugin.flowClaudeStep2')}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>3. {t('plugin.flowClaudeStep3')}</div>
+          <div style={{ color: '#4ade80', fontSize: 11, marginTop: 8 }}>{t('plugin.flowClaudeNote')}</div>
+        </div>
+      </div>
 
       {/* Connection status bar */}
       <div className='glass' style={{ borderRadius: 12, padding: 10, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1129,25 +1189,20 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           <StatusDot on={claudeConnected} label="Claude" />
           <StatusDot on={anyConnected} label={anyConnected ? t('plugin.agentActive') : t('plugin.noAgent')} />
         </div>
-        <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); setSessionToken(null) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>{t('plugin.logout')}</button>
+        {(sessionToken || hermesWallet) && (
+        <button onClick={() => { localStorage.removeItem('arx_vault_token'); localStorage.removeItem('arx_passkey_vault_token'); localStorage.removeItem('arx_eoa_vault_token'); Object.keys(localStorage).forEach(k => { if (k.startsWith('arx_oauth_vault_token:')) localStorage.removeItem(k) }); setSessionToken(null); setMscaState(prev => ({ ...prev, walletAddress: '', sessionActive: false, delegateAddress: '' })) }} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', cursor: 'pointer' }}>{t('plugin.logout')}</button>
+        )}
       </div>
 
-      {/* Setup MCP */}
-      <Section title={t('plugin.setupTitle')} badge={anyConnected ? <StatusDot on={true} label={t('plugin.connected')} /> : undefined}>
-        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.setupCopy')}</div>
+      <Section title={t('plugin.mcpUrlTitle')} badge={anyConnected ? <StatusDot on={true} label={t('plugin.connected')} /> : undefined}>
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.mcpUrlCopy')}</div>
         <Row label='MCP URL' value={
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <code style={{ background: 'rgba(99,102,241,0.1)', padding: '4px 8px', borderRadius: 6, color: '#818cf8' }}>{MCP_URL}</code>
             <button onClick={() => navigator.clipboard.writeText(MCP_URL)} style={{ background: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>{t('plugin.copy')}</button>
           </div>
         } />
-        <ol style={{ color: '#94a3b8', fontSize: 11, paddingLeft: 16, marginTop: 8 }}>
-          <li>{t('plugin.setupStep1')}</li>
-          <li>{t('plugin.setupStep2')}</li>
-          <li>{t('plugin.setupStep3')}</li>
-          <li>{t('plugin.setupStep4Prefix')}<code style={{fontSize:10,color:'#818cf8'}}>{AUTH_URL}</code>{t('plugin.setupStep4Middle')}<code style={{fontSize:10,color:'#818cf8'}}>{SERVER_URL}/api/auth/token</code></li>
-          <li>{t('plugin.setupStep5')}</li>
-        </ol>
+        <div style={{ color: '#64748b', fontSize: 11, marginTop: 8 }}>{t('plugin.mcpUrlHint')}</div>
       </Section>
 
       {/* Credentials */}
@@ -1192,7 +1247,152 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         )}
       </Section>
 
-      {/* Approvals — pending only */}
+      {/* Connect wallet prompt for Claude/GPT flow (not needed for Hermes) */}
+      {!address && (
+        <div className='glass' style={{ borderRadius: 12, padding: 16, marginBottom: 8, border: '1px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.06)' }}>
+          <div style={{ color: '#fbbf24', fontSize: 12, fontWeight: 600 }}>Claude / ChatGPT</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>
+            {t('plugin.noWalletForPlugin')}
+          </div>
+        </div>
+      )}
+
+      {/* Per-agent wallet connections: owner-only controls for token issuance and revoke. */}
+      <Section title={t('plugin.agentConnections')} badge={vaultAgents.length > 0 ? <StatusDot on={true} label={t('plugin.activeCount', { count: vaultAgents.length })} /> : <StatusDot on={false} label={t('plugin.idle')} />}>
+        <div id='arx-agent-connect' />
+        <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>{t('plugin.agentConnectionsCopy')}</div>
+        <div style={{ padding: 10, marginBottom: 10, borderRadius: 8, border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(99,102,241,0.07)' }}>
+          <div style={{ color: '#c4b5fd', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Hermes MCP</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.45, marginBottom: 8 }}>{t('plugin.hermesPanelCopy')}</div>
+          {!hermesWallet ? (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type='button' onClick={() => void createHermesWallet()} disabled={agentAction !== null} className='btn btn-primary'>{agentAction === 'hermes-wallet' ? t('plugin.creatingPasskeyWallet') : t('plugin.newWallet')}</button>
+              <button type='button' onClick={() => void run('hermes-login', async () => { const result = await loginPasskey(AGENT_KEYS.hermes); setHermesWallet({ walletAddress: result.walletAddress, sessionToken: result.sessionToken }); localStorage.setItem('arx_hermes_vault_token', result.sessionToken); localStorage.setItem('arx_hermes_wallet_address', result.walletAddress); await autoActivateSession(result.walletAddress, address ?? undefined, result.sessionToken, AGENT_KEYS.hermes); await refreshVaultAgents() })} disabled={agentAction !== null} className='btn'>{t('plugin.loginPasskey')}</button>
+              <button type='button' onClick={() => void run('hermes-revoke', async () => { if (!hermesWallet) return; await revokeSessionKey(hermesWallet.sessionToken, AGENT_KEYS.hermes); localStorage.removeItem('arx_hermes_vault_token'); localStorage.removeItem('arx_hermes_wallet_address'); setHermesWallet(null); await refreshVaultAgents() })} disabled={agentAction !== null || !hermesWallet} className='btn'>{t('plugin.revoke')}</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <input value={bootstrapAgentName} onChange={e => setBootstrapAgentName(e.target.value)} placeholder={t('plugin.agentNamePlaceholder')} aria-label={t('plugin.agentNamePlaceholder')} style={{ flex: 1, minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '8px', fontSize: 11 }} />
+              <button type='button' onClick={() => void createBootstrapToken()} disabled={agentAction !== null || !hermesWallet?.sessionToken} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                {agentAction === 'bootstrap-token' ? t('plugin.agentCreatingToken') : t('plugin.hermesCreateConnectionToken')}
+              </button>
+            </div>
+          )}
+        </div>
+        {vaultAgents.length === 0 ? (
+          !hermesWallet && !mscaState.walletAddress ? (
+            <div>
+              <div style={{ color: '#fbbf24', fontSize: 12, lineHeight: 1.5, padding: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, marginBottom: 10 }}>
+                {t('plugin.agentWalletRequired')}
+              </div>
+            </div>
+          ) : (
+          <div>
+            {agentWalletEntries.length > 0 && <AgentWalletList wallets={agentWalletEntries} />}
+            <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>{t('plugin.noVaultAgents')}</div>
+          </div>
+          )
+        ) : ([
+          <AgentWalletList key='arx-wallet-list' wallets={agentWalletEntries} />,
+          <div key='arx-agent-actions' data-testid='connected-agent-actions' />,
+          ...vaultAgents.map(agent => {
+            const clientId = agent.agentKey.split('|')[0]
+            const live = mcpSessions.some(session => session.active && session.clientId === clientId)
+            const expanded = expandedAgentKey === agent.agentKey
+            return (
+              <div key={agent.agentKey} style={{ padding: 10, background: 'rgba(18,18,26,0.6)', borderRadius: 8, marginBottom: 8, border: expanded ? '1px solid rgba(99,102,241,0.45)' : '1px solid transparent' }}>
+                <button type='button' onClick={() => toggleAgentDetails(agent.agentKey)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', background: 'transparent', border: 'none', color: '#e2e8f0', padding: 0, cursor: 'pointer' }}>
+                  <span>
+                    <span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{agent.clientName || t('plugin.mcpAgent')}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
+                      <span style={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace' }}>{agent.walletAddress?.slice(0, 8)}…{agent.walletAddress?.slice(-6)}</span>
+                      <span role='button' aria-label={t('plugin.copyAgentWalletAddress')} onClick={e => { e.stopPropagation(); navigator.clipboard?.writeText(agent.walletAddress || '').catch(() => {}) }} style={{ cursor: 'pointer', fontSize: 10, opacity: 0.75 }}>📋</span>
+                    </span>
+                  </span>
+                  <StatusDot on={live} label={live ? t('plugin.agentStatusConnected') : t('plugin.idle')} />
+                </button>
+                {expanded && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+                    <Row label='Agent Wallet' value={<span style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>{agent.walletAddress}</span>} />
+                    <Row label={t('plugin.agentLastUsed')} value={agent.lastUsedAt ? fmtTime(Number(agent.lastUsedAt)) : '-'} />
+                    <Row label={t('plugin.agentSpentToday')} value={agent.spentToday ?? '-'} />
+                    {agentDetails[agent.agentKey] ? (
+                      <>
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>{t('plugin.agentActivityTitle')}</div>
+                          {agentDetails[agent.agentKey].activity.length === 0 ? (
+                            <div style={{ color: '#64748b', fontSize: 11 }}>{t('plugin.agentNoActivity')}</div>
+                          ) : agentDetails[agent.agentKey].activity.map((entry, index) => (
+                            <div key={entry.id || `${entry.at}-${index}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 0', borderBottom: '1px solid rgba(30,30,46,0.7)', fontSize: 10 }}>
+                              <span style={{ color: '#cbd5e1' }}>{entry.type}{entry.detail ? ` · ${entry.detail}` : ''}</span>
+                              <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>{entry.amount ? `${entry.amount} USDC · ` : ''}{fmtTime(Number(entry.at))}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>{t('plugin.agentLinkedCardsTitle')}</div>
+                          {agentDetails[agent.agentKey].cards.length === 0 ? (
+                            <div style={{ color: '#64748b', fontSize: 11 }}>{t('plugin.agentNoLinkedCards')}</div>
+                          ) : agentDetails[agent.agentKey].cards.map(card => (
+                            <div key={card.cardId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 10 }}>
+                              <span style={{ color: '#cbd5e1' }}>{card.label || t('plugin.agentCardsTitle')} ···· {card.last4 || '????'}<br /><small style={{ color: '#64748b' }}>{card.maxPerTx || '∞'} / tx · {card.daily || '∞'} / day</small></span>
+                              <button type='button' className='mini-button' disabled={agentAction !== null} onClick={() => void unlinkAgentCard(agent, card.cardId)}>{agentAction === `unlink:${agent.agentKey}:${card.cardId}` ? '…' : t('plugin.unlink')}</button>
+                            </div>
+                          ))}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 5, marginTop: 6 }}>
+                            <select value={agentCardDrafts[agent.agentKey]?.cardId || ''} onChange={e => updateAgentCardDraft(agent.agentKey, { cardId: e.target.value })} style={{ minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px', fontSize: 10 }}>
+                              <option value=''>{t('plugin.agentPickCard')}</option>
+                              {ownerCards.map(card => <option key={card.cardId} value={card.cardId}>{card.label || t('plugin.agentCardsTitle')} ···· {card.last4 || '????'}</option>)}
+                            </select>
+                            <input value={agentCardDrafts[agent.agentKey]?.maxPerTx || ''} onChange={e => updateAgentCardDraft(agent.agentKey, { maxPerTx: e.target.value })} placeholder={t('plugin.agentMaxPerTxInput')} inputMode='decimal' style={{ minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px', fontSize: 10 }} />
+                            <input value={agentCardDrafts[agent.agentKey]?.daily || ''} onChange={e => updateAgentCardDraft(agent.agentKey, { daily: e.target.value })} placeholder={t('plugin.agentDailyInput')} inputMode='decimal' style={{ minWidth: 0, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px', fontSize: 10 }} />
+                          </div>
+                          {ownerCards.length === 0 && <div style={{ color: '#64748b', fontSize: 10, marginTop: 5 }}>{t('plugin.agentNoOwnerCards')}</div>}
+                          <button type='button' onClick={() => void linkAgentCard(agent)} disabled={agentAction !== null || !agentCardDrafts[agent.agentKey]?.cardId} style={{ width: '100%', marginTop: 6, padding: 6, borderRadius: 6, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 10 }}>
+                            {agentAction === `link:${agent.agentKey}` ? t('plugin.agentLinkingCard') : t('plugin.agentLinkCardBtn')}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ color: '#64748b', fontSize: 10, marginTop: 8 }}>{t('plugin.pluginLoading')}</div>
+                    )}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                      <button type='button' onClick={() => void createConnectionToken(agent)} disabled={agentAction !== null} style={{ flex: 1, padding: 8, borderRadius: 6, border: '1px solid rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                        {agentAction === `token:${agent.agentKey}` ? t('plugin.agentCreatingToken') : t('plugin.agentCreateToken')}
+                      </button>
+                      <button type='button' onClick={() => void loginAgent(agent)} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(16,185,129,0.35)', background: 'rgba(16,185,129,0.1)', color: '#86efac', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                        {agentAction === `login:${agent.agentKey}` ? '…' : 'Login Passkey'}
+                      </button>
+                      <button type='button' onClick={() => void revokeAgent(agent)} disabled={agentAction !== null} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: agentAction ? 'wait' : 'pointer', fontSize: 11 }}>
+                        {agentAction === `revoke:${agent.agentKey}` ? t('plugin.agentRevoking') : t('plugin.agentRevoke')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          }),
+          ])}
+      </Section>
+
+      {connectionToken && (
+        <div role='dialog' aria-label={t('plugin.agentCreateToken')} id='arx-hermes-token-dialog' className='glass' style={{ borderRadius: 12, padding: 14, marginBottom: 14, border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.06)' }}>
+          <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Hermes connection token</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>Ini adalah kredensial akses MCP untuk agent yang dipilih — bukan Passkey dan bukan token login website. Token hanya berlaku untuk satu Agent Wallet, tampil sekali, dan harus ditempel saat Hermes meminta autentikasi header.</div>
+          <div style={{ color: '#94a3b8', fontSize: 10, marginBottom: 4 }}>Token yang ditempel ke Hermes:</div>
+          <code style={{ display: 'block', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', padding: 8, borderRadius: 6, fontSize: 10, wordBreak: 'break-all', marginBottom: 8 }}>{connectionToken.token}</code>
+          <textarea readOnly value={connectionToken.setupMessage || ''} rows={5} style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', color: '#e2e8f0', background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', borderRadius: 6, padding: 8, fontSize: 11, lineHeight: 1.4 }} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button type='button' onClick={() => navigator.clipboard?.writeText(connectionToken.setupMessage || '').catch(() => setError(t('plugin.agentCopyFailed')))} style={{ flex: 2, padding: 8, borderRadius: 6, border: 'none', background: '#10b981', color: '#052e16', fontWeight: 700, cursor: 'pointer', fontSize: 11 }}>{t('plugin.agentCopySetup')}</button>
+            <button type='button' onClick={() => navigator.clipboard?.writeText(connectionToken.token || '').catch(() => setError(t('plugin.agentCopyFailed')))} style={{ flex: 1, padding: 8, borderRadius: 6, border: '1px solid rgba(16,185,129,0.4)', background: 'transparent', color: '#4ade80', fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>{t('plugin.agentCopyTokenOnly')}</button>
+            <button type='button' onClick={() => setConnectionToken(null)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#cbd5e1', cursor: 'pointer', fontSize: 11 }}>{t('plugin.agentTokenDone')}</button>
+          </div>
+          {connectionToken.expiresAt && <div style={{ color: '#64748b', fontSize: 10, marginTop: 8 }}>{t('plugin.agentTokenExpires', { date: fmtTime(new Date(connectionToken.expiresAt).getTime()) })}</div>}
+        </div>
+      )}
+
+      {/* Approvals + History — only show when there are pending or resolved approvals */}
+      {approvals.length > 0 && (
       <Section title={t('plugin.approvals')} badge={approvals.filter(a => a.status === 'pending').length > 0 ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>{t('plugin.waitingCount', { count: approvals.filter(a => a.status === 'pending').length })}</span> : undefined}>
         {approvals.filter(a => a.status === 'pending').length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noApproval')}</div>
@@ -1210,9 +1410,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))
         )}
       </Section>
+      )}
 
-      {/* Approval History — approved / rejected */}
-      <Section title={t('plugin.approvalHistory')} badge={approvals.filter(a => a.status !== 'pending').length > 0 ? <span style={{ fontSize: 11, color: '#64748b' }}>{approvals.filter(a => a.status !== 'pending').length}</span> : undefined}>
+      {/* Approval History — hide when empty */}
+      {approvals.filter(a => a.status !== 'pending').length > 0 && (
+      <Section title={t('plugin.approvalHistory')} badge={<span style={{ fontSize: 11, color: '#64748b' }}>{approvals.filter(a => a.status !== 'pending').length}</span>}>
         {approvals.filter(a => a.status !== 'pending').length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noHistory')}</div>
         ) : (
@@ -1237,8 +1439,10 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             })
         )}
       </Section>
+      )}
 
-      {/* Limits */}
+      {/* Limits — hide when no session */}
+      {(sessionToken || hermesWallet) && (
       <Section title={t('plugin.limits')}>
         <Row label={t('plugin.maxPerTx')} value={
           <input type='number' value={limits.maxPerTx} onChange={e => updateLimits({ maxPerTx: Number(e.target.value) })} style={{ width: 80, background: 'rgba(18,18,26,0.8)', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '4px 8px', fontSize: 12 }} />
@@ -1263,9 +1467,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))}
         </div>
       </Section>
+      )}
 
-      {/* Agent Wallet (MSCA + Passkey) */}
-      <Section title={t('plugin.agentWallet')} badge={
+      {/* Agent Wallet (MSCA + Passkey) — Claude/GPT dashboard wallet */}
+      {address && (
+      <Section title={t('plugin.agentWallet')} style={{ order: -40 }} badge={
         mscaState.walletAddress
           ? (mscaState.sessionActive ? <StatusDot on={true} label={mscaState.deployed ? t('plugin.deployedActive') : t('plugin.sessionActive')} /> : <StatusDot on={false} label={t('plugin.sessionInactive')} />)
           : undefined
@@ -1275,6 +1481,12 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
             <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
               {t('plugin.mscaDescription')}
             </div>
+            {/* The onboarding stepper (shown for brand-new users) already offers
+                Create Wallet + Login Passkey; repeating the same pair here made
+                the panel feel like it needed two wallets. Only render these
+                buttons when the stepper is hidden (existing multi-agent users
+                or no primary wallet connected). */}
+            {(!anyConnected && address) ? null : (
             <div style={{ display: 'flex', gap: 8 }}>
               <button className='btn btn-primary' style={{ flex: 1 }} disabled={busy === 'login'} onClick={() => run('login', loginMsca)}>
                 {t('plugin.loginPasskey')}
@@ -1283,6 +1495,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
                 {t('plugin.newWallet')}
               </button>
             </div>
+            )}
           </div>
         ) : (
           <div>
@@ -1357,10 +1570,11 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           </div>
         )}
       </Section>
+      )}
 
       {/* Multi-chain Agent Wallet Balances */}
       {mscaState.walletAddress && (
-        <Section title={t('plugin.multiBalances')}>
+        <Section title={t('plugin.multiBalances')} style={{ order: -39 }}>
           <MultiChainBalances walletAddress={mscaState.walletAddress} />
         </Section>
       )}
@@ -1399,7 +1613,8 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
         </Section>
       )}
 
-      {/* Activity */}
+      {/* Activity — hide when empty */}
+      {activity.length > 0 && (
       <Section title={t('plugin.activityAgent')} badge={<span style={{ fontSize: 11, color: '#64748b' }}>{t('plugin.latestFive')}</span>}>
         {activity.length === 0 ? (
           <div style={{ color: '#64748b', fontSize: 12 }}>{t('plugin.noActivity')}</div>
@@ -1414,6 +1629,7 @@ export function PluginPanel({ address, circleWallet, solanaAddress }: { address:
           ))
         )}
       </Section>
+      )}
     </div>
   )
 }

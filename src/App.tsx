@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { WalletButton } from './components/WalletButton'
+import { WalletButton, shouldRestoreWalletConnect } from './components/WalletButton'
 import { SwapPanel } from './components/SwapPanel'
 import { BridgePanel } from './components/BridgePanel'
 import { SendPanel } from './components/SendPanel'
@@ -12,60 +12,12 @@ import { DocsPanel } from './components/DocsPanel'
 import { PayCheckout } from './components/PayCheckout'
 import { PaySandbox } from './components/PaySandbox'
 
-// RFC 8628 device-activation landing. Users who open the bare
-// verification_uri (/activate) without a code get a small form; with a code
-// the page forwards straight to the Plugin consent card.
-function DeviceActivatePage() {
-  const { t } = useI18n()
-  const [code, setCode] = useState('')
-  const params = new URLSearchParams(window.location.search)
-  const userCode = params.get('user_code') || ''
-  if (userCode) {
-    window.location.replace(`/arc-dex/plugin?auth=device&user_code=${encodeURIComponent(userCode)}`)
-    return (
-      <div className='glass' style={{ maxWidth: 420, margin: '48px auto', padding: 28, textAlign: 'center' }}>
-        <div style={{ fontSize: 14, color: '#94a3b8' }}>Mengalihkan ke halaman persetujuan…</div>
-      </div>
-    )
-  }
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const clean = code.trim().toUpperCase()
-    if (clean) window.location.href = `/arc-dex/plugin?auth=device&user_code=${encodeURIComponent(clean)}`
-  }
-  return (
-    <div className='glass' style={{ maxWidth: 420, margin: '48px auto', padding: 28, borderRadius: 16 }}>
-      <div style={{ fontSize: 36, textAlign: 'center', marginBottom: 10 }}>🖥️</div>
-      <div style={{ color: '#e2e8f0', fontSize: 17, fontWeight: 700, textAlign: 'center', marginBottom: 6 }}>
-        Hubungkan Agent
-      </div>
-      <div style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginBottom: 20 }}>
-        Masukkan kode perangkat dari terminal agent (format ARCX-XXX-XXX).
-      </div>
-      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <input
-          value={code}
-          onChange={e => setCode(e.target.value)}
-          placeholder='ARCX-XXX-XXX'
-          autoCapitalize='characters'
-          autoCorrect='off'
-          spellCheck={false}
-          style={{ padding: 14, borderRadius: 10, border: '1px solid rgba(99,102,241,.4)', background: 'rgba(18,18,26,.6)', color: '#e2e8f0', fontSize: 16, letterSpacing: 1, textAlign: 'center' }}
-        />
-        <button type='submit' disabled={!code.trim()} style={{ padding: 14, borderRadius: 10, border: 'none', background: !code.trim() ? '#3730a3' : '#6366f1', color: '#fff', fontWeight: 700, cursor: code.trim() ? 'pointer' : 'default' }}>
-          Lanjutkan
-        </button>
-      </form>
-      <div style={{ color: '#64748b', fontSize: 11, textAlign: 'center', marginTop: 16 }}>
-        Kode berlaku 10 menit dan hanya untuk satu sesi. {t('common.closeMenu')}
-      </div>
-    </div>
-  )
-}
 import { IntelPanel } from './components/IntelPanel'
 import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
 import { AiRouterPanel } from './components/AiRouterPanel'
-import { PluginPanel } from './components/PluginPanel'
+// PluginPanel is deprecated and intentionally not rendered — see the header
+// comment in src/components/PluginPanel.tsx. PluginPage owns the Plugin route.
+import PluginPage from './pages/PluginPage'
 import { getUnifiedBalanceWithAppKit } from './appKit'
 import { LANGUAGES, useI18n } from './i18n'
 import { clearAuthSession, ensureAuthSession, getAuthToken, getAuthSession } from './auth'
@@ -140,9 +92,6 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState<'checking'|'online'|'offline'>('checking')
   const [agentIdentities, setAgentIdentities] = useState<AgentIdentity[]>([])
   const [activeAgentIdentity, setActiveAgentIdentity] = useState<AgentIdentity|null>(null)
-  const [solanaAddress] = useState<string|null>(() => {
-    try { return (window as any).solflare?.publicKey?.toString() || null } catch { return null }
-  })
   const connectInFlightRef = useRef('')
   const balanceRequestRef = useRef({ circle: 0, eoa: 0 })
 
@@ -157,6 +106,13 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     const attemptSoftReconnect = async () => {
+      // Plugin and OAuth approval pages must not silently restore the owner
+      // wallet. If that cached owner session is expired, loadCircleWallet()
+      // would call ensureAuthSession(..., true) and open personal_sign/SIWE
+      // before the user clicks Login passkey. The Plugin action is explicitly
+      // passkey-first; owner reconnect remains available through the wallet
+      // button on pages where it is intentional.
+      if (!shouldRestoreWalletConnect()) return
       try {
         const session = getAuthSession()
         if (!session?.token || !session?.address) return
@@ -182,9 +138,7 @@ export default function App() {
     ? 'pay-console'
     : window.location.pathname === '/pay'
       ? 'pay-checkout'
-      : window.location.pathname === '/activate'
-        ? 'device-activate'
-        : 'normal'
+      : 'normal'
 
   const fetchCircleBal = async (addr:string) => {
     const request = ++balanceRequestRef.current.circle
@@ -406,8 +360,6 @@ export default function App() {
     ? <PaySandbox />
     : routeMode === 'pay-checkout'
       ? <PayCheckout address={address} onConnect={handleConnect} onRefresh={refresh} />
-      : routeMode === 'device-activate'
-        ? <DeviceActivatePage />
       : page === 'intro'
         ? <IntroPage walletSetupError={walletSetupError} navigate={navigate} t={t} />
         : page === 'docs'
@@ -429,7 +381,7 @@ export default function App() {
                       : page === 'ai-router'
                         ? <AiRouterPanel address={address!} activeAgentIdentity={activeAgentIdentity} />
                       : page === 'plugin'
-                        ? <PluginPanel address={address} circleWallet={circleWallet} solanaAddress={solanaAddress} />
+                        ? <PluginPage />
                       : page === 'agentic'
                         ? <AgenticPanel address={address} eoaBalances={eoaBalances} onRefresh={refresh} identities={agentIdentities} activeIdentity={activeAgentIdentity} onSelectIdentity={chooseAgentIdentity} onIdentityRefresh={() => refreshAgentIdentities(true)} />
                         : page === 'intel'
@@ -442,7 +394,7 @@ export default function App() {
                             ? <InfoPanel address={address!} circleWallet={circleWallet} balances={balances} eoaBalances={eoaBalances} onRefresh={refresh} />
                             : null
 
-  const pageTitle = routeMode === 'pay-console' ? 'ARCOX Pay Status' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : routeMode === 'device-activate' ? 'Hubungkan Agent' : titleFor(page, t)
+  const pageTitle = routeMode === 'pay-console' ? 'ARCOX Pay Status' : routeMode === 'pay-checkout' ? 'ARCOX Pay Checkout' : titleFor(page, t)
 
   return (
     <div className='app-shell page-layout'>
@@ -501,7 +453,7 @@ export default function App() {
                   </div>
                 </ViewportPopover>
               </div>
-              <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
+              <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} onConnected={() => { if (currentPageFromLocation() !== 'plugin') navigate('plugin') }} />
             </div>
           </div>
         </header>

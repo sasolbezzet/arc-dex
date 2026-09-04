@@ -598,6 +598,7 @@ function delegatedFallbackError(error: unknown) {
 }
 
 function ServicePicker({ value, onChange }: { value: IntelType; onChange: (value: IntelType) => void }) {
+  const { t } = useI18n()
   return (
     <div className='sandbox-field'>
       <span>{t('intel.service')}</span>

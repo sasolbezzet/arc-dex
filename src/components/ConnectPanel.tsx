@@ -170,7 +170,7 @@ export function ConnectPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account])
 
-  if (loading) return <div className="panel-card">{t('loading')}</div>
+  if (loading) return <div className="panel-card">{t('plugin.loading')}</div>
 
   const feePct = config ? (config.appFeeBasisPoints / 100).toFixed(1) : '0'
   const mscaActive = access?.active === true

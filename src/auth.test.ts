@@ -4,20 +4,19 @@ import {
   readTokenExp,
   isSiweUnsupportedError,
   ensureAuthSession,
+  ensureConnectedOwnerSession,
   clearAuthSession,
   getAuthToken,
   buildSiweMessage,
 } from './auth'
 import { HttpError } from './api'
 
-// Mock the wallet provider so tests do not require a real browser wallet.
 let mockProvider: { request: ReturnType<typeof vi.fn> }
 
 vi.mock('./walletProvider', () => ({
   findConnectedWalletProvider: vi.fn(() => Promise.resolve(mockProvider)),
 }))
 
-// Minimal JWT builder for tests: header.payload.signature
 function makeJwt(payload: Record<string, unknown>): string {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   const body = btoa(JSON.stringify(payload))
@@ -30,6 +29,8 @@ function makeJwt(payload: Record<string, unknown>): string {
 function base64UrlEncode(str: string): string {
   return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
+
+const OWNER = '0x742d35Cc6634C0532925a3b844Bc454e4438f44e'
 
 describe('auth utilities', () => {
   beforeEach(() => {
@@ -50,9 +51,7 @@ describe('auth utilities', () => {
     })
 
     it('produces different nonces on successive calls', () => {
-      const a = generateNonceHex()
-      const b = generateNonceHex()
-      expect(a).not.toBe(b)
+      expect(generateNonceHex()).not.toBe(generateNonceHex())
     })
   })
 
@@ -76,18 +75,12 @@ describe('auth utilities', () => {
 
   describe('isSiweUnsupportedError', () => {
     it('returns true for HTTP 501 errors', () => {
-      const error = new HttpError('Not Implemented', 501, {})
-      expect(isSiweUnsupportedError(error)).toBe(true)
+      expect(isSiweUnsupportedError(new HttpError('Not Implemented', 501, {}))).toBe(true)
     })
 
-    it('returns true for SIWE_NOT_SUPPORTED code', () => {
-      const error = new HttpError('Bad Request', 400, { code: 'SIWE_NOT_SUPPORTED' })
-      expect(isSiweUnsupportedError(error)).toBe(true)
-    })
-
-    it('returns true for UNSUPPORTED_AUTH_MODE code', () => {
-      const error = new HttpError('Bad Request', 400, { code: 'UNSUPPORTED_AUTH_MODE' })
-      expect(isSiweUnsupportedError(error)).toBe(true)
+    it('returns true for explicit unsupported codes', () => {
+      expect(isSiweUnsupportedError(new HttpError('Bad Request', 400, { code: 'SIWE_NOT_SUPPORTED' }))).toBe(true)
+      expect(isSiweUnsupportedError(new HttpError('Bad Request', 400, { code: 'UNSUPPORTED_AUTH_MODE' }))).toBe(true)
     })
 
     it('returns false for generic errors', () => {
@@ -99,10 +92,9 @@ describe('auth utilities', () => {
   describe('ensureAuthSession', () => {
     it('reuses an existing valid session for the same address', async () => {
       const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
-      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e', token, issuedAt: Date.now() }))
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))
 
-      const result = await ensureAuthSession('0x742d35Cc6634C0532925a3b844Bc454e4438f44e')
-      expect(result).toBe(token)
+      expect(await ensureAuthSession(OWNER)).toBe(token)
       expect(mockProvider.request).not.toHaveBeenCalled()
     })
 
@@ -115,12 +107,39 @@ describe('auth utilities', () => {
         text: () => Promise.resolve(JSON.stringify({ token: backendToken })),
       } as any)
 
-      const result = await ensureAuthSession('0x742d35Cc6634C0532925a3b844Bc454e4438f44e', true)
-      expect(result).toBe(backendToken)
-      expect(mockProvider.request).toHaveBeenCalledWith({
-        method: 'personal_sign',
-        params: expect.any(Array),
-      })
+      expect(await ensureAuthSession(OWNER, true)).toBe(backendToken)
+      expect(mockProvider.request).toHaveBeenCalledWith({ method: 'personal_sign', params: expect.any(Array) })
+    })
+  })
+
+  describe('ensureConnectedOwnerSession', () => {
+    it('reuses the owner session and does not ask SIWE again before passkey', async () => {
+      const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))
+      mockProvider.request.mockResolvedValueOnce([OWNER])
+      localStorage.setItem('arx_owner_vault_token', token)
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200 } as any)
+
+      const result = await ensureConnectedOwnerSession()
+
+      expect(result).toEqual({ address: OWNER, token })
+      expect(mockProvider.request).toHaveBeenCalledTimes(1)
+      expect(mockProvider.request).toHaveBeenCalledWith({ method: 'eth_accounts' })
+      expect(mockProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'personal_sign' }))
+      expect(localStorage.getItem('arx_owner_vault_token')).toBe(token)
+    })
+
+    it('reuses the connected wallet session when the backend omits ownerSessionToken', async () => {
+      const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))
+      localStorage.removeItem('arx_owner_vault_token')
+      mockProvider.request.mockResolvedValueOnce([OWNER])
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200 } as any)
+
+      await expect(ensureConnectedOwnerSession()).resolves.toEqual({ address: OWNER, token })
+      expect(mockProvider.request).toHaveBeenCalledTimes(1)
+      expect(mockProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'personal_sign' }))
+      expect(localStorage.getItem('arx_owner_vault_token')).toBe(token)
     })
   })
 
@@ -131,7 +150,7 @@ describe('auth utilities', () => {
 
     it('returns the stored token', () => {
       const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
-      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e', token, issuedAt: Date.now() }))
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))
       expect(getAuthToken()).toBe(token)
     })
   })
@@ -140,14 +159,14 @@ describe('auth utilities', () => {
     it('produces a valid EIP-4361 message bound to the current domain', async () => {
       const provider = { request: vi.fn().mockResolvedValue('0x4cef52') }
       const msg = await buildSiweMessage(
-        '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+        OWNER,
         'aabbccdd',
         new Date().toISOString(),
         new Date(Date.now() + 5 * 60 * 1000).toISOString(),
         provider,
       )
       expect(msg).toContain('wants you to sign in with your Ethereum account')
-      expect(msg).toContain('0x742d35Cc6634C0532925a3b844Bc454e4438f44e')
+      expect(msg).toContain(OWNER)
       expect(msg).toContain('Only sign this message on the official ARCOX DEX website.')
       expect(msg).toMatch(/URI: https?:\/\/localhost/)
       expect(msg).toMatch(/wants you to sign in with your Ethereum account:/)
