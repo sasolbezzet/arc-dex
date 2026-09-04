@@ -301,22 +301,18 @@ function normalizeRpId(value: unknown) {
   return raw.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0]
 }
 
-function loginPublicKeyOptions(options: any) {
+export function loginPublicKeyOptions(options: any) {
   const result: any = {
     ...options,
     challenge: base64UrlToBytes(options.challenge),
     ...(typeof options.rpId === 'string' ? { rpId: normalizeRpId(options.rpId) } : {}),
   }
-  // Keep an explicit credential list when the backend supplies one. When it
-  // is empty, omit it so the platform can enumerate discoverable passkeys.
-  if (Array.isArray(options.allowCredentials)) {
-    result.allowCredentials = options.allowCredentials.map((credential: any) => ({
-      ...credential,
-      id: base64UrlToBytes(credential.id),
-    }))
-  } else {
-    delete result.allowCredentials
-  }
+  // Always omit allowCredentials for an explicit Login passkey action. This
+  // requests discoverable credentials so Chrome/Windows Hello/Touch ID can show
+  // the stored passkey picker instead of binding the user to one credential and
+  // jumping straight to biometric approval. The backend still validates the
+  // selected credential's wallet and exact agent binding after the ceremony.
+  delete result.allowCredentials
   // WebAuthn L3: request user verification explicitly so the OS authenticator
   // (Windows Hello / Touch ID / Google Password Manager) shows its own prompt
   // instead of silently resolving or declining when the flow is run from a
@@ -815,7 +811,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   const reserveRes = await fetch(`${API}/api/session/generate-key`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
-    body: JSON.stringify({ walletAddress: state.walletAddress, ownerAddress, ownerSessionToken }),
+    body: JSON.stringify({ walletAddress: state.walletAddress, ownerAddress, ownerSessionToken, agentKey }),
   })
   const reserved = await reserveRes.json()
   // Owner proof is mandatory. Never retry without it: doing so would recreate
@@ -1010,8 +1006,8 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   // Destination chains (Base/Arbitrum) do not inherit the WebAuthn sender
   // mapping that registration created on Arc. Without it the plugin reverts
   // with InvalidValidationFunctionId during simulation. Create it first
-  // (off-chain API call, idempotent).await ensureWebAuthnOwnerMapping(chainKey, agentKey)
-
+  // (off-chain API call, idempotent).
+  await ensureWebAuthnOwnerMapping(chainKey, agentKey)
 
   const callData = encodeFunctionData({ abi: ADD_OWNERS_ABI, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
   const fees = await circleGasFees(chainKey)

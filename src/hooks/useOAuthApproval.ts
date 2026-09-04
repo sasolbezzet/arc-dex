@@ -97,12 +97,14 @@ export function useOAuthApproval() {
     const agentKey = `oauth:${request.clientId}`
 
     try {
-      // The connected EOA proves which ARCOX owner may attach the agent. The
-      // helper reuses the already-verified owner session, so this step does not
-      // open SIWE again after the first wallet connection. SIWE is requested
-      // only when the owner session is absent, expired, or belongs to another
-      // connected EOA. The MSCA passkey then proves the selected Agent Wallet.
-      const owner = await ensureConnectedOwnerSession()
+      // Existing-agent login is passkey-first. The owner EOA session can expire
+      // independently from the durable Agent Wallet binding; do not trigger
+      // SIWE before the browser has opened navigator.credentials.get().
+      // Registration/new binding still obtains the owner proof first because it
+      // is allowed to create a new owner-to-agent relationship.
+      const owner: { address: string; token: string } | null = mode === 'register'
+        ? await ensureConnectedOwnerSession()
+        : null
       let walletAddress = ''
       let sessionToken = ''
       let verified = false
@@ -118,12 +120,14 @@ export function useOAuthApproval() {
         sessionToken = passkey.sessionToken
 
         setStep('checking')
-        // A brand-new agent has no delegate yet; activation is idempotent for
-        // an existing one and never adds a duplicate owner.
-        await activateAgentSession(walletAddress, sessionToken, agentKey, {
-          eoaAddress: owner.address,
-          ownerSessionToken: owner.token,
-        })
+        // Never fall back to owner SIWE from Login passkey. If the durable
+        // binding cannot be recovered with this freshly authenticated MSCA,
+        // stop and tell the user to use the explicit "Buat wallet baru"
+        // registration action. A hidden SIWE fallback here was the reason an
+        // expired Agent Wallet session opened the owner wallet app instead of
+        // showing the passkey picker.
+        await activateAgentSession(walletAddress, sessionToken, agentKey,
+          owner ? { eoaAddress: owner.address, ownerSessionToken: owner.token } : {})
         const session = await readSessionStatus(sessionToken)
         verified = Boolean(
           session?.active
@@ -151,8 +155,7 @@ export function useOAuthApproval() {
           redirectUri: request.redirectUri,
           state: request.state,
           codeChallenge: request.codeChallenge,
-          ownerAddress: owner.address,
-          ownerSessionToken: owner.token,
+          ...(owner ? { ownerAddress: owner.address, ownerSessionToken: owner.token } : {}),
         }),
         signal: AbortSignal.timeout(30_000),
       })

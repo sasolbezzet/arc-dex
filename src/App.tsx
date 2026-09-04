@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { WalletButton } from './components/WalletButton'
+import { WalletButton, shouldRestoreWalletConnect } from './components/WalletButton'
 import { SwapPanel } from './components/SwapPanel'
 import { BridgePanel } from './components/BridgePanel'
 import { SendPanel } from './components/SendPanel'
@@ -106,6 +106,13 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     const attemptSoftReconnect = async () => {
+      // Plugin and OAuth approval pages must not silently restore the owner
+      // wallet. If that cached owner session is expired, loadCircleWallet()
+      // would call ensureAuthSession(..., true) and open personal_sign/SIWE
+      // before the user clicks Login passkey. The Plugin action is explicitly
+      // passkey-first; owner reconnect remains available through the wallet
+      // button on pages where it is intentional.
+      if (!shouldRestoreWalletConnect()) return
       try {
         const session = getAuthSession()
         if (!session?.token || !session?.address) return

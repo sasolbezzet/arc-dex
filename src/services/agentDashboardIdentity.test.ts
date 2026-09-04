@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { canonicalAgentKey, mergeAgentRows } from '../hooks/useAgentManager'
 import { buildHermesConnectionCommand } from '../features/plugin/ConnectionTokenDialog'
+import { loginPublicKeyOptions } from './modularWallet'
+import { shouldRestoreWalletConnect } from '../components/WalletButton'
 import type { VaultAgent } from '../types/agent'
 
 const CLAUDE_WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -61,6 +63,24 @@ describe('Plugin agent identity normalization', () => {
 
     expect(rows).toHaveLength(1)
     expect(rows[0].clientName).toBe('Claude')
+  })
+
+  it('uses a discoverable passkey picker instead of forcing one credential', () => {
+    const options = loginPublicKeyOptions({
+      challenge: 'AQ',
+      allowCredentials: [{ type: 'public-key', id: 'Ag' }],
+      userVerification: 'required',
+    })
+
+    expect(options.allowCredentials).toBeUndefined()
+    expect(options.userVerification).toBe('required')
+    expect(options.challenge).toBeInstanceOf(Uint8Array)
+  })
+
+  it('does not auto-restore the owner wallet on the Plugin or OAuth page', () => {
+    expect(shouldRestoreWalletConnect('/arc-dex/plugin', '')).toBe(false)
+    expect(shouldRestoreWalletConnect('/plugin/', '?auth=mcp&request_id=req')).toBe(false)
+    expect(shouldRestoreWalletConnect('/arc-dex/portfolio', '')).toBe(true)
   })
 
   it('builds a copy-paste command that configures Hermes through the helper', () => {

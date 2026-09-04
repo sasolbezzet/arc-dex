@@ -7,6 +7,23 @@ declare global { interface Window { ethereum?: any } }
 
 interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void; onConnected?:()=>void }
 
+/**
+ * A passive WalletConnect restore is useful on the trading pages, but it must
+ * not authenticate the owner merely because the Plugin page opened. Plugin
+ * Login passkey is an independent WebAuthn flow; restoring a stale WalletConnect
+ * session there calls App.handleConnect(), which can open the owner's SIWE
+ * prompt before the user has chosen a passkey.
+ */
+export function shouldRestoreWalletConnect(
+  pathname = typeof window !== 'undefined' ? window.location.pathname : '',
+  search = typeof window !== 'undefined' ? window.location.search : '',
+): boolean {
+  const normalizedPath = String(pathname || '').replace(/\/+$/, '')
+  const isPluginPage = normalizedPath === '/plugin' || normalizedPath.endsWith('/arc-dex/plugin')
+  const isOAuthFlow = new URLSearchParams(search).get('auth') === 'mcp'
+  return !isPluginPage && !isOAuthFlow
+}
+
 export function WalletButton({ address, onConnect, onDisconnect, onConnected }: Props) {
   const { t } = useI18n()
   const [loading, setLoading] = useState(false)
@@ -22,9 +39,10 @@ export function WalletButton({ address, onConnect, onDisconnect, onConnected }: 
     let disposed = false
     const handler = (a: string[]) => { if (a[0]) onConnectRef.current(a[0]); else onDisconnectRef.current() }
 
-    // During OAuth flow (auth=mcp in URL), skip WalletConnect auto-restore
-    // to prevent mobile deep-link to wallet app before user approves.
-    const isOAuthFlow = new URLSearchParams(window.location.search).get('auth') === 'mcp'
+    // During Plugin/OAuth flows, skip passive restore. Login passkey must be
+    // the first user action; a restored WalletConnect account otherwise calls
+    // App.handleConnect() and starts owner SIWE in parallel with WebAuthn.
+    const allowPassiveRestore = shouldRestoreWalletConnect()
 
     findConnectedWalletProvider().then(async active => {
       if (disposed || !active) return
@@ -32,9 +50,10 @@ export function WalletButton({ address, onConnect, onDisconnect, onConnected }: 
       active.on?.('accountsChanged', handler)
       active.on?.('chainChanged', () => { /* surface in UI */ })
     }).catch(() => {})
-    // WalletConnect persists its session in storage; restore it after reload.
-    // Skip during OAuth flow to avoid triggering wallet app deep-link.
-    if (!isOAuthFlow) {
+    // WalletConnect persists its session in storage; restore it after reload
+    // only outside the Plugin page. On Plugin, the user explicitly chooses
+    // Login passkey or Create wallet, so no owner authentication is implicit.
+    if (allowPassiveRestore) {
       restoreWalletConnect().then(addr => {
         if (!disposed && addr) {
           const wc = getWalletConnectProviderSync()
