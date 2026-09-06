@@ -4,6 +4,10 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/health",
+      "destination": "https://43.134.14.43.nip.io/health"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://43.134.14.43.nip.io/api/:path*"
     },

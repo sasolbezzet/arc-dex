@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+const OWNER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 
 vi.mock('@circle-fin/modular-wallets-core', () => ({
   toModularTransport: vi.fn(() => () => ({ request: vi.fn() })),
@@ -105,17 +106,38 @@ describe('Login passkey ceremony', () => {
       }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await loginPasskey('oauth:claude')
+    const result = await loginPasskey('oauth:claude', { address: OWNER, token: 'owner-session-token' })
 
     const credentialGet = (navigator.credentials as unknown as { get: ReturnType<typeof vi.fn> }).get
     expect(credentialGet).toHaveBeenCalledTimes(1)
     expect(credentialGet.mock.calls[0][0].publicKey.allowCredentials).toBeUndefined()
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/passkey-options')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      agentKey: 'oauth:claude',
+      ownerAddress: OWNER,
+      ownerSessionToken: 'owner-session-token',
+    })
     expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/passkey-login')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      agentKey: 'oauth:claude',
+      ownerAddress: OWNER,
+      ownerSessionToken: 'owner-session-token',
+    })
     expect((window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum?.request).not.toHaveBeenCalledWith(
       expect.objectContaining({ method: 'personal_sign' }),
     )
     expect(result).toMatchObject({ walletAddress: WALLET, sessionToken: 'agent-session-token' })
+  })
+
+  it('rejects an agent login before opening WebAuthn without owner proof', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(loginPasskey('oauth:claude')).rejects.toThrow(/Hubungkan wallet utama terlebih dahulu/)
+
+    const credentialGet = (navigator.credentials as unknown as { get: ReturnType<typeof vi.fn> }).get
+    expect(credentialGet).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

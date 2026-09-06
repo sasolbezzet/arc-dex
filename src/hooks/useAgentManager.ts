@@ -368,11 +368,9 @@ export function useAgentManager() {
   /**
    * Run the correct ceremony for one Agent Wallet.
    *
-   * Login is deliberately passkey-first. The owner EOA session may be expired
-   * while the durable Agent Wallet binding is still valid; in that case the
-   * fresh MSCA passkey session can reconcile the old delegate without opening
-   * a SIWE prompt. Owner SIWE is a narrowly-scoped fallback only when this is
-   * actually a new binding/owner authorization.
+   * Plugin actions require the currently connected owner wallet first, then
+   * the Agent Wallet passkey. The two proofs are deliberately separate: the
+   * EOA owns the agent binding, while the passkey authenticates the MSCA.
    */
   const openAgentWallet = useCallback(async (
     agentType: AgentType,
@@ -384,17 +382,17 @@ export function useAgentManager() {
     const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
     if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
 
-    // Creating/binding a new Agent Wallet still needs the owner boundary before
-    // registration. Existing-wallet login must not do this before WebAuthn.
-    const owner: { address: string; token: string } | null = mode === 'register'
-      ? await ensureConnectedOwnerSession()
-      : null
+    // Both registration and existing-agent login are Plugin actions. The
+    // connected EOA is the owner boundary for this page; require it before
+    // starting WebAuthn and pass the verified session to the backend. A cached
+    // passkey/MSCA session alone must never make an Agent Wallet appear ownerless.
+    const owner = await ensureConnectedOwnerSession()
     const passkey = mode === 'register'
-      ? await registerPasskey(agentKey)
-      : await loginPasskey(agentKey)
+      ? await registerPasskey(agentKey, owner)
+      : await loginPasskey(agentKey, owner)
 
     const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey,
-      owner ? { eoaAddress: owner.address, ownerSessionToken: owner.token } : {})
+      { eoaAddress: owner.address, ownerSessionToken: owner.token })
 
     // Use the owner token when available for owner-scoped dashboard reads. If
     // login was recovered entirely with passkey, keep the exact MSCA token so
@@ -458,19 +456,23 @@ export function useAgentManager() {
       const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
       if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
 
-      // IMPORTANT: open WebAuthn before touching the owner session. An expired
-      // owner EOA session must not redirect the user to SIWE for an existing
-      // Agent Wallet login.
-      const passkey = await loginPasskey(agentKey)
-      // Login is passkey-only. If the durable agent binding is missing, surface
-      // an explicit error instead of silently opening a second SIWE ceremony.
-      // SIWE belongs to the first owner connection or an explicit registration.
-      const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {})
+      // Plugin login requires the currently connected owner wallet before
+      // opening WebAuthn. This prevents a passkey/MSCA from being authenticated
+      // as an ownerless Agent Wallet and gives the backend a matching owner
+      // proof for the exact agent binding.
+      const owner = await ensureConnectedOwnerSession()
+      const passkey = await loginPasskey(agentKey, owner)
+      const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {
+        eoaAddress: owner.address,
+        ownerSessionToken: owner.token,
+      })
 
-      const dashboardToken = passkey.sessionToken
+      const dashboardToken = owner.token
       setVaultToken(dashboardToken)
       localStorage.setItem('arx_vault_token', dashboardToken)
       localStorage.setItem('arx_passkey_vault_token', passkey.sessionToken)
+      localStorage.setItem('arx_owner_vault_token', owner.token)
+      localStorage.setItem('arx_eoa_vault_token', owner.token)
       if (activation.warnings.length > 0) {
         safeSet(setNotice, `Aktif di Arc, Base, dan Arbitrum. ${activation.warnings.join('; ')}`)
       }

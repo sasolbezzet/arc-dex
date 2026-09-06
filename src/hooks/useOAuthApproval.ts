@@ -97,14 +97,12 @@ export function useOAuthApproval() {
     const agentKey = `oauth:${request.clientId}`
 
     try {
-      // Existing-agent login is passkey-first. The owner EOA session can expire
-      // independently from the durable Agent Wallet binding; do not trigger
-      // SIWE before the browser has opened navigator.credentials.get().
-      // Registration/new binding still obtains the owner proof first because it
-      // is allowed to create a new owner-to-agent relationship.
-      const owner: { address: string; token: string } | null = mode === 'register'
-        ? await ensureConnectedOwnerSession()
-        : null
+      // Both existing-agent login and new registration are Plugin actions. The
+      // connected EOA is the owner boundary, so prove it before opening
+      // navigator.credentials.get() and pass the exact proof to both backend
+      // authentication steps. This prevents a passkey/MSCA from being used as
+      // an ownerless OAuth identity.
+      const owner = await ensureConnectedOwnerSession()
       let walletAddress = ''
       let sessionToken = ''
       let verified = false
@@ -114,8 +112,8 @@ export function useOAuthApproval() {
 
         setStep('passkey')
         const passkey = mode === 'register'
-          ? await registerPasskey(agentKey)
-          : await loginPasskey(agentKey)
+          ? await registerPasskey(agentKey, owner)
+          : await loginPasskey(agentKey, owner)
         walletAddress = passkey.walletAddress
         sessionToken = passkey.sessionToken
 

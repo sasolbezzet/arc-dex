@@ -28,6 +28,16 @@ let passkeyOperationInFlight: Promise<unknown> | null = null
 const PASSKEY_REGISTRATION_USERNAME_KEY = 'arx_passkey_registration_username'
 type PasskeyMode = 'Login' | 'Register'
 
+/** Verified owner-wallet session passed to Plugin agent login flows. */
+export interface OwnerSessionProof {
+  address: string
+  token: string
+}
+
+function requiresPluginOwnerSession(agentKey: string): boolean {
+  return String(agentKey || '').trim().toLowerCase() !== DEFAULT_AGENT_KEY
+}
+
 // ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
 // The SDK validates CLIENT_URL as a real Circle domain (isCircleUrl check), so we
 // must keep the full URL. But we intercept fetch() at runtime to route all requests
@@ -270,13 +280,18 @@ function registrationUsername(agentKey = DEFAULT_AGENT_KEY) {
  * browser assertion is sent to the backend, which performs the one and only
  * rp_get*Verification call and returns the verified public key.
  */
-async function freshPasskeyOptions(mode: PasskeyMode, agentKey = '') {
+async function freshPasskeyOptions(mode: PasskeyMode, agentKey = '', ownerProof?: OwnerSessionProof) {
   ensurePasskeyEnvironment()
   const username = mode === 'Register' ? registrationUsername(agentKey) : ''
   const response = await fetch(`${API}/api/auth/passkey-options`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, username, ...(agentKey ? { agentKey } : {}) }),
+    body: JSON.stringify({
+      mode,
+      username,
+      ...(agentKey ? { agentKey } : {}),
+      ...(ownerProof ? { ownerAddress: ownerProof.address, ownerSessionToken: ownerProof.token } : {}),
+    }),
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok || !data.success || !data.flowId || !data.options?.challenge) {
@@ -339,11 +354,17 @@ function registrationPublicKeyOptions(options: any) {
   }
 }
 
-async function verifyPasskeyWithBackend(rawCredential: any, mode: PasskeyMode, flowId: string, agentKey = '') {
+async function verifyPasskeyWithBackend(rawCredential: any, mode: PasskeyMode, flowId: string, agentKey = '', ownerProof?: OwnerSessionProof) {
   const response = await fetch(`${API}/api/auth/passkey-login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ credential: serializeWebAuthnCredential(rawCredential), mode, flowId, ...(agentKey ? { agentKey } : {}) }),
+    body: JSON.stringify({
+      credential: serializeWebAuthnCredential(rawCredential),
+      mode,
+      flowId,
+      ...(agentKey ? { agentKey } : {}),
+      ...(ownerProof ? { ownerAddress: ownerProof.address, ownerSessionToken: ownerProof.token } : {}),
+    }),
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok || !data.success || !data.token || !data.credential?.publicKey || !data.address) {
@@ -555,21 +576,24 @@ function createStoredCredential(id: unknown, publicKey: unknown, raw: unknown): 
 }
 
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
+export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: OwnerSessionProof): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
   const selectedAgentKey = resolveAgentKey(agentKey)
+  if (requiresPluginOwnerSession(selectedAgentKey) && (!ownerProof?.address || !ownerProof?.token)) {
+    throw new Error('Hubungkan wallet utama terlebih dahulu sebelum membuat Agent Wallet.')
+  }
   localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
   // Keep one browser credential request at a time. The browser assertion is
   // verified by Circle exactly once on the backend; the SDK high-level helper
   // is intentionally not used because it would verify the same session again.
   return runPasskeyOperation(async () => {
     try {
-      const { options, flowId } = await freshPasskeyOptions('Register', selectedAgentKey)
+      const { options, flowId } = await freshPasskeyOptions('Register', selectedAgentKey, ownerProof)
       const rawCredential = await navigator.credentials.create({
         publicKey: registrationPublicKeyOptions(options),
       }) as any
       if (!rawCredential) throw new Error('No credential created.')
-      const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId, selectedAgentKey)
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId, selectedAgentKey, ownerProof)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
@@ -748,21 +772,24 @@ export async function deploySmartAccountOnChain(chainKey: string, agentKey = DEF
 }
 
 // ── Login with existing passkey ──
-export async function loginPasskey(agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
+export async function loginPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: OwnerSessionProof): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
   const requestedAgentKey = typeof agentKey === 'string' ? agentKey.trim() : ''
   if (!requestedAgentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
   const selectedAgentKey = resolveAgentKey(requestedAgentKey)
+  if (requiresPluginOwnerSession(selectedAgentKey) && (!ownerProof?.address || !ownerProof?.token)) {
+    throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
+  }
   localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
   const state = loadState(selectedAgentKey)
   return runPasskeyOperation(async () => {
     try {
-      const { options, flowId } = await freshPasskeyOptions('Login', selectedAgentKey)
+      const { options, flowId } = await freshPasskeyOptions('Login', selectedAgentKey, ownerProof)
       const rawCredential = await navigator.credentials.get({
         publicKey: loginPublicKeyOptions(options),
       }) as any
       if (!rawCredential) throw new Error('No credential available.')
-      const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId, selectedAgentKey)
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId, selectedAgentKey, ownerProof)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
