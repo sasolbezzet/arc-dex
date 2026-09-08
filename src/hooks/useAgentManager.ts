@@ -393,7 +393,11 @@ export function useAgentManager() {
     const ownerAfterPasskey = owner || await ensureConnectedOwnerSession()
 
     const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey,
-      { eoaAddress: ownerAfterPasskey.address, ownerSessionToken: ownerAfterPasskey.token })
+      {
+        eoaAddress: ownerAfterPasskey.address,
+        ownerSessionToken: ownerAfterPasskey.token,
+        credentialId: passkey.credential.id,
+      })
 
     // Use the owner token when available for owner-scoped dashboard reads. If
     // login was recovered entirely with passkey, keep the exact MSCA token so
@@ -463,6 +467,7 @@ export function useAgentManager() {
       const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {
         eoaAddress: owner.address,
         ownerSessionToken: owner.token,
+        credentialId: passkey.credential.id,
       })
 
       const dashboardToken = owner.token

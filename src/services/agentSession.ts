@@ -155,11 +155,24 @@ async function reconcileWithPasskey(vaultToken: string, walletAddress: string): 
  * issued. Existing-agent login must already have passed the binding check in
  * passkey-login, so any other response is a real recovery error.
  */
-async function activateBindingAfterSession(vaultToken: string, walletAddress: string, agentKey: string): Promise<void> {
+async function activateBindingAfterSession(
+  vaultToken: string,
+  walletAddress: string,
+  agentKey: string,
+  ownerProof?: { address?: string; token?: string },
+  credentialId = '',
+): Promise<void> {
   const response = await fetch(`${API}/api/session/activate-binding`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${vaultToken}` },
-    body: JSON.stringify({ walletAddress, agentKey }),
+    body: JSON.stringify({
+      walletAddress,
+      agentKey,
+      ...(ownerProof?.address && ownerProof?.token
+        ? { ownerAddress: ownerProof.address, ownerSessionToken: ownerProof.token }
+        : {}),
+      ...(credentialId ? { credentialId } : {}),
+    }),
     signal: AbortSignal.timeout(20_000),
   })
   if (response.status === 404) return
@@ -198,7 +211,7 @@ export async function activateAgentSession(
   walletAddress: string,
   vaultToken: string,
   agentKey: string,
-  options: { eoaAddress?: string; ownerSessionToken?: string; skipDestinationChains?: boolean } = {},
+  options: { eoaAddress?: string; ownerSessionToken?: string; credentialId?: string; skipDestinationChains?: boolean } = {},
 ): Promise<SessionActivation> {
   if (!vaultToken) throw new Error('Sesi Agent Wallet belum tersedia')
 
@@ -216,7 +229,10 @@ export async function activateAgentSession(
       vaultToken,
       agentKey,
     )
-    await activateBindingAfterSession(vaultToken, walletAddress, agentKey)
+    await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
+      address: options.eoaAddress,
+      token: options.ownerSessionToken,
+    }, options.credentialId)
     return {
       walletAddress,
       delegateAddress: existing.delegateAddress,
@@ -242,7 +258,10 @@ export async function activateAgentSession(
         vaultToken,
         agentKey,
       )
-      await activateBindingAfterSession(vaultToken, walletAddress, agentKey)
+      await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
+        address: options.eoaAddress,
+        token: options.ownerSessionToken,
+      }, options.credentialId)
       return {
         walletAddress,
         delegateAddress: reconciled.delegateAddress,
@@ -294,7 +313,10 @@ export async function activateAgentSession(
     ? { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
     : await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
 
-  await activateBindingAfterSession(vaultToken, walletAddress, agentKey)
+  await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
+    address: options.eoaAddress,
+    token: options.ownerSessionToken,
+  }, options.credentialId)
   return {
     walletAddress,
     delegateAddress: result.delegateAddress,
