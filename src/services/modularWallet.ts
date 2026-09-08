@@ -374,6 +374,42 @@ async function verifyPasskeyWithBackend(rawCredential: any, mode: PasskeyMode, f
   return data
 }
 
+function errorMessageChain(error: unknown): string {
+  const seen = new Set<unknown>()
+  const messages: string[] = []
+  let current: any = error
+  for (let depth = 0; current && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current)
+    if (current?.message) messages.push(String(current.message))
+    current = current?.cause
+  }
+  return messages.join(' ')
+}
+
+/**
+ * Circle/viem sometimes wraps a Gas Station policy rejection in the generic
+ * `JSON is not a valid request object` error. Keep the actionable policy reason
+ * and distinguish it from passkey/browser failures. A policy precheck rejection
+ * happens before the UserOperation is accepted, so retrying immediately only
+ * burns the same daily quota again and never creates a wallet.
+ */
+export function formatCircleUserOperationError(error: unknown, chainKey = ''): string {
+  const text = [
+    errorMessageChain(error),
+    String((error as any)?.details || ''),
+    String((error as any)?.shortMessage || ''),
+  ].filter(Boolean).join(' ')
+  if (/exceeded max daily native token|daily native token.*policy|policy.*max daily native token/i.test(text)) {
+    const chain = chainKey ? ` di ${chainKey}` : ''
+    return `Kuota Gas Station harian untuk native token pada policy Circle sudah habis${chain}. UserOperation ditolak sebelum masuk bundler; wallet Agent belum dibuat. Reset atau naikkan batas harian policy di Circle Console, lalu ulangi sekali. Jangan mengulang klik sebelum kuota tersedia.`
+  }
+  if (/exceeded max daily .*policy|daily .*token.*policy|policy.*daily limit/i.test(text)) {
+    const chain = chainKey ? ` di ${chainKey}` : ''
+    return `Batas harian Gas Station policy Circle sudah tercapai${chain}. UserOperation belum diterima dan tidak ada wallet baru yang dibuat. Perbarui/reset policy di Circle Console, lalu ulangi.`
+  }
+  return error instanceof Error ? error.message : String(error || 'UserOperation gagal')
+}
+
 function passkeyErrorMessage(error: unknown) {
   // Circle wraps the browser DOMException in one or more Error.cause layers.
   // Inspect the complete chain so NotAllowedError is not shown as an opaque
@@ -1044,12 +1080,30 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
   // Surface Circle's original error unchanged so its official bundler
   // response can be debugged and retried by the user.
-  const userOpHash = await sendUserOperation(bundlerClient as any, {
-    account: smartAccount as any,
-    callData,
-    paymaster: true,
-    ...fees,
-  })
+  let userOpHash: string
+  try {
+    userOpHash = await sendUserOperation(bundlerClient as any, {
+      account: smartAccount as any,
+      callData,
+      paymaster: true,
+      ...fees,
+    })
+  } catch (error) {
+    const message = formatCircleUserOperationError(error, chainKey)
+    const policyRejected = /Kuota Gas Station harian|Batas harian Gas Station/i.test(message)
+    const current = loadState(agentKey).deploymentStatus?.[chainKey]
+    if (current) {
+      saveDeploymentStatus(chainKey, {
+        ...current,
+        authorizationStatus: 'failed',
+        authorizationPrecheckFailed: true,
+        authorizationError: message,
+        error: policyRejected ? 'gas_station_daily_policy_exceeded' : current.error,
+        updatedAt: Date.now(),
+      }, agentKey)
+    }
+    throw new Error(message, { cause: error })
+  }
   // Persist locally and server-side before waiting. The backend records the
   // exact hash but does not activate the delegate until it independently
   // verifies a successful receipt and exact addOwners calldata.
@@ -1072,7 +1126,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   }
   try {
     const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
-    const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
+    const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash as `0x${string}` })
     if (!isSuccessfulUserOpReceipt(receipt)) {
       const status = receipt?.receipt?.status ?? 'unknown'
       const txHash = receipt?.receipt?.transactionHash
