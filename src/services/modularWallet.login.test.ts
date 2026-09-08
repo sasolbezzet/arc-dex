@@ -2,6 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 const OWNER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+const { requireConnectedOwnerWalletMock } = vi.hoisted(() => ({
+  requireConnectedOwnerWalletMock: vi.fn(),
+}))
+
+vi.mock('../auth', () => ({
+  requireConnectedOwnerWallet: requireConnectedOwnerWalletMock,
+}))
 
 vi.mock('@circle-fin/modular-wallets-core', () => ({
   toModularTransport: vi.fn(() => () => ({ request: vi.fn() })),
@@ -74,6 +81,11 @@ describe('Login passkey ceremony', () => {
     ;(window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum = {
       request: vi.fn(),
     }
+    requireConnectedOwnerWalletMock.mockImplementation(async () => {
+      const accounts = await (window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum!.request({ method: 'eth_accounts' })
+      if (!accounts?.[0]) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
+      return { address: accounts[0], provider: (window as Window & { ethereum?: unknown }).ethereum }
+    })
   })
 
   afterEach(() => {
@@ -88,6 +100,7 @@ describe('Login passkey ceremony', () => {
   })
 
   it('opens WebAuthn first and never calls personal_sign', async () => {
+    ;(window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum!.request.mockResolvedValueOnce([OWNER])
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({
         success: true,
@@ -130,7 +143,8 @@ describe('Login passkey ceremony', () => {
     expect(result).toMatchObject({ walletAddress: WALLET, sessionToken: 'agent-session-token' })
   })
 
-  it('rejects an agent login before opening WebAuthn without owner proof', async () => {
+  it('rejects an agent login before opening WebAuthn without a connected wallet', async () => {
+    ;(window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum!.request.mockResolvedValueOnce([])
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
@@ -139,5 +153,20 @@ describe('Login passkey ceremony', () => {
     const credentialGet = (navigator.credentials as unknown as { get: ReturnType<typeof vi.fn> }).get
     expect(credentialGet).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
+    expect((window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum?.request).not.toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'personal_sign' }),
+    )
+  })
+
+  it('allows the passkey ceremony without owner proof after wallet preflight', async () => {
+    ;(window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum!.request.mockResolvedValueOnce([OWNER])
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ success: true, flowId: 'flow-2', options: { challenge: 'AQ', rpId: 'arcoxdex.vercel.app' } }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, token: 'agent-session-token', address: WALLET, credential: { publicKey: `0x${'11'.repeat(33)}` } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(loginPasskey('oauth:claude')).resolves.toMatchObject({ walletAddress: WALLET })
+    expect((navigator.credentials as unknown as { get: ReturnType<typeof vi.fn> }).get).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('ownerSessionToken')
   })
 })

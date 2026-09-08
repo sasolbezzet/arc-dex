@@ -382,29 +382,28 @@ export function useAgentManager() {
     const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
     if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
 
-    // Both registration and existing-agent login are Plugin actions. The
-    // connected EOA is the owner boundary for this page; require it before
-    // starting WebAuthn and pass the verified session to the backend. A cached
-    // passkey/MSCA session alone must never make an Agent Wallet appear ownerless.
-    const owner = await ensureConnectedOwnerSession()
+    // Create/register needs the owner proof before WebAuthn because it creates
+    // a new owner↔MSCA binding. Existing-agent Login is different: loginPasskey
+    // performs the silent connected-wallet preflight and opens WebAuthn first;
+    // owner SIWE is requested only after that passkey succeeds.
+    const owner = mode === 'register' ? await ensureConnectedOwnerSession() : null
     const passkey = mode === 'register'
-      ? await registerPasskey(agentKey, owner)
-      : await loginPasskey(agentKey, owner)
+      ? await registerPasskey(agentKey, owner || undefined)
+      : await loginPasskey(agentKey)
+    const ownerAfterPasskey = owner || await ensureConnectedOwnerSession()
 
     const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey,
-      { eoaAddress: owner.address, ownerSessionToken: owner.token })
+      { eoaAddress: ownerAfterPasskey.address, ownerSessionToken: ownerAfterPasskey.token })
 
     // Use the owner token when available for owner-scoped dashboard reads. If
     // login was recovered entirely with passkey, keep the exact MSCA token so
     // the just-authenticated agent remains visible and usable.
-    const dashboardToken = owner?.token || passkey.sessionToken
+    const dashboardToken = ownerAfterPasskey.token
     setVaultToken(dashboardToken)
     localStorage.setItem('arx_vault_token', dashboardToken)
     localStorage.setItem('arx_passkey_vault_token', passkey.sessionToken)
-    if (owner) {
-      localStorage.setItem('arx_owner_vault_token', owner.token)
-      localStorage.setItem('arx_eoa_vault_token', owner.token)
-    }
+    localStorage.setItem('arx_owner_vault_token', ownerAfterPasskey.token)
+    localStorage.setItem('arx_eoa_vault_token', ownerAfterPasskey.token)
     if (activation.warnings.length > 0 && mounted.current) {
       setNotice(`Agent Wallet aktif di Arc, Base, dan Arbitrum. ${activation.warnings.join('; ')}`)
     }
@@ -456,12 +455,11 @@ export function useAgentManager() {
       const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
       if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
 
-      // Plugin login requires the currently connected owner wallet before
-      // opening WebAuthn. This prevents a passkey/MSCA from being authenticated
-      // as an ownerless Agent Wallet and gives the backend a matching owner
-      // proof for the exact agent binding.
+      // Existing-agent Login does the silent wallet preflight inside
+      // loginPasskey, then opens WebAuthn. Only after the passkey succeeds do we
+      // request/renew the owner SIWE session needed for activation.
+      const passkey = await loginPasskey(agentKey)
       const owner = await ensureConnectedOwnerSession()
-      const passkey = await loginPasskey(agentKey, owner)
       const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {
         eoaAddress: owner.address,
         ownerSessionToken: owner.token,

@@ -229,6 +229,15 @@ export function getAuthToken() {
   return getAuthSession()?.token || ''
 }
 
+export async function requireConnectedOwnerWallet(): Promise<{ address: string; provider: Eip1193Provider }> {
+  const provider = await findConnectedWalletProvider()
+  if (!provider) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
+  const accounts = await provider.request({ method: 'eth_accounts' })
+  const address = String(accounts?.[0] || '').trim()
+  if (!address) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
+  return { address: getAddress(address), provider }
+}
+
 /**
  * Return a session for the wallet that is actually connected in this browser.
  * A cached SIWE token alone is intentionally insufficient for agent linking:
@@ -236,12 +245,7 @@ export function getAuthToken() {
  * never to an address left in an environment variable or stale localStorage.
  */
 export async function ensureConnectedOwnerSession(): Promise<{ address: string; token: string }> {
-  const provider = await findConnectedWalletProvider()
-  if (!provider) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum mengakses Agent Wallet.')
-  const accounts = await provider.request({ method: 'eth_accounts' })
-  const address = String(accounts?.[0] || '').trim()
-  if (!address) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum mengakses Agent Wallet.')
-  const normalizedAddress = getAddress(address)
+  const { address: normalizedAddress } = await requireConnectedOwnerWallet()
 
   // The connected EOA session is the owner proof. Reuse it for every agent
   // operation while it is still valid; do not ask the owner to sign SIWE again

@@ -97,12 +97,11 @@ export function useOAuthApproval() {
     const agentKey = `oauth:${request.clientId}`
 
     try {
-      // Both existing-agent login and new registration are Plugin actions. The
-      // connected EOA is the owner boundary, so prove it before opening
-      // navigator.credentials.get() and pass the exact proof to both backend
-      // authentication steps. This prevents a passkey/MSCA from being used as
-      // an ownerless OAuth identity.
-      const owner = await ensureConnectedOwnerSession()
+      // Existing-agent Login must show the passkey first. loginPasskey performs
+      // the silent connected-wallet check and rejects with no WebAuthn prompt
+      // when eth_accounts is empty. Registration remains owner-first because it
+      // creates a new owner↔MSCA binding.
+      const owner = mode === 'register' ? await ensureConnectedOwnerSession() : null
       let walletAddress = ''
       let sessionToken = ''
       let verified = false
@@ -112,20 +111,18 @@ export function useOAuthApproval() {
 
         setStep('passkey')
         const passkey = mode === 'register'
-          ? await registerPasskey(agentKey, owner)
-          : await loginPasskey(agentKey, owner)
+          ? await registerPasskey(agentKey, owner || undefined)
+          : await loginPasskey(agentKey)
         walletAddress = passkey.walletAddress
         sessionToken = passkey.sessionToken
 
         setStep('checking')
-        // Never fall back to owner SIWE from Login passkey. If the durable
-        // binding cannot be recovered with this freshly authenticated MSCA,
-        // stop and tell the user to use the explicit "Buat wallet baru"
-        // registration action. A hidden SIWE fallback here was the reason an
-        // expired Agent Wallet session opened the owner wallet app instead of
-        // showing the passkey picker.
+        // The login passkey proves the exact existing MSCA first. Only after
+        // that ceremony succeeds do we obtain the owner proof needed by the
+        // activation/final OAuth binding.
+        const ownerAfterPasskey = owner || await ensureConnectedOwnerSession()
         await activateAgentSession(walletAddress, sessionToken, agentKey,
-          owner ? { eoaAddress: owner.address, ownerSessionToken: owner.token } : {})
+          { eoaAddress: ownerAfterPasskey.address, ownerSessionToken: ownerAfterPasskey.token })
         const session = await readSessionStatus(sessionToken)
         verified = Boolean(
           session?.active

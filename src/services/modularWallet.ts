@@ -16,6 +16,7 @@ import { isSuccessfulUserOpReceipt } from './mscaPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { parsePublicKey } from 'webauthn-p256'
 import { arcTestnet } from 'viem/chains'
+import { requireConnectedOwnerWallet } from '../auth'
 
 // Circle's documented Modular Wallet endpoint and credential names.
 // The Client Key must be created in Circle Console and bound to this web origin;
@@ -777,9 +778,11 @@ export async function loginPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: Ow
   const requestedAgentKey = typeof agentKey === 'string' ? agentKey.trim() : ''
   if (!requestedAgentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
   const selectedAgentKey = resolveAgentKey(requestedAgentKey)
-  if (requiresPluginOwnerSession(selectedAgentKey) && (!ownerProof?.address || !ownerProof?.token)) {
-    throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
-  }
+  // A passkey login must never be usable as an ownerless entry point. Check the
+  // injected/WalletConnect account silently before opening WebAuthn; eth_accounts
+  // never opens a wallet popup. Owner SIWE is intentionally deferred until after
+  // the passkey succeeds so Login does not jump to the wallet app first.
+  await requireConnectedOwnerWallet()
   localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
   const state = loadState(selectedAgentKey)
   return runPasskeyOperation(async () => {
