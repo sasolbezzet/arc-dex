@@ -71,6 +71,12 @@ describe('auth utilities', () => {
       const token = `header.${base64UrlEncode(JSON.stringify({ sub: '123' }))}.sig`
       expect(readTokenExp(token)).toBeNull()
     })
+
+    it('reads the millisecond exp from the backend two-part owner token', () => {
+      const expMs = Date.now() + 24 * 60 * 60 * 1000
+      const token = `${base64UrlEncode(JSON.stringify({ address: OWNER.toLowerCase(), exp: expMs }))}.signature`
+      expect(readTokenExp(token)).toBe(expMs)
+    })
   })
 
   describe('isSiweUnsupportedError', () => {
@@ -140,6 +146,27 @@ describe('auth utilities', () => {
       expect(mockProvider.request).toHaveBeenCalledTimes(1)
       expect(mockProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'personal_sign' }))
       expect(localStorage.getItem('arx_owner_vault_token')).toBe(token)
+    })
+
+    it('forces SIWE after passkey when the cached owner session is rejected', async () => {
+      const staleToken = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
+      const freshToken = 'fresh-owner-token'
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token: staleToken, issuedAt: Date.now() }))
+      localStorage.setItem('arx_owner_vault_token', staleToken)
+      mockProvider.request
+        .mockResolvedValueOnce([OWNER])
+        .mockResolvedValueOnce('0xsignature')
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 401 } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ token: freshToken, ownerSessionToken: freshToken })),
+        } as any)
+
+      await expect(ensureConnectedOwnerSession()).resolves.toEqual({ address: OWNER, token: freshToken })
+      expect(mockProvider.request).toHaveBeenCalledWith({ method: 'personal_sign', params: expect.any(Array) })
+      expect(localStorage.getItem('arx_owner_vault_token')).toBe(freshToken)
     })
   })
 

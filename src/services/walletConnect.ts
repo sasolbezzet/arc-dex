@@ -99,6 +99,8 @@ export async function getWalletConnectProvider(): Promise<any | null> {
         description: 'Arc Testnet DEX + AI Agent',
         url: 'https://arcoxdex.vercel.app',
         icons: ['https://arcoxdex.vercel.app/favicon.svg'],
+        // Lets a mobile wallet return to the approval page after signing.
+        redirect: { universal: 'https://arcoxdex.vercel.app' },
       },
     })
 
@@ -244,6 +246,28 @@ function hideQRModal() {
  * to be sent through the relay — the user needs to be in the wallet app
  * to approve it.
  */
+/**
+ * Foreground the wallet app for a pending WalletConnect signature.
+ *
+ * `provider.request()` delivers the request through the relay, but a mobile
+ * browser that was just resumed from WebAuthn may not foreground the wallet
+ * application automatically. The wallet peer advertises the correct deep link
+ * in its session metadata; use that link only after the request has been
+ * queued. Never synthesize a wallet URI or send a signature silently.
+ */
+export async function openWalletConnectAppForSigning(): Promise<boolean> {
+  if (!isMobile() || !wcProvider?.session) return false
+  const redirect = wcProvider.session?.peer?.metadata?.redirect
+  const link = String(redirect?.native || redirect?.universal || '').trim()
+  if (!link || !/^\w[\w+.-]*:\/\//i.test(link)) return false
+  try {
+    window.location.assign(link)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function resumeWalletConnect(): Promise<boolean> {
   if (relayOpenPromise) return relayOpenPromise
   relayOpenPromise = (async () => {

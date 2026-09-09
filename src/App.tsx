@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { WalletButton, shouldRestoreWalletConnect } from './components/WalletButton'
+import { WalletButton } from './components/WalletButton'
+import { getWalletConnectProviderSync, restoreWalletConnect } from './services/walletConnect'
+import { setWalletProvider } from './walletProvider'
 import { SwapPanel } from './components/SwapPanel'
 import { BridgePanel } from './components/BridgePanel'
 import { SendPanel } from './components/SendPanel'
@@ -106,25 +108,33 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     const attemptSoftReconnect = async () => {
-      // Plugin and OAuth approval pages must not silently restore the owner
-      // wallet. If that cached owner session is expired, loadCircleWallet()
-      // would call ensureAuthSession(..., true) and open personal_sign/SIWE
-      // before the user clicks Login passkey. The Plugin action is explicitly
-      // passkey-first; owner reconnect remains available through the wallet
-      // button on pages where it is intentional.
-      if (!shouldRestoreWalletConnect()) return
+      // Restore only an already-authenticated owner session. This is a
+      // read-only eth_accounts check; it never calls eth_requestAccounts or
+      // personal_sign. A missing/expired cache falls through to an explicit
+      // Connect click, which preserves the passkey-first Plugin flow.
       try {
         const session = getAuthSession()
         if (!session?.token || !session?.address) return
-        const provider = await findConnectedWalletProvider()
+        // Try the persisted WalletConnect session first, then any injected
+        // provider. Both checks are read-only and must match the cached owner
+        // address before the UI is restored.
+        const restoredWalletConnectAddress = await restoreWalletConnect()
+        const walletConnectProvider = getWalletConnectProviderSync()
+        if (walletConnectProvider && restoredWalletConnectAddress) setWalletProvider(walletConnectProvider)
+        const provider = walletConnectProvider && restoredWalletConnectAddress
+          ? walletConnectProvider
+          : await findConnectedWalletProvider(session.address)
         if (!provider) return
         const accounts = await provider.request({ method: 'eth_accounts' })
-        const account = accounts?.[0]
+        const account = accounts?.[0] || restoredWalletConnectAddress
         if (!account || account.toLowerCase() !== session.address.toLowerCase()) return
         if (cancelled) return
         setAddress(account)
         fetchEoaBal(account)
-        await loadCircleWallet(account, session.token)
+        // A refresh may restore state, but it must never open SIWE implicitly.
+        // An invalid cache is left for the user to repair with an explicit
+        // Connect click.
+        await loadCircleWallet(account, session.token, { allowReauth: false })
       } catch (e) {
         // Silent failure: require explicit connect on error
         console.error('Soft reconnect failed:', e)
@@ -226,7 +236,8 @@ export default function App() {
     setDrawerOpen(false)
   }
 
-  const loadCircleWallet = async (addr:string, token = getAuthToken()) => {
+  const loadCircleWallet = async (addr:string, token = getAuthToken(), options: { allowReauth?: boolean } = {}) => {
+    const allowReauth = options.allowReauth !== false
     let lastError = ''
     for (let i=0;i<3;i++) {
       try {
@@ -237,6 +248,10 @@ export default function App() {
         })
         if (!r.ok) {
           if (r.status === 401) {
+            if (!allowReauth) {
+              lastError = 'Sesi wallet sudah kedaluwarsa. Klik Hubungkan wallet untuk masuk kembali.'
+              break
+            }
             clearAuthSession()
             token = await ensureAuthSession(addr, true)
             continue

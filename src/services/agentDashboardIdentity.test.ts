@@ -3,6 +3,7 @@ import { canonicalAgentKey, mergeAgentRows } from '../hooks/useAgentManager'
 import { buildHermesConnectionCommand } from '../features/plugin/ConnectionTokenDialog'
 import { loginPublicKeyOptions } from './modularWallet'
 import { shouldRestoreWalletConnect } from '../components/WalletButton'
+import { destinationChainAuthorizationEnabled } from './agentSession'
 import type { VaultAgent } from '../types/agent'
 
 const CLAUDE_WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -77,10 +78,15 @@ describe('Plugin agent identity normalization', () => {
     expect(options.challenge).toBeInstanceOf(Uint8Array)
   })
 
-  it('does not auto-restore the owner wallet on the Plugin or OAuth page', () => {
+  it('does not auto-restore the WalletConnect component on the Plugin or OAuth page', () => {
     expect(shouldRestoreWalletConnect('/arc-dex/plugin', '')).toBe(false)
     expect(shouldRestoreWalletConnect('/plugin/', '?auth=mcp&request_id=req')).toBe(false)
     expect(shouldRestoreWalletConnect('/arc-dex/portfolio', '')).toBe(true)
+  })
+
+  it('keeps destination authorization out of an existing-agent login', () => {
+    expect(destinationChainAuthorizationEnabled(true)).toBe(false)
+    expect(destinationChainAuthorizationEnabled(false)).toBe(true)
   })
 
   it('builds a copy-paste command that configures Hermes through the helper', () => {

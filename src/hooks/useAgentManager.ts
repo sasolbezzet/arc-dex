@@ -397,6 +397,10 @@ export function useAgentManager() {
         eoaAddress: ownerAfterPasskey.address,
         ownerSessionToken: ownerAfterPasskey.token,
         credentialId: passkey.credential.id,
+        // Re-login/re-activation is complete when the existing Arc session is
+        // restored. Destination-chain authorization must be an explicit setup
+        // action, otherwise the card remains busy waiting for extra approvals.
+        skipDestinationChains: mode === 'login',
       })
 
     // Use the owner token when available for owner-scoped dashboard reads. If
@@ -468,6 +472,10 @@ export function useAgentManager() {
         eoaAddress: owner.address,
         ownerSessionToken: owner.token,
         credentialId: passkey.credential.id,
+        // Login/re-activation must restore the existing Arc session only.
+        // Destination deploy/authorization are separate passkey UserOps; doing
+        // them here made a successful login appear stuck waiting for approval.
+        skipDestinationChains: true,
       })
 
       const dashboardToken = owner.token

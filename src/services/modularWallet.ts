@@ -518,6 +518,15 @@ function modularTransport(chainKey = 'arc-testnet') {
   return toModularTransport(`${CLIENT_URL}/${chainConfig(chainKey).slug}`, CLIENT_KEY)
 }
 
+async function waitForUserOperationReceiptBounded(bundlerClient: any, hash: `0x${string}`, timeoutMs = 180_000) {
+  return Promise.race([
+    waitForUserOperationReceipt(bundlerClient, { hash }),
+    new Promise<never>((_, reject) => {
+      window.setTimeout(() => reject(new Error('Otorisasi Agent Wallet belum mendapat receipt dari Circle setelah 3 menit. Hash UserOperation tetap disimpan; jangan membuat wallet baru, tunggu jaringan lalu Login passkey lagi.')), timeoutMs)
+    }),
+  ])
+}
+
 async function userOpOutcome(client: any, userOpHash?: string, submittedAt?: number) {
   if (!userOpHash) return 'unknown' as const
   try {
@@ -684,7 +693,7 @@ export async function deploySmartAccount(agentKey = DEFAULT_AGENT_KEY): Promise<
   })
   const previousDeployment = loadState(agentKey).deploymentStatus?.['arc-testnet']
   saveDeploymentStatus('arc-testnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
-  const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
+  const receipt = await waitForUserOperationReceiptBounded(bundlerClient as any, userOpHash as `0x${string}`)
   if (!isSuccessfulUserOpReceipt(receipt) || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
 
   const latestDeployment = loadState(agentKey).deploymentStatus?.['arc-testnet']
@@ -799,7 +808,7 @@ export async function deploySmartAccountOnChain(chainKey: string, agentKey = DEF
   })
   const previousDeployment = loadState(agentKey).deploymentStatus?.[chainKey]
   saveDeploymentStatus(chainKey, { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
-  const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash })
+  const receipt = await waitForUserOperationReceiptBounded(bundlerClient as any, userOpHash as `0x${string}`)
   if (!isSuccessfulUserOpReceipt(receipt) || !(await smartAccount.isDeployed())) throw new Error(`MSCA deployment failed on ${chainKey}`)
   const latestDeployment = loadState(agentKey).deploymentStatus?.[chainKey]
   saveDeploymentStatus(chainKey, { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() }, agentKey)
@@ -1126,7 +1135,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   }
   try {
     const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
-    const receipt = await waitForUserOperationReceipt(bundlerClient as any, { hash: userOpHash as `0x${string}` })
+    const receipt = await waitForUserOperationReceiptBounded(bundlerClient as any, userOpHash as `0x${string}`)
     if (!isSuccessfulUserOpReceipt(receipt)) {
       const status = receipt?.receipt?.status ?? 'unknown'
       const txHash = receipt?.receipt?.transactionHash

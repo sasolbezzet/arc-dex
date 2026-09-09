@@ -56,6 +56,15 @@ export function isOwnerSessionRequiredError(error: unknown): boolean {
   )
 }
 
+/**
+ * Destination-chain deployment is an explicit setup concern, not part of a
+ * passkey re-login. Keeping this decision pure makes it impossible for a
+ * successful Arc/session restore to remain stuck on a second chain's approval.
+ */
+export function destinationChainAuthorizationEnabled(skipDestinationChains = false): boolean {
+  return !skipDestinationChains
+}
+
 function ownerSessionRequiredError() {
   const error = new Error('Sesi wallet utama belum tervalidasi. Hubungkan wallet utama dan login ulang sebelum membuat Agent Wallet.') as Error & { code?: string }
   error.code = 'owner_session_required'
@@ -223,12 +232,14 @@ export async function activateAgentSession(
     && existing.delegateAddress
     && String(existing.walletAddress || '').toLowerCase() === walletAddress.toLowerCase()
   ) {
-    const { chainAuthorizationStatus, warnings } = await authorizeDestinationChains(
-      walletAddress,
-      existing.delegateAddress,
-      vaultToken,
-      agentKey,
-    )
+    const { chainAuthorizationStatus, warnings } = destinationChainAuthorizationEnabled(options.skipDestinationChains)
+      ? await authorizeDestinationChains(
+        walletAddress,
+        existing.delegateAddress,
+        vaultToken,
+        agentKey,
+      )
+      : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
     await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
       address: options.eoaAddress,
       token: options.ownerSessionToken,
@@ -252,12 +263,14 @@ export async function activateAgentSession(
   if (existing?.walletAddress && String(existing.walletAddress).toLowerCase() === walletAddress.toLowerCase()) {
     const reconciled = await reconcileWithPasskey(vaultToken, walletAddress)
     if (reconciled?.active && reconciled.delegateAddress) {
-      const { chainAuthorizationStatus, warnings } = await authorizeDestinationChains(
-        walletAddress,
-        reconciled.delegateAddress,
-        vaultToken,
-        agentKey,
-      )
+      const { chainAuthorizationStatus, warnings } = destinationChainAuthorizationEnabled(options.skipDestinationChains)
+        ? await authorizeDestinationChains(
+          walletAddress,
+          reconciled.delegateAddress,
+          vaultToken,
+          agentKey,
+        )
+        : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
       await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
         address: options.eoaAddress,
         token: options.ownerSessionToken,
@@ -308,10 +321,9 @@ export async function activateAgentSession(
     passkeyOnlyReauthorization ? undefined : ownerSessionToken,
     agentKey,
   )
-
-  const { chainAuthorizationStatus, warnings } = options.skipDestinationChains
-    ? { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
-    : await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
+  const { chainAuthorizationStatus, warnings } = destinationChainAuthorizationEnabled(options.skipDestinationChains)
+    ? await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
+    : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
 
   await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
     address: options.eoaAddress,

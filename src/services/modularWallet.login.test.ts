@@ -143,6 +143,20 @@ describe('Login passkey ceremony', () => {
     expect(result).toMatchObject({ walletAddress: WALLET, sessionToken: 'agent-session-token' })
   })
 
+  it('does not sign SIWE during the passkey ceremony itself', async () => {
+    ;(window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum!.request.mockResolvedValueOnce([OWNER])
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ success: true, flowId: 'flow-order', options: { challenge: 'AQ', rpId: 'arcoxdex.vercel.app' } }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, token: 'agent-session-token', address: WALLET, credential: { publicKey: `0x${'11'.repeat(33)}` } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await loginPasskey('oauth:claude')
+
+    const methods = (window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum!.request.mock.calls.map((call: [{ method: string }]) => call[0].method)
+    expect(methods).toEqual(['eth_accounts'])
+    expect(methods).not.toContain('personal_sign')
+  })
+
   it('rejects an agent login before opening WebAuthn without a connected wallet', async () => {
     ;(window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum!.request.mockResolvedValueOnce([])
     const fetchMock = vi.fn()

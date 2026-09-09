@@ -1,21 +1,23 @@
 import { safePost, HttpError } from './api'
 import { getAddress } from 'viem'
 import { findConnectedWalletProvider, type Eip1193Provider } from './walletProvider'
+import { openWalletConnectAppForSigning, resumeWalletConnect } from './services/walletConnect'
 
 const STORAGE_KEY = 'arc-dex-auth'
 const BACKEND_PREFERENCE_KEY = 'arc-dex-auth-backend-pref'
-// Re-auth window: any JWT older than this is treated as expired even if the
-// server returns a longer token. Defense in depth against C-001.
-const MAX_TOKEN_AGE_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+// Keep the first owner connection alive for the same 24-hour window as the
+// backend owner session. Refreshing the page may restore UI state silently,
+// but once this window expires an explicit wallet signature is required.
+const MAX_TOKEN_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 // ≥16 random bytes (128 bits) → cryptographically strong nonce.
 const NONCE_BYTES = 16
 // Arc Testnet chainId (decimal). Hex value is 0x4cef52.
 const ARC_TESTNET_CHAIN_ID = 5042002
 const ARC_TESTNET_CHAIN_ID_HEX = '0x4cef52'
-// SIWE is disabled by default for safety. Set VITE_SIWE_ENABLED=true in your
-// Vercel/project environment once the backend has been migrated to verify SIWE
-// messages. Until then the legacy 5-line message keeps the site working.
-const SIWE_ENABLED = import.meta.env?.VITE_SIWE_ENABLED === 'true'
+// The backend verifies EIP-4361 SIWE. Owner authorization after passkey must
+// always be an explicit domain/chain/nonce-bound wallet signature. Do not let a
+// stale Vercel env flag or browser preference silently downgrade this flow.
+const SIWE_ENABLED = true
 // Optional override for the domain/origin bound in the SIWE message. Useful
 // for preview deployments or local development where the backend expects a
 // specific domain.
@@ -24,7 +26,6 @@ const SIWE_DOMAIN = import.meta.env?.VITE_SIWE_DOMAIN || undefined
 const SIWE_ORIGIN = SIWE_DOMAIN ? `https://${SIWE_DOMAIN}` : undefined
 
 type AuthMode = 'siwe' | 'legacy'
-type BackendPreference = { supportsSiwe: boolean; updatedAt: number }
 type AuthSession = {
   address: string
   token: string
@@ -44,18 +45,6 @@ export function generateNonceHex(): string {
   let hex = ''
   for (const b of buf) hex += b.toString(16).padStart(2, '0')
   return hex
-}
-
-function readBackendPreference(): BackendPreference | null {
-  try {
-    const raw = localStorage.getItem(BACKEND_PREFERENCE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    if (typeof parsed?.supportsSiwe !== 'boolean') return null
-    return parsed as BackendPreference
-  } catch {
-    return null
-  }
 }
 
 function setBackendPreference(supportsSiwe: boolean) {
@@ -211,15 +200,21 @@ export function getAuthSession(): AuthSession | null {
   }
 }
 
-// JWT layout is header.payload.signature. Read the PAYLOAD segment (index 1),
-// not the header (index 0). The exp claim is in seconds, so multiply by 1000.
+// The app accepts both normal JWTs (header.payload.signature) and the
+// two-part HMAC owner tokens minted by this backend (payload.signature).
+// Read the segment that contains the JSON payload in either format.
 export function readTokenExp(token: string): number | null {
   try {
-    const payload = token.split('.')[1]
+    const parts = String(token || '').split('.')
+    const payload = parts.length === 2 ? parts[0] : parts[1]
     if (!payload) return null
     const padded = payload.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - payload.length % 4) % 4)
     const data = JSON.parse(atob(padded))
-    return typeof data?.exp === 'number' ? data.exp * 1000 : null
+    if (typeof data?.exp !== 'number') return null
+    // JWT exp is seconds; the backend's two-part HMAC owner token uses epoch
+    // milliseconds. Accept both formats so a persisted owner session does not
+    // survive beyond its real 24-hour TTL or expire immediately on refresh.
+    return data.exp > 1_000_000_000_000 ? data.exp : data.exp * 1000
   } catch {
     return null
   }
@@ -246,6 +241,7 @@ export async function requireConnectedOwnerWallet(): Promise<{ address: string; 
  */
 export async function ensureConnectedOwnerSession(): Promise<{ address: string; token: string }> {
   const { address: normalizedAddress } = await requireConnectedOwnerWallet()
+  let ownerSessionIsValid = false
 
   // The connected EOA session is the owner proof. Reuse it for every agent
   // operation while it is still valid; do not ask the owner to sign SIWE again
@@ -263,6 +259,7 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
         signal: AbortSignal.timeout(10_000),
       })
       if (probe.ok) {
+        ownerSessionIsValid = true
         try {
           localStorage.setItem('arx_owner_vault_token', existing.token)
           localStorage.setItem('arx_eoa_vault_token', existing.token)
@@ -281,7 +278,17 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
       }
     } catch { /* re-authenticate below */ }
   }
-  await ensureAuthSession(normalizedAddress)
+  // `ensureAuthSession()` normally reuses a matching cached token. That is
+  // exactly the wrong behavior after the live probe rejected an expired or
+  // worker-local session: it would loop back with the same dead token and never
+  // open the SIWE prompt. Force a fresh owner signature only in that case.
+  if (!ownerSessionIsValid) {
+    try {
+      localStorage.removeItem('arx_owner_vault_token')
+      localStorage.removeItem('arx_eoa_vault_token')
+    } catch { /* ignore */ }
+  }
+  await ensureAuthSession(normalizedAddress, !ownerSessionIsValid)
   // `ensureAuthSession` stores the HMAC dapp token. The owner vault token is
   // returned separately by `/api/auth/session` and is copied above by
   // authenticate(); do not confuse the two token namespaces.
@@ -333,10 +340,30 @@ async function authenticate(
   const message = mode === 'siwe'
     ? await buildSiweMessage(address, nonce, issuedAt, expiresAt, provider)
     : buildLegacyAuthMessage(address, issuedAt)
-  const signature = await provider.request({
+  // WalletConnect mobile can leave the relay socket dormant after the browser
+  // returns from the passkey prompt. Re-open the relay immediately before the
+  // owner signature request so the request is delivered to the connected wallet
+  // app instead of leaving the UI waiting forever. This is a transport wake-up,
+  // not a signature and never bypasses the wallet confirmation screen.
+  if ((provider as Eip1193Provider & { isWalletConnect?: boolean }).isWalletConnect) {
+    await resumeWalletConnect()
+  }
+  const signatureRequest = provider.request({
     method: 'personal_sign',
     params: [message, address],
   })
+  // Create the request first so WalletConnect queues it, then foreground the
+  // connected wallet app through the peer's advertised redirect. Returning to
+  // ARCOX resolves this same request; no second signature is generated.
+  if ((provider as Eip1193Provider & { isWalletConnect?: boolean }).isWalletConnect) {
+    void openWalletConnectAppForSigning()
+  }
+  const signature = await Promise.race([
+    signatureRequest,
+    new Promise<never>((_, reject) => {
+      window.setTimeout(() => reject(new Error('Permintaan SIWE belum dijawab wallet. Buka aplikasi wallet, setujui signature, lalu kembali ke ARCOX.')), 180_000)
+    }),
+  ])
   const result = await safePost('', '/api/auth/session', {
     address,
     issuedAt,
@@ -363,8 +390,9 @@ export async function ensureAuthSession(address: string, forceNew = false) {
   const provider = await findConnectedWalletProvider(checksumAddress)
   if (!provider) throw new Error('Wallet EVM tidak terdeteksi')
 
-  const preference = readBackendPreference()
-  const backendPrefersSiwe = preference ? preference.supportsSiwe : true
+  // The backend verifies SIWE and owner authorization after passkey must use
+  // an explicit domain/chain/nonce-bound wallet signature.
+  const backendPrefersSiwe = SIWE_ENABLED
 
   let result: { token: string; address?: string }
 

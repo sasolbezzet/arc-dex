@@ -6,6 +6,7 @@ export type Eip1193Provider = {
   removeListener?: (event: string, listener: (...args: any[]) => void) => void
   isOkxWallet?: boolean
   isBitKeep?: boolean
+  isWalletConnect?: boolean
 }
 
 let activeProvider: Eip1193Provider | null = null
@@ -74,6 +75,7 @@ export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provi
     removeListener: provider.removeListener?.bind(provider),
     isOkxWallet: provider.isOkxWallet,
     isBitKeep: provider.isBitKeep,
+    isWalletConnect: provider.isWalletConnect,
   }
   normalizedProviders.set(provider, normalized)
   return normalized

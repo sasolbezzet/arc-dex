@@ -44,7 +44,7 @@ export function OAuthApprovalCard({
           <strong style={{ color: '#fde68a', fontSize: 14 }}>{agentLabel} meminta akses</strong>
           <p style={{ margin: '4px 0 0', color: '#a8b3c7', fontSize: 12 }}>
             Setujui hanya jika Anda memang baru saja memulai koneksi ini dari {agentLabel}.
-            Agent akan bisa memakai Agent Wallet ini sesuai batas yang Anda tetapkan. Login ulang selalu dimulai dengan popup passkey; SIWE hanya digunakan saat membuat atau mengikat wallet agent baru.
+            Agent akan bisa memakai Agent Wallet ini sesuai batas yang Anda tetapkan. Login ulang selalu dimulai dengan popup passkey; SIWE hanya diminta setelah passkey bila sesi owner sudah kedaluwarsa.
           </p>
         </div>
       </div>
@@ -78,7 +78,7 @@ export function OAuthApprovalCard({
       </div>
 
       <p style={{ color: '#71809a', fontSize: 11, margin: 0 }}>
-        Login passkey tidak membuka SIWE. Wallet utama hanya menandatangani SIWE saat koneksi owner pertama atau ketika Anda memilih Buat wallet baru untuk agent ini. Agent lama tetap terikat ke owner melalui binding server.
+        Login passkey selalu dimulai dengan passkey. Bila sesi owner 24 jam masih valid, tidak ada SIWE; bila sudah kedaluwarsa, wallet utama akan diminta menandatangani SIWE setelah passkey selesai.
       </p>
     </section>
   )

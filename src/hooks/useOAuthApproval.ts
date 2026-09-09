@@ -104,6 +104,10 @@ export function useOAuthApproval() {
       const owner = mode === 'register' ? await ensureConnectedOwnerSession() : null
       let walletAddress = ''
       let sessionToken = ''
+      // Login obtains this proof only after the passkey ceremony. Keep it in
+      // scope for the final passkey-verify call; otherwise the backend cannot
+      // issue the OAuth code and the browser never redirects back to Claude/GPT.
+      let ownerAfterPasskey = owner
       let verified = false
 
       for (let tries = 0; tries < 2 && !verified; tries++) {
@@ -120,9 +124,16 @@ export function useOAuthApproval() {
         // The login passkey proves the exact existing MSCA first. Only after
         // that ceremony succeeds do we obtain the owner proof needed by the
         // activation/final OAuth binding.
-        const ownerAfterPasskey = owner || await ensureConnectedOwnerSession()
+        ownerAfterPasskey = owner || await ensureConnectedOwnerSession()
         await activateAgentSession(walletAddress, sessionToken, agentKey,
-          { eoaAddress: ownerAfterPasskey.address, ownerSessionToken: ownerAfterPasskey.token })
+          {
+            eoaAddress: ownerAfterPasskey.address,
+            ownerSessionToken: ownerAfterPasskey.token,
+            credentialId: passkey.credential.id,
+            // OAuth login must finish the existing Arc session without starting
+            // extra destination-chain passkey UserOps in the approval flow.
+            skipDestinationChains: mode === 'login',
+          })
         const session = await readSessionStatus(sessionToken)
         verified = Boolean(
           session?.active
@@ -150,7 +161,12 @@ export function useOAuthApproval() {
           redirectUri: request.redirectUri,
           state: request.state,
           codeChallenge: request.codeChallenge,
-          ...(owner ? { ownerAddress: owner.address, ownerSessionToken: owner.token } : {}),
+          // For login, this is the owner SIWE session obtained after passkey.
+          // Sending it is what lets the backend mint the OAuth code and return
+          // the redirect to the originating Claude/ChatGPT application.
+          ...(ownerAfterPasskey
+            ? { ownerAddress: ownerAfterPasskey.address, ownerSessionToken: ownerAfterPasskey.token }
+            : {}),
         }),
         signal: AbortSignal.timeout(30_000),
       })
