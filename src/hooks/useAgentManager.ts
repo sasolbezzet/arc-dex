@@ -397,9 +397,9 @@ export function useAgentManager() {
         eoaAddress: ownerAfterPasskey.address,
         ownerSessionToken: ownerAfterPasskey.token,
         credentialId: passkey.credential.id,
-        // Re-login/re-activation is complete when the existing Arc session is
-        // restored. Destination-chain authorization must be an explicit setup
-        // action, otherwise the card remains busy waiting for extra approvals.
+        // Ordinary re-login keeps the existing delegate and only restores Arc.
+        // A revoked session is different: activateAgentSession detects the
+        // rotated delegate and repairs Base/Arbitrum authorization once.
         skipDestinationChains: mode === 'login',
       })
 
@@ -472,9 +472,9 @@ export function useAgentManager() {
         eoaAddress: owner.address,
         ownerSessionToken: owner.token,
         credentialId: passkey.credential.id,
-        // Login/re-activation must restore the existing Arc session only.
-        // Destination deploy/authorization are separate passkey UserOps; doing
-        // them here made a successful login appear stuck waiting for approval.
+        // Re-login normally restores Arc only. When revoke rotated the
+        // delegate, activateAgentSession detects the old/new pair and performs
+        // the required Base/Arbitrum authorization for the new delegate.
         skipDestinationChains: true,
       })
 
