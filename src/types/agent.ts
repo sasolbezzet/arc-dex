@@ -30,6 +30,26 @@ export type AgentStatus =
 export type ChainDeployStatus = 'pending' | 'deploying' | 'deployed' | 'failed' | 'unsupported'
 export type ChainAuthStatus = 'pending' | 'authorized' | 'failed'
 
+export interface AgentReadiness {
+  agentKey: string
+  clientId: string
+  agentType: AgentType
+  revoked: boolean
+  mcp: {
+    configured: boolean
+    connected: boolean
+    tokenActive: boolean
+    tokenExpiresAt: string | null
+  }
+  execution: {
+    ready: boolean
+    sessionActive: boolean
+    arcAuthorized: boolean
+    destinations: Record<string, boolean>
+    reason: string | null
+  }
+}
+
 /** One agent row as rendered by the Plugin dashboard. */
 export interface AgentState {
   /** Stable identity. Every action, policy, token, and revoke uses this key. */
@@ -54,6 +74,10 @@ export interface AgentState {
   balanceChain?: SupportedChain
   balance?: Record<string, string> | null
   balanceUpdatedAt?: number | null
+  /** Hermes/MCP connectivity and on-chain execution are separate states. */
+  readiness?: AgentReadiness
+  /** Readiness requests are asynchronous and may still be in flight. */
+  readinessLoading?: boolean
 }
 
 // ── Backend payloads ──

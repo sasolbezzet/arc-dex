@@ -7,6 +7,7 @@ import {
   listMcpSessions,
   listApprovals,
   listActivity,
+  getAgentReadiness,
   listCredentials,
   getLimits,
   updateLimits,
@@ -333,7 +334,23 @@ export function useAgentManager() {
     setCredentials([...credentialMap.values()])
     if (firstLimits) setLimits(firstLimits)
     refreshAgentBalances(nextAgents)
-  }, [vaultToken, clearVaultToken, setVaultToken, setAgents, setMcpSessions, setApprovals, setActivity, setCredentials, setLimits, refreshAgentBalances])
+    // Readiness is fetched per binding and merged into the same agent row.
+    // Failures remain non-fatal so Claude/GPT/Hermes cards still render from
+    // the existing owner-scoped binding/session reads.
+    void Promise.all(nextAgents.map(async agent => {
+      const token = tokenForAgent(agent.agentKey)
+      if (!token) return
+      if (mounted.current) updateAgent(agent.agentKey, { readinessLoading: true })
+      try {
+        const readiness = await getAgentReadiness(agent.agentKey, token)
+        if (mounted.current) updateAgent(agent.agentKey, { readiness, readinessLoading: false })
+      } catch {
+        // The readiness endpoint is additive observability; do not turn a
+        // transient status failure into an auth failure for another agent.
+        if (mounted.current) updateAgent(agent.agentKey, { readinessLoading: false })
+      }
+    }))
+  }, [vaultToken, clearVaultToken, setVaultToken, setAgents, setMcpSessions, setApprovals, setActivity, setCredentials, setLimits, refreshAgentBalances, tokenForAgent, updateAgent])
 
   useEffect(() => {
     // OAuth passkey sessions are intentionally stored per MCP client and do

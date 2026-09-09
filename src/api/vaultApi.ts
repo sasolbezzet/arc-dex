@@ -6,6 +6,7 @@ import type {
   Credential,
   Limits,
   AgentConnectionToken,
+  AgentReadiness,
 } from '../types/agent'
 
 /**
@@ -111,6 +112,12 @@ export const updateLimits = (token: string, limits: Partial<Limits>) =>
     token,
     body: limits,
   }).then(data => data.limits)
+
+export const getAgentReadiness = (agentKey: string, token: string) =>
+  request<{ readiness: AgentReadiness }>(
+    `/api/vault/agents/${encodeURIComponent(agentKey)}/readiness`,
+    { token },
+  ).then(data => data.readiness)
 
 export const listAgentActivity = (agentKey: string, token: string, limit = 5) =>
   request<{ activity: Activity[] }>(

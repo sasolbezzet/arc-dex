@@ -114,6 +114,23 @@ export function AgentCard({
               : <p className='agent-balance-unavailable'>{t('plugin.walletBalanceUnavailable')}</p>}
           </div>
 
+          {isHermes && (agent.readiness || agent.readinessLoading) && (
+            <div className='agent-health-grid'>
+              <div className='agent-health-item'>
+                <span>MCP Hermes</span>
+                <strong className={agent.readiness?.mcp.connected ? 'is-good' : ''}>
+                  {agent.readinessLoading && !agent.readiness ? 'Memeriksa…' : agent.readiness?.mcp.connected ? 'Terhubung' : agent.readiness?.mcp.configured ? 'Token aktif, menunggu koneksi' : 'Belum terkonfigurasi'}
+                </strong>
+              </div>
+              <div className='agent-health-item'>
+                <span>Eksekusi</span>
+                <strong className={agent.readiness?.execution.ready ? 'is-good' : 'is-warning'}>
+                  {agent.readinessLoading && !agent.readiness ? 'Memeriksa…' : agent.readiness?.execution.ready ? 'Siap' : `Belum siap (${agent.readiness?.execution.reason || 'perlu setup'})`}
+                </strong>
+              </div>
+            </div>
+          )}
+
           <div className='agent-health-grid'>
             <div className='agent-health-item'>
               <span>{t('plugin.passkeyLabel')}</span>
