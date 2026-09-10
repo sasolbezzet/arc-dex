@@ -2,7 +2,7 @@ import type { AgentConnectionToken } from '../../types/agent'
 import { CopyField } from './CopyField'
 
 const DEFAULT_MCP_URL = 'https://arcoxdex.vercel.app/mcp'
-const ARCOX_AGENT_VERSION = '0.1.26'
+const ARCOX_AGENT_VERSION = '0.1.27'
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
