@@ -3,6 +3,7 @@
 // Arc Testnet = optional, di-add/switch setelah connect.
 
 import { EthereumProvider } from '@walletconnect/ethereum-provider'
+import { clearWalletProvider } from '../walletProvider'
 
 const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || ''
 
@@ -17,6 +18,8 @@ const ARC_CHAIN_PARAMS = {
 }
 
 let wcProvider: any = null
+let providerInitPromise: Promise<any | null> | null = null
+let connectPromise: Promise<string | null> | null = null
 
 export function isWalletConnectAvailable(): boolean {
   return Boolean(WC_PROJECT_ID)
@@ -47,14 +50,26 @@ function removeVisibilityHandler() {
 export const isMobile = () => /Android|iPhone|iPad/i.test(navigator.userAgent || '')
 
 /**
+ * A restored WalletConnect session is already paired and must not wait for a
+ * display_uri event. New pairings do need that event before the wallet can be
+ * opened. Exported for regression tests because this distinction is critical
+ * on mobile Chrome, where stale persisted sessions otherwise look hung.
+ */
+export function shouldWaitForWalletConnectPairing(provider: { session?: unknown } | null | undefined): boolean {
+  return !Boolean(provider?.session)
+}
+
+/**
  * Reset the WC provider singleton so a fresh init is performed on next attempt.
  * This prevents the stale-provider hang where a previous cancelled/failed
  * session leaves wcProvider in a half-connected state.
  */
 function resetProvider() {
   removeVisibilityHandler()
-  if (wcProvider) {
-    try { wcProvider.removeAllListeners?.() } catch { /* ignore */ }
+  const providerToClear = wcProvider
+  if (providerToClear) {
+    try { providerToClear.removeAllListeners?.() } catch { /* ignore */ }
+    clearWalletProvider(providerToClear)
   }
   wcProvider = null
   pendingUri = null
@@ -75,10 +90,12 @@ function resetProvider() {
 
 export async function getWalletConnectProvider(): Promise<any | null> {
   if (wcProvider) return wcProvider
+  if (providerInitPromise) return providerInitPromise
   if (!WC_PROJECT_ID) return null
 
-  try {
-    wcProvider = await EthereumProvider.init({
+  const initPromise = (async () => {
+    try {
+      const provider = await EthereumProvider.init({
       projectId: WC_PROJECT_ID,
       // Sepolia as required — dikenal semua wallet testnet, jadi default chain
       // tidak mismatch. Mainnet + Arc = optional.
@@ -102,20 +119,21 @@ export async function getWalletConnectProvider(): Promise<any | null> {
         // Lets a mobile wallet return to the approval page after signing.
         redirect: { universal: 'https://arcoxdex.vercel.app' },
       },
-    })
+      })
 
-    wcProvider.on('display_uri', (uri: string) => {
-      console.log('[WC] URI ready')
-      pendingUri = uri
-      if (uriResolve) { uriResolve(uri); uriResolve = null }
-      // AppKit owns the wallet picker and deep links on mobile. Do not render
-      // a competing custom modal: it leaves users stuck in "waiting wallet".
-    })
+      wcProvider = provider
+      wcProvider.on('display_uri', (uri: string) => {
+        console.log('[WC] URI ready')
+        pendingUri = uri
+        if (uriResolve) { uriResolve(uri); uriResolve = null }
+        // AppKit owns the wallet picker and deep links on mobile. Do not render
+        // a competing custom modal: it leaves users stuck in "waiting wallet".
+      })
 
-    wcProvider.on('connect', () => { console.log('[WC] connected'); hideQRModal() })
-    wcProvider.on('disconnect', () => { resetProvider() })
-    wcProvider.on('session_delete', () => { resetProvider() })
-    wcProvider.on('chainChanged', (c: string) => console.log('[WC] chainChanged:', c))
+      wcProvider.on('connect', () => { console.log('[WC] connected'); hideQRModal() })
+      wcProvider.on('disconnect', () => { resetProvider() })
+      wcProvider.on('session_delete', () => { resetProvider() })
+      wcProvider.on('chainChanged', (c: string) => console.log('[WC] chainChanged:', c))
 
     if (typeof document !== 'undefined') {
       removeVisibilityHandler()
@@ -129,11 +147,18 @@ export async function getWalletConnectProvider(): Promise<any | null> {
       document.addEventListener('visibilitychange', visibilityHandler)
     }
 
-    return wcProvider
-  } catch (e) {
-    console.error('[WC] init failed:', e)
-    resetProvider()
-    return null
+      return wcProvider
+    } catch (e) {
+      console.error('[WC] init failed:', e)
+      resetProvider()
+      return null
+    }
+  })()
+  providerInitPromise = initPromise
+  try {
+    return await initPromise
+  } finally {
+    if (providerInitPromise === initPromise) providerInitPromise = null
   }
 }
 
@@ -340,37 +365,84 @@ export async function restoreWalletConnect(): Promise<string | null> {
   return null
 }
 
-export async function connectWalletConnect(): Promise<string | null> {
-  try {
-    // Reset stale provider before attempting new connection.
-    if (wcProvider && !wcProvider.session) {
-      resetProvider()
-    }
-
-    const provider = await getWalletConnectProvider()
-    if (!provider) throw new Error('WalletConnect tidak tersedia — pastikan VITE_WC_PROJECT_ID sudah dikonfigurasi')
-
-    pendingUri = null
-  
-    // enable() = connect + session settle + accounts terisi.
-    const enablePromise: Promise<string[]> = provider.enable()
-
-    // Wait for URI with timeout — prevents infinite hang on mobile
-    // when the relay WebSocket fails to establish.
+async function enableWalletConnect(provider: any): Promise<string[]> {
+  // `EthereumProvider.init()` restores a persisted session. In that case
+  // `enable()` resolves without emitting `display_uri`; waiting for a URI here
+  // used to make every refresh on mobile Chrome look permanently stuck until
+  // the user deleted site data. Only wait for a URI when a new pairing is
+  // actually being created.
+  const hasSession = !shouldWaitForWalletConnectPairing(provider)
+  const enablePromise: Promise<string[]> = provider.enable()
+  if (!hasSession) {
     await waitForUri(30000)
     console.log('[WC] URI shown, waiting wallet approve')
+  }
+  return Promise.race([
+    enablePromise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(
+      hasSession
+        ? 'WalletConnect session lama tidak merespons. Sesi akan di-reset otomatis; hubungkan wallet lagi.'
+        : 'WalletConnect timeout — approve di wallet lalu kembali ke Chrome',
+    )), hasSession ? 30000 : 180000)),
+  ])
+}
 
-    let accounts: string[] = []
+export async function connectWalletConnect(): Promise<string | null> {
+  if (connectPromise) return connectPromise
+  const attempt = (async () => {
     try {
-      accounts = await Promise.race([
-        enablePromise,
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('WalletConnect timeout — approve di wallet lalu kembali ke browser')), 180000))
-      ])
-    } catch (e) {
-      console.log('[WC] enable result:', (e as Error)?.message || e)
+      // Reset a provider that was only partially initialized. A persisted,
+      // fully-formed session is intentionally reused by enableWalletConnect.
+      if (wcProvider && !wcProvider.session) resetProvider()
+
+      let provider = await getWalletConnectProvider()
+      if (!provider) throw new Error('WalletConnect tidak tersedia — pastikan VITE_WC_PROJECT_ID sudah dikonfigurasi')
+
+      pendingUri = null
+      try {
+        // Existing sessions do not emit display_uri; new pairings do.
+        let accounts = await enableWalletConnect(provider)
+        return await finishWalletConnect(provider, accounts)
+      } catch (error) {
+        // A stale persisted session is the exact case that previously required
+        // clearing Chrome browsing data. Drop it once and transparently retry
+        // with a fresh provider/pairing instead of leaving the button waiting.
+        if (provider.session) {
+          console.warn('[WC] persisted session failed; resetting and retrying once')
+          resetProvider()
+          provider = await getWalletConnectProvider()
+          if (!provider) throw error
+          pendingUri = null
+          const accounts = await enableWalletConnect(provider)
+          return await finishWalletConnect(provider, accounts)
+        }
+        throw error
+      }
+    } catch (e: any) {
+      hideQRModal()
+      if (/reject|denied|cancel|reset/i.test(e?.message || '')) {
+        resetProvider()
+        return null
+      }
       resetProvider()
+      if (/Koneksi ke relay WalletConnect gagal/.test(e?.message || '')) {
+        throw new Error('Relay WalletConnect tidak merespons. Periksa jaringan/VPN/ad blocker lalu coba lagi.')
+      }
+      if (/WalletConnect timeout/.test(e?.message || '')) {
+        throw new Error('Wallet belum menyetujui koneksi. Pilih wallet dari panel WalletConnect, approve, lalu kembali ke Chrome.')
+      }
       throw e
     }
+  })()
+  connectPromise = attempt
+  try {
+    return await attempt
+  } finally {
+    if (connectPromise === attempt) connectPromise = null
+  }
+}
+
+async function finishWalletConnect(provider: any, accounts: string[]): Promise<string> {
 
     let address = (accounts || [])[0] || (provider.accounts || [])[0]
 
@@ -403,21 +475,6 @@ export async function connectWalletConnect(): Promise<string | null> {
     // establish the authenticated ARCOX session.
     try { await ensureArcChain(provider) } catch { /* wallet may decline switch */ }
     return address
-  } catch (e: any) {
-    hideQRModal()
-    if (/reject|denied|cancel|reset/i.test(e?.message || '')) {
-      resetProvider()
-      return null
-    }
-      resetProvider()
-    if (/Koneksi ke relay WalletConnect gagal/.test(e?.message || '')) {
-      throw new Error('Relay WalletConnect tidak merespons. Periksa jaringan/VPN/ad blocker lalu coba lagi.')
-    }
-    if (/WalletConnect timeout/.test(e?.message || '')) {
-      throw new Error('Wallet belum menyetujui koneksi. Pilih wallet dari panel WalletConnect, approve, lalu kembali ke Chrome.')
-    }
-    throw e
-  }
 }
 
 export async function disconnectWalletConnect(): Promise<void> {

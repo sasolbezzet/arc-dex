@@ -46,6 +46,19 @@ export function setWalletProvider(provider: Eip1193Provider | null) {
   activeProvider = validProvider(evmProvider) ? evmProvider : provider
 }
 
+/**
+ * Forget only the provider being retired. WalletConnect sessions can become
+ * invalid while its object is still cached in `activeProvider`; leaving it
+ * there makes the next mobile connect attempt route to a dead provider even
+ * after WalletConnect storage has been reset. An injected wallet is preserved
+ * when it is not the provider being retired.
+ */
+export function clearWalletProvider(provider?: Eip1193Provider | null) {
+  if (!provider || activeProvider === provider || activeProvider === (provider as any)?.ethereum) {
+    activeProvider = null
+  }
+}
+
 export function normalizeWalletProvider(provider: Eip1193Provider): Eip1193Provider {
   const cached = normalizedProviders.get(provider)
   if (cached) return cached
