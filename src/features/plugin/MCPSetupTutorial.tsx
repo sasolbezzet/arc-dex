@@ -1,8 +1,8 @@
 import { useI18n } from '../../i18n'
 
 /**
- * Client-facing setup guide. Keep this separate from the backend protocol:
- * Hermes uses a one-time connection token, while Claude/ChatGPT use MCP OAuth.
+ * Client-facing setup guide. Hermes uses a one-time connection token, while
+ * Claude/ChatGPT/Grok use OAuth-backed Custom MCP connections.
  */
 export function MCPSetupTutorial() {
   const { t } = useI18n()
@@ -32,6 +32,14 @@ export function MCPSetupTutorial() {
             <li>{t('plugin.tutorialOAuth1')}</li>
             <li>{t('plugin.tutorialOAuth2')}</li>
             <li>{t('plugin.tutorialOAuth3')}</li>
+          </ol>
+        </article>
+        <article className='plugin-mcp-tutorial-card'>
+          <h4>{t('plugin.tutorialGrokTitle')}</h4>
+          <ol>
+            <li>{t('plugin.tutorialGrok1')}</li>
+            <li>{t('plugin.tutorialGrok2')}</li>
+            <li>{t('plugin.tutorialGrok3')}</li>
           </ol>
         </article>
       </div>

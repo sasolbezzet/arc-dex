@@ -233,7 +233,9 @@ export default function PluginPage() {
                     ? <button type='button' className='mini-button' onClick={() => setTab('activity')}>{t('plugin.viewConnection')}</button>
                     : type === 'hermes'
                       ? <div className='plugin-provider-actions'><button type='button' className='mini-button' disabled={Boolean(busyAction)} onClick={() => handleConnect(type)}>{t('plugin.createAgentWallet')}</button><button type='button' className='text-button' disabled={Boolean(busyAction)} onClick={() => handleLogin(type)}>{t('plugin.loginExistingPasskey')}</button></div>
-                      : <div className='agent-external-note'>{t('plugin.externalAgentHint')}</div>}
+                      : type === 'grok'
+                        ? <p className='agent-action-hint'>{t('plugin.flowGrokStep1')}</p>
+                        : <div className='agent-external-note'>{t('plugin.externalAgentHint')}</div>}
                 </article>
               )
             })}

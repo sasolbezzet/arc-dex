@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { canonicalAgentKey, mergeAgentRows } from '../hooks/useAgentManager'
+import { mergeAgentBalance } from '../stores/agentStore'
 import { buildHermesConnectionCommand } from '../features/plugin/ConnectionTokenDialog'
 import { loginPublicKeyOptions } from './modularWallet'
 import { shouldRestoreWalletConnect } from '../components/WalletButton'
 import { destinationChainAuthorizationEnabled } from './agentSession'
-import type { VaultAgent } from '../types/agent'
+import { agentTypeFromKey, AGENT_CONFIGS, AGENT_TYPES, type VaultAgent } from '../types/agent'
 
 const CLAUDE_WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 const GPT_WALLET = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -89,15 +90,64 @@ describe('Plugin agent identity normalization', () => {
     expect(destinationChainAuthorizationEnabled(false)).toBe(true)
   })
 
+  it('registers Grok as an isolated Custom MCP agent', () => {
+    expect(AGENT_TYPES).toContain('grok')
+    expect(agentTypeFromKey('oauth:grok|0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'Grok')).toBe('grok')
+    expect(AGENT_CONFIGS.grok.connectionType).toBe('Custom MCP + OAuth')
+  })
+
+  it('keeps balances for other networks when a later network response arrives', () => {
+    const initial = {
+      agentKey: 'hermes|0xcccccccccccccccccccccccccccccccccccccccc',
+      agentType: 'hermes' as const,
+      clientName: 'Hermes',
+      walletAddress: '0xcccccccccccccccccccccccccccccccccccccccc',
+      status: 'connected' as const,
+      clientId: 'hermes',
+      boundAt: null,
+      lastUsedAt: null,
+      spentToday: '0',
+      connectedAt: null,
+      lastActivity: null,
+    }
+    const arc = mergeAgentBalance(initial, 'arc-testnet', { USDC: '1.25' }, 100)
+    const base = mergeAgentBalance(arc, 'base-sepolia', { USDC: '0.75' }, 200)
+
+    expect(base.balances).toEqual({
+      'arc-testnet': { USDC: '1.25' },
+      'base-sepolia': { USDC: '0.75' },
+    })
+    expect(base.balance).toEqual({ USDC: '0.75' })
+  })
+
+  it('preserves a real zero balance as available data', () => {
+    const initial = {
+      agentKey: 'hermes|0xdddddddddddddddddddddddddddddddddddddddd',
+      agentType: 'hermes' as const,
+      clientName: 'Hermes',
+      walletAddress: '0xdddddddddddddddddddddddddddddddddddddddd',
+      status: 'connected' as const,
+      clientId: 'hermes',
+      boundAt: null,
+      lastUsedAt: null,
+      spentToday: '0',
+      connectedAt: null,
+      lastActivity: null,
+    }
+    const result = mergeAgentBalance(initial, 'arc-testnet', { USDC: '0', EURC: '0' }, 300)
+
+    expect(result.balance).toEqual({ USDC: '0', EURC: '0' })
+    expect(result.balanceUpdatedAt).toBe(300)
+  })
   it('builds a copy-paste command that configures Hermes through the helper', () => {
     const command = buildHermesConnectionCommand({
       token: 'arx_at_0123456789abcdef0123456789abcdef',
       mcpUrl: 'https://arcoxdex.vercel.app/mcp',
     })
 
-    expect(command).toContain('mktemp -d')
-    expect(command).toContain('arcox-agent@0.1.27')
-    expect(command).toContain('connect --prompt-token')
+    expect(command).toContain('npm exec --yes --package=arcox-agent@0.1.27 -- arcox-agent connect --prompt-token')
+    expect(command).toContain("ARCOX_MCP_URL='https://arcoxdex.vercel.app/mcp'")
+    expect(command).not.toContain('mktemp -d')
     expect(command).not.toContain('arx_at_0123456789abcdef0123456789abcdef')
     expect(command).not.toContain('printf')
   })

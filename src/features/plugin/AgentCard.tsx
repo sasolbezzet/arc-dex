@@ -42,10 +42,11 @@ function modeLabel(agent?: AgentState): string {
   return 'MCP'
 }
 
-const AGENT_COPY_KEYS: Record<AgentType, { name: 'plugin.hermesName' | 'plugin.claudeName' | 'plugin.chatgptName' | 'plugin.externalConnectionType'; description: 'plugin.hermesDescription' | 'plugin.claudeDescription' | 'plugin.chatgptDescription' | 'plugin.externalConnectionType'; type: 'plugin.connectionTokenType' | 'plugin.browserApprovalType' | 'plugin.externalConnectionType' }> = {
+const AGENT_COPY_KEYS: Record<AgentType, { name: 'plugin.hermesName' | 'plugin.claudeName' | 'plugin.chatgptName' | 'plugin.grokName' | 'plugin.externalConnectionType'; description: 'plugin.hermesDescription' | 'plugin.claudeDescription' | 'plugin.chatgptDescription' | 'plugin.grokDescription' | 'plugin.externalConnectionType'; type: 'plugin.connectionTokenType' | 'plugin.browserApprovalType' | 'plugin.customMcpOAuthType' | 'plugin.externalConnectionType' }> = {
   hermes: { name: 'plugin.hermesName', description: 'plugin.hermesDescription', type: 'plugin.connectionTokenType' },
   claude: { name: 'plugin.claudeName', description: 'plugin.claudeDescription', type: 'plugin.browserApprovalType' },
   chatgpt: { name: 'plugin.chatgptName', description: 'plugin.chatgptDescription', type: 'plugin.browserApprovalType' },
+  grok: { name: 'plugin.grokName', description: 'plugin.grokDescription', type: 'plugin.customMcpOAuthType' },
   custom: { name: 'plugin.externalConnectionType', description: 'plugin.externalConnectionType', type: 'plugin.externalConnectionType' },
 }
 
@@ -168,7 +169,7 @@ export function AgentCard({
       ) : (
         <div className='agent-setup-copy'>
           <span className='setup-dot' />
-          <p>{isHermes ? t('plugin.flowHermesStep1') : t('plugin.flowClaudeStep1')}</p>
+          <p>{t(isHermes ? 'plugin.flowHermesStep1' : agentType === 'grok' ? 'plugin.flowGrokStep1' : 'plugin.flowClaudeStep1')}</p>
         </div>
       )}
 
@@ -203,7 +204,10 @@ export function AgentCard({
             </button>
           </>
         )}
-        {!agent && !isHermes && (
+        {!agent && !isHermes && agentType === 'grok' && (
+          <p className='agent-action-hint'>{t('plugin.flowGrokNote')}</p>
+        )}
+        {!agent && !isHermes && agentType !== 'grok' && (
           <div className='agent-external-note'>{t('plugin.externalAgentHint')}</div>
         )}
       </div>

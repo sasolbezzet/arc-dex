@@ -14,9 +14,41 @@ function isGenericAgentLabel(agent: AgentState): boolean {
   return !label || label === 'agent mcp' || label === 'mcp-agent' || label === 'mcp agent';
 }
 
-function deduplicateAgents(agents: AgentState[]): AgentState[] {
+function mergeTransientAgentState(previous: AgentState, next: AgentState): AgentState {
+  return {
+    ...next,
+    balances: next.balances ?? previous.balances,
+    balanceChain: next.balanceChain ?? previous.balanceChain,
+    balance: next.balance ?? previous.balance,
+    balanceUpdatedAt: next.balanceUpdatedAt ?? previous.balanceUpdatedAt,
+    readiness: next.readiness ?? previous.readiness,
+    readinessLoading: next.readinessLoading ?? previous.readinessLoading,
+  };
+}
+
+export function mergeAgentBalance(
+  agent: AgentState,
+  chain: AgentState['balanceChain'],
+  balance: Record<string, string> | null,
+  updatedAt = Date.now(),
+): AgentState {
+  if (!chain) return agent
+  return {
+    ...agent,
+    balance,
+    balanceChain: chain,
+    balances: { ...(agent.balances || {}), [chain]: balance },
+    balanceUpdatedAt: updatedAt,
+  }
+}
+
+function deduplicateAgents(agents: AgentState[], previousAgents: AgentState[] = []): AgentState[] {
+  const previousByKey = new Map(previousAgents.map(agent => [agent.agentKey, agent]));
   const result = new Map<string, AgentState>();
-  for (const agent of agents) {
+  for (const rawAgent of agents) {
+    const agent = previousByKey.has(rawAgent.agentKey)
+      ? mergeTransientAgentState(previousByKey.get(rawAgent.agentKey)!, rawAgent)
+      : rawAgent;
     const wallet = String(agent.walletAddress || '').trim().toLowerCase();
     const clientId = String(agent.clientId || agent.agentKey || '').split('|')[0].replace(/^oauth:/, '').toLowerCase();
     const key = /^0x[0-9a-f]{40}$/.test(wallet)
@@ -41,6 +73,7 @@ export interface AgentStoreState {
 
   setAgents: (agents: AgentState[]) => void;
   updateAgent: (agentKey: string, patch: Partial<AgentState>) => void;
+  updateAgentBalance: (agentKey: string, chain: AgentState['balanceChain'], balance: Record<string, string> | null) => void;
   removeAgent: (agentKey: string) => void;
   setMcpSessions: (sessions: McpSession[]) => void;
   setApprovals: (approvals: Approval[]) => void;
@@ -62,11 +95,17 @@ export const useAgentStore = create<AgentStoreState>()(
       expandedAgentKey: null,
       agentAction: null,
 
-      setAgents: (agents) => set({ agents: deduplicateAgents(agents) }),
+      setAgents: (agents) => set((state) => ({ agents: deduplicateAgents(agents, state.agents) })),
       updateAgent: (agentKey, patch) =>
         set((state) => ({
           agents: state.agents.map((a) =>
             a.agentKey === agentKey ? { ...a, ...patch } : a
+          ),
+        })),
+      updateAgentBalance: (agentKey, chain, balance) =>
+        set((state) => ({
+          agents: state.agents.map((agent) =>
+            agent.agentKey === agentKey ? mergeAgentBalance(agent, chain, balance) : agent
           ),
         })),
       removeAgent: (agentKey) =>
@@ -88,7 +127,7 @@ export const useAgentStore = create<AgentStoreState>()(
         return {
           ...currentState,
           ...persisted,
-          agents: deduplicateAgents(persisted.agents || []),
+          agents: deduplicateAgents(persisted.agents || [], currentState.agents || []),
         };
       },
       partialize: (state) => ({

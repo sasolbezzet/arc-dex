@@ -36,7 +36,7 @@ import {
   type SupportedChain,
 } from '../types/agent'
 
-const REFRESH_MS = 10_000
+const REFRESH_MS = 30_000
 
 function toNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null
@@ -105,7 +105,7 @@ export function mergeAgentRows(rows: VaultAgent[]): VaultAgent[] {
   return [...byIdentity.values()]
 }
 
-function toAgentState(agent: VaultAgent, sessions: McpSession[]): AgentState {
+export function toAgentState(agent: VaultAgent, sessions: McpSession[]): AgentState {
   const clientId = clientIdFromAgentKey(agent.agentKey)
   const session = sessions.find(item => item.clientId === clientId)
   const isConnectionToken = clientId.startsWith('arcox_conn_')
@@ -178,6 +178,8 @@ export function useAgentManager() {
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [limits, setLimits] = useState<Limits | null>(null)
   const mounted = useRef(true)
+  const balanceRequestVersion = useRef(new Map<string, number>())
+  const balanceRequestsInFlight = useRef(new Set<string>())
 
   useEffect(() => () => { mounted.current = false }, [])
 
@@ -193,6 +195,7 @@ export function useAgentManager() {
     setActivity,
     setConnectionToken,
     updateAgent,
+    updateAgentBalance,
   } = useAgentStore()
 
   const vaultToken = useAuthStore(state => state.vaultToken)
@@ -229,6 +232,11 @@ export function useAgentManager() {
 
   const refreshAgentBalances = useCallback((nextAgents: AgentState[], chain: SupportedChain = 'arc-testnet') => {
     void Promise.all(nextAgents.map(async agent => {
+      const requestKey = `${agent.agentKey}:${chain}`
+      if (balanceRequestsInFlight.current.has(requestKey)) return
+      balanceRequestsInFlight.current.add(requestKey)
+      const version = (balanceRequestVersion.current.get(requestKey) || 0) + 1
+      balanceRequestVersion.current.set(requestKey, version)
       try {
         const response = await fetch(`/api/balance/${encodeURIComponent(agent.walletAddress)}?chain=${encodeURIComponent(chain)}`, {
           cache: 'no-store',
@@ -236,23 +244,18 @@ export function useAgentManager() {
         })
         const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data?.error || `Balance request failed (${response.status})`)
-        if (mounted.current) updateAgent(agent.agentKey, {
-          balance: data,
-          balanceChain: chain,
-          balances: { ...(agent.balances || {}), [chain]: data },
-          balanceUpdatedAt: Date.now(),
-        })
+        if (mounted.current && balanceRequestVersion.current.get(requestKey) === version) {
+          updateAgentBalance(agent.agentKey, chain, data)
+        }
       } catch {
-        // Keep the card honest: unavailable is distinct from a real zero.
-        if (mounted.current) updateAgent(agent.agentKey, {
-          balance: null,
-          balanceChain: chain,
-          balances: { ...(agent.balances || {}), [chain]: null },
-          balanceUpdatedAt: Date.now(),
-        })
+        // Preserve the last known value during transient RPC/API failures. A
+        // missing first read remains unavailable; a previously loaded value is
+        // never replaced by null merely because a refresh failed.
+      } finally {
+        balanceRequestsInFlight.current.delete(requestKey)
       }
     }))
-  }, [updateAgent])
+  }, [updateAgentBalance])
 
   const refreshAll = useCallback(async () => {
     const tokens = storedVaultTokens(vaultToken)

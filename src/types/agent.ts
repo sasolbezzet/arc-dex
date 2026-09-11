@@ -12,7 +12,7 @@
 
 // ── Agent identity ──
 
-export type AgentType = 'hermes' | 'claude' | 'chatgpt' | 'custom'
+export type AgentType = 'hermes' | 'claude' | 'chatgpt' | 'grok' | 'custom'
 
 /**
  * Connection state of one agent, derived from the backend binding list plus
@@ -201,6 +201,13 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
     connectionType: 'Izin lewat browser',
     accent: '#22c55e',
   },
+  grok: {
+    mark: 'GK',
+    name: 'Grok',
+    description: 'Asisten AI dari xAI melalui Custom MCP Connector',
+    connectionType: 'Custom MCP + OAuth',
+    accent: '#94a3b8',
+  },
   custom: {
     mark: 'CU',
     name: 'Agent lain',
@@ -211,7 +218,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
 }
 
 /** Agent types the dashboard always shows, in display order. */
-export const AGENT_TYPES: AgentType[] = ['hermes', 'claude', 'chatgpt']
+export const AGENT_TYPES: AgentType[] = ['hermes', 'claude', 'chatgpt', 'grok']
 
 /**
  * Stable agentKey prefixes. Hermes uses a bootstrap connection token, so its
@@ -222,6 +229,7 @@ export const AGENT_KEYS = {
   hermes: 'hermes-mcp',
   claude: 'oauth:claude',
   chatgpt: 'oauth:chatgpt',
+  grok: 'oauth:grok',
 } as const
 
 export const SUPPORTED_CHAINS = ['arc-testnet', 'base-sepolia', 'arbitrum-sepolia'] as const
@@ -234,6 +242,7 @@ export function agentTypeFromKey(agentKey: string, clientName = ''): AgentType {
   const haystack = `${agentKey} ${clientName}`.toLowerCase()
   if (haystack.includes('claude')) return 'claude'
   if (haystack.includes('chatgpt') || haystack.includes('gpt')) return 'chatgpt'
+  if (haystack.includes('grok') || haystack.includes('xai')) return 'grok'
   if (haystack.includes('hermes')) return 'hermes'
   return 'custom'
 }
