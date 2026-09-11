@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import type { AgentState } from '../../types/agent'
 import { shortAddress } from './CopyField'
 
@@ -10,25 +11,20 @@ export interface RevokeModalProps {
 
 /** Revoking is per-agent and irreversible; the wallet itself is untouched. */
 export function RevokeModal({ agent, busy, onConfirm, onCancel }: RevokeModalProps) {
+  const { t } = useI18n()
   return (
-    <div className='plugin-modal-backdrop' role='dialog' aria-modal='true' aria-label='Cabut akses agent'>
+    <div className='plugin-modal-backdrop' role='dialog' aria-modal='true' aria-label={t('plugin.revokeTitle', { agent: agent.clientName })}>
       <div className='glass plugin-modal'>
-        <h3>Cabut akses {agent.clientName}?</h3>
-        <p>
-          Agent ini langsung kehilangan akses ke Agent Wallet {shortAddress(agent.walletAddress)}, dan
-          semua tokennya berhenti berlaku. Agent lain tetap berjalan normal.
-        </p>
-        <p>
-          Dana di wallet tidak berpindah dan tidak hilang. Anda bisa menghubungkan agent ini lagi nanti
-          dengan token koneksi baru.
-        </p>
+        <h3>{t('plugin.revokeTitle', { agent: agent.clientName })}</h3>
+        <p>{t('plugin.revokeCopy1', { agent: agent.clientName, wallet: shortAddress(agent.walletAddress) })}</p>
+        <p>{t('plugin.revokeCopy2')}</p>
 
         <div className='plugin-modal-actions'>
           <button type='button' className='mini-button' disabled={busy} onClick={onCancel}>
-            Batal
+            {t('plugin.cancel')}
           </button>
           <button type='button' className='action-button' disabled={busy} onClick={onConfirm}>
-            {busy ? 'Mencabut…' : 'Ya, cabut akses'}
+            {busy ? t('plugin.revokeBusy') : t('plugin.confirmRevoke')}
           </button>
         </div>
       </div>

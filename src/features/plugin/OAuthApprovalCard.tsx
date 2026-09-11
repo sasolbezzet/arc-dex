@@ -1,4 +1,5 @@
 import { oauthAgentLabel, type OAuthStep } from '../../hooks/useOAuthApproval'
+import { useI18n } from '../../i18n'
 
 export interface OAuthApprovalCardProps {
   clientId: string
@@ -10,11 +11,11 @@ export interface OAuthApprovalCardProps {
   onCancel: () => void
 }
 
-const STEPS: Array<{ key: OAuthStep; label: string }> = [
-  { key: 'passkey', label: 'Buka Agent Wallet dengan passkey' },
-  { key: 'checking', label: 'Periksa kesiapan wallet' },
-  { key: 'approving', label: 'Izinkan akses agent' },
-  { key: 'done', label: 'Kembali ke aplikasi agent' },
+const STEP_KEYS: Array<{ key: OAuthStep; labelKey: 'plugin.oauthStepPasskey' | 'plugin.oauthStepChecking' | 'plugin.oauthStepApproving' | 'plugin.oauthStepDone' }> = [
+  { key: 'passkey', labelKey: 'plugin.oauthStepPasskey' },
+  { key: 'checking', labelKey: 'plugin.oauthStepChecking' },
+  { key: 'approving', labelKey: 'plugin.oauthStepApproving' },
+  { key: 'done', labelKey: 'plugin.oauthStepDone' },
 ]
 
 const ORDER: OAuthStep[] = ['idle', 'passkey', 'checking', 'approving', 'done']
@@ -33,6 +34,7 @@ export function OAuthApprovalCard({
   onApprove,
   onCancel,
 }: OAuthApprovalCardProps) {
+  const { t } = useI18n()
   const agentLabel = oauthAgentLabel(clientId)
   const currentIndex = ORDER.indexOf(step === 'error' ? 'idle' : step)
 
@@ -41,44 +43,43 @@ export function OAuthApprovalCard({
       <div className='plugin-oauth-head'>
         <div className='plugin-oauth-mark'>!</div>
         <div style={{ minWidth: 0 }}>
-          <strong style={{ color: '#fde68a', fontSize: 14 }}>{agentLabel} meminta akses</strong>
+          <strong style={{ color: '#fde68a', fontSize: 14 }}>{t('plugin.oauthRequestTitle', { agent: agentLabel })}</strong>
           <p style={{ margin: '4px 0 0', color: '#a8b3c7', fontSize: 12 }}>
-            Setujui hanya jika Anda memang baru saja memulai koneksi ini dari {agentLabel}.
-            Agent akan bisa memakai Agent Wallet ini sesuai batas yang Anda tetapkan. Login ulang selalu dimulai dengan popup passkey; SIWE hanya diminta setelah passkey bila sesi owner sudah kedaluwarsa.
+            {t('plugin.oauthRequestCopy', { agent: agentLabel })} {t('plugin.oauthRequestFlow')}
           </p>
         </div>
       </div>
 
       <div className='plugin-oauth-steps'>
-        {STEPS.map((item, index) => {
+        {STEP_KEYS.map((item, index) => {
           const itemIndex = ORDER.indexOf(item.key)
           const state = currentIndex > itemIndex ? 'done' : currentIndex === itemIndex ? 'active' : ''
           return (
             <div className={`plugin-oauth-step ${state}`} key={item.key}>
               <i>{state === 'done' ? '✓' : index + 1}</i>
-              {item.label}
+              {t(item.labelKey)}
             </div>
           )
         })}
       </div>
 
-      {busy && <p style={{ color: '#fde68a', fontSize: 12 }}>{stepLabel}</p>}
+      {busy && <p style={{ color: '#fde68a', fontSize: 12 }}>{stepLabel || t('plugin.processing')}</p>}
       {error && <div className='inline-error'>{error}</div>}
 
       <div className='plugin-modal-actions' style={{ justifyContent: 'flex-start' }}>
         <button type='button' className='action-button' disabled={busy} onClick={() => onApprove('login')}>
-          {busy ? 'Memproses…' : 'Login passkey'}
+          {busy ? t('plugin.processing') : t('plugin.loginPasskey')}
         </button>
         <button type='button' className='mini-button' disabled={busy} onClick={() => onApprove('register')}>
-          Buat wallet baru untuk agent ini
+          {t('plugin.createAgentWallet')}
         </button>
         <button type='button' className='mini-button' disabled={busy} onClick={onCancel}>
-          Tolak
+          {t('plugin.oauthCancel')}
         </button>
       </div>
 
       <p style={{ color: '#71809a', fontSize: 11, margin: 0 }}>
-        Login passkey selalu dimulai dengan passkey. Bila sesi owner 24 jam masih valid, tidak ada SIWE; bila sudah kedaluwarsa, wallet utama akan diminta menandatangani SIWE setelah passkey selesai.
+        {t('plugin.oauthFootnote')}
       </p>
     </section>
   )

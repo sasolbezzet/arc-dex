@@ -42,6 +42,13 @@ function modeLabel(agent?: AgentState): string {
   return 'MCP'
 }
 
+const AGENT_COPY_KEYS: Record<AgentType, { name: 'plugin.hermesName' | 'plugin.claudeName' | 'plugin.chatgptName' | 'plugin.externalConnectionType'; description: 'plugin.hermesDescription' | 'plugin.claudeDescription' | 'plugin.chatgptDescription' | 'plugin.externalConnectionType'; type: 'plugin.connectionTokenType' | 'plugin.browserApprovalType' | 'plugin.externalConnectionType' }> = {
+  hermes: { name: 'plugin.hermesName', description: 'plugin.hermesDescription', type: 'plugin.connectionTokenType' },
+  claude: { name: 'plugin.claudeName', description: 'plugin.claudeDescription', type: 'plugin.browserApprovalType' },
+  chatgpt: { name: 'plugin.chatgptName', description: 'plugin.chatgptDescription', type: 'plugin.browserApprovalType' },
+  custom: { name: 'plugin.externalConnectionType', description: 'plugin.externalConnectionType', type: 'plugin.externalConnectionType' },
+}
+
 /** A single agent control card. agentKey is deliberately the identity boundary. */
 export function AgentCard({
   agentType,
@@ -58,6 +65,7 @@ export function AgentCard({
   const [balanceChain, setBalanceChain] = useState<SupportedChain>('arc-testnet')
   const { lang, t } = useI18n()
   const config = AGENT_CONFIGS[agentType]
+  const copyKeys = AGENT_COPY_KEYS[agentType]
   const wallet = agent?.walletAddress || knownWallet || ''
   const safeAgentKey = String(agent?.agentKey || '').trim()
   const status = agent?.status || (wallet ? 'idle' : 'not_connected')
@@ -72,13 +80,13 @@ export function AgentCard({
         <div className='agent-mark'>{config.mark}</div>
         <div className='agent-card-title'>
           <strong>{agent?.clientName || config.name}</strong>
-          <span>{agent ? modeLabel(agent) : config.connectionType}</span>
+          <span>{agent ? modeLabel(agent) : t(copyKeys.type)}</span>
         </div>
         <AgentStatusBadge status={status} />
       </div>
 
       <div className='agent-card-description'>
-        <p>{config.description}</p>
+        <p>{t(copyKeys.description)}</p>
         {agent && <code className='agent-key'>{shortAgentKey(agent.agentKey)}</code>}
       </div>
 
@@ -117,15 +125,15 @@ export function AgentCard({
           {isHermes && (agent.readiness || agent.readinessLoading) && (
             <div className='agent-health-grid'>
               <div className='agent-health-item'>
-                <span>MCP Hermes</span>
+                <span>{t('plugin.hermesMcp')}</span>
                 <strong className={agent.readiness?.mcp.connected ? 'is-good' : ''}>
-                  {agent.readinessLoading && !agent.readiness ? 'Memeriksa…' : agent.readiness?.mcp.connected ? 'Terhubung' : agent.readiness?.mcp.configured ? 'Token aktif, menunggu koneksi' : 'Belum terkonfigurasi'}
+                  {agent.readinessLoading && !agent.readiness ? t('plugin.checking') : agent.readiness?.mcp.connected ? t('plugin.connected') : agent.readiness?.mcp.configured ? t('plugin.tokenWaiting') : t('plugin.notConfigured')}
                 </strong>
               </div>
               <div className='agent-health-item'>
-                <span>Eksekusi</span>
+                <span>{t('plugin.execution')}</span>
                 <strong className={agent.readiness?.execution.ready ? 'is-good' : 'is-warning'}>
-                  {agent.readinessLoading && !agent.readiness ? 'Memeriksa…' : agent.readiness?.execution.ready ? 'Siap' : `Belum siap (${agent.readiness?.execution.reason || 'perlu setup'})`}
+                  {agent.readinessLoading && !agent.readiness ? t('plugin.checking') : agent.readiness?.execution.ready ? t('plugin.ready') : `${t('plugin.notReady')} (${agent.readiness?.execution.reason || t('plugin.needsSetup')})`}
                 </strong>
               </div>
             </div>
@@ -177,7 +185,7 @@ export function AgentCard({
         )}
         {isHermes && agent && (
           <button type='button' className='action-button' disabled={anyBusy} onClick={onCreateToken}>
-            {busyAction === `token:${safeAgentKey}` ? 'Membuat token…' : 'Rotasi token koneksi'}
+            {busyAction === `token:${safeAgentKey}` ? t('plugin.creatingToken') : t('plugin.rotateToken')}
           </button>
         )}
         {agent && (
@@ -196,7 +204,7 @@ export function AgentCard({
           </>
         )}
         {!agent && !isHermes && (
-          <div className='agent-external-note'>Koneksi dimulai dari aplikasi agent</div>
+          <div className='agent-external-note'>{t('plugin.externalAgentHint')}</div>
         )}
       </div>
 

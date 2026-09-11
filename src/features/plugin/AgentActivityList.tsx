@@ -1,37 +1,40 @@
+import { useI18n } from '../../i18n'
 import type { Activity } from '../../types/agent'
 
 export interface AgentActivityListProps {
   activities: Activity[]
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  send: 'Kirim dana',
-  swap: 'Tukar token',
-  bridge: 'Pindah jaringan',
-  card_spend: 'Pembayaran kartu',
-  card_refund: 'Pengembalian kartu',
-  x402_payment: 'Pembayaran data',
-  approval: 'Permintaan izin',
-  session: 'Sesi Agent Wallet',
+const TYPE_LABEL_KEYS: Record<string, 'plugin.activitySend' | 'plugin.activitySwap' | 'plugin.activityBridge' | 'plugin.activityCardSpend' | 'plugin.activityCardRefund' | 'plugin.activityX402' | 'plugin.activityApproval' | 'plugin.activitySession'> = {
+  send: 'plugin.activitySend',
+  swap: 'plugin.activitySwap',
+  bridge: 'plugin.activityBridge',
+  card_spend: 'plugin.activityCardSpend',
+  card_refund: 'plugin.activityCardRefund',
+  x402_payment: 'plugin.activityX402',
+  approval: 'plugin.activityApproval',
+  session: 'plugin.activitySession',
 }
 
 const EXPLORER = 'https://explorer-testnet.arc.network/tx/'
 
-function formatTime(timestamp: number): string {
+function formatTime(timestamp: number, locale: string): string {
   if (!timestamp) return ''
   const date = new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp)
   return Number.isNaN(date.getTime())
     ? ''
-    : date.toLocaleString('id-ID', { hour12: false, dateStyle: 'short', timeStyle: 'short' })
+    : date.toLocaleString(locale === 'zh' ? 'zh-CN' : locale, { hour12: false, dateStyle: 'short', timeStyle: 'short' })
 }
 
 /** Newest agent events. The backend caps this at five entries on purpose. */
 export function AgentActivityList({ activities }: AgentActivityListProps) {
+  const { lang, t } = useI18n()
+
   if (activities.length === 0) {
     return (
       <div className='plugin-empty'>
-        <strong>Belum ada aktivitas</strong>
-        <p>Setiap tindakan agent — kirim, tukar, pembayaran — tercatat di sini setelah selesai.</p>
+        <strong>{t('plugin.noActivityTitle')}</strong>
+        <p>{t('plugin.noActivityCopy')}</p>
       </div>
     )
   }
@@ -50,11 +53,11 @@ export function AgentActivityList({ activities }: AgentActivityListProps) {
           <div className='plugin-list-row' key={entry.id}>
             <div>
               <strong>
-                {TYPE_LABEL[entry.type] || entry.type}
+                {TYPE_LABEL_KEYS[entry.type] ? t(TYPE_LABEL_KEYS[entry.type]) : entry.type}
                 {amount ? ` · ${amount} ${token}`.trimEnd() : ''}
               </strong>
               <small>
-                {formatTime(entry.ts)}
+                {formatTime(entry.ts, lang)}
                 {detail ? ` · ${detail}` : ''}
               </small>
             </div>
@@ -66,7 +69,7 @@ export function AgentActivityList({ activities }: AgentActivityListProps) {
                   target='_blank'
                   rel='noreferrer noopener'
                 >
-                  Lihat bukti
+                  {t('plugin.viewProof')}
                 </a>
               </div>
             )}

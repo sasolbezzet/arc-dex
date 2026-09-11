@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../../i18n'
 
 export interface CopyFieldProps {
   value: string
@@ -10,6 +11,7 @@ export interface CopyFieldProps {
 
 /** Read-only value with a copy button, styled like the rest of ARCOX. */
 export function CopyField({ value, display, label, ariaLabel }: CopyFieldProps) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
 
   const copy = async () => {
@@ -30,9 +32,9 @@ export function CopyField({ value, display, label, ariaLabel }: CopyFieldProps) 
         type='button'
         className='mini-button'
         onClick={copy}
-        aria-label={ariaLabel || `Salin ${label || 'nilai'}`}
+        aria-label={ariaLabel || `${t('plugin.copy')} ${label || 'value'}`}
       >
-        {copied ? 'Tersalin' : 'Salin'}
+        {copied ? t('plugin.copied') : t('plugin.copy')}
       </button>
     </div>
   )

@@ -56,7 +56,7 @@ export const isMobile = () => /Android|iPhone|iPad/i.test(navigator.userAgent ||
  * on mobile Chrome, where stale persisted sessions otherwise look hung.
  */
 export function shouldWaitForWalletConnectPairing(provider: { session?: unknown } | null | undefined): boolean {
-  return !Boolean(provider?.session)
+  return !provider?.session
 }
 
 /**
@@ -401,7 +401,7 @@ export async function connectWalletConnect(): Promise<string | null> {
       pendingUri = null
       try {
         // Existing sessions do not emit display_uri; new pairings do.
-        let accounts = await enableWalletConnect(provider)
+        const accounts = await enableWalletConnect(provider)
         return await finishWalletConnect(provider, accounts)
       } catch (error) {
         // A stale persisted session is the exact case that previously required
