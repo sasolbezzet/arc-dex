@@ -170,7 +170,7 @@ export interface MscaState {
 // ── UI config ──
 
 export interface AgentConfig {
-  /** Short monogram shown in the card avatar (no emoji: matches app nav style). */
+  /** Brand mark rendered by the local AgentLogo component. */
   mark: string
   name: string
   description: string

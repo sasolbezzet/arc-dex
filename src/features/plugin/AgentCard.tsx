@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useI18n } from '../../i18n'
 import { AGENT_CONFIGS, SUPPORTED_CHAINS, type AgentState, type AgentType, type SupportedChain } from '../../types/agent'
+import { AgentLogo } from './AgentLogo'
 import { AgentStatusBadge } from './AgentStatusBadge'
 import { CopyField, shortAddress } from './CopyField'
 
@@ -78,7 +79,7 @@ export function AgentCard({
   return (
     <article className={`glass agent-card ${agent ? 'agent-card-connected' : 'agent-card-empty'}`} style={{ ['--agent-accent' as string]: config.accent }}>
       <div className='agent-card-head'>
-        <div className='agent-mark'>{config.mark}</div>
+        <div className='agent-mark'><AgentLogo type={agentType} size={25} /></div>
         <div className='agent-card-title'>
           <strong>{agent?.clientName || config.name}</strong>
           <span>{agent ? modeLabel(agent) : t(copyKeys.type)}</span>

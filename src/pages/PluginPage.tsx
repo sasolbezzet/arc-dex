@@ -9,6 +9,7 @@ import { RevokeModal } from '../features/plugin/RevokeModal'
 import { OAuthApprovalCard } from '../features/plugin/OAuthApprovalCard'
 import { CopyField } from '../features/plugin/CopyField'
 import { MCPSetupTutorial } from '../features/plugin/MCPSetupTutorial'
+import { AgentLogo } from '../features/plugin/AgentLogo'
 import { useI18n } from '../i18n'
 import { AGENT_TYPES, AGENT_CONFIGS, MCP_URL, type AgentState, type AgentType } from '../types/agent'
 
@@ -135,17 +136,6 @@ export default function PluginPage() {
         </div>
       </section>
 
-      <section className='glass plugin-first-run' aria-labelledby='plugin-first-run-title'>
-        <div className='plugin-section-heading'>
-          <div><span className='section-eyebrow'>{t('plugin.firstRunEyebrow')}</span><strong id='plugin-first-run-title'>{t('plugin.firstRunTitle')}</strong></div>
-          <span className='plugin-secure-label'>{t('plugin.noPrivateKey')}</span>
-        </div>
-        <p className='plugin-muted-copy'>{t('plugin.identitySeparation')}</p>
-        <div className='plugin-first-run-grid'>
-          {(['1', '2', '3', '4'] as const).map((step, index) => <div className='plugin-first-run-step' key={step}><b>0{index + 1}</b><div><strong>{t(`plugin.firstRunStep${step}Title` as never)}</strong><span>{t(`plugin.firstRunStep${step}Copy` as never)}</span></div></div>)}
-        </div>
-      </section>
-
       {!hasSession && (
         <section className='plugin-session-banner'>
           <div className='plugin-session-icon'>⌁</div>
@@ -226,7 +216,7 @@ export default function PluginPage() {
               const connected = connectedTypes.has(type)
               return (
                 <article key={type} className='plugin-provider-card' style={{ ['--agent-accent' as string]: config.accent }}>
-                  <div className='plugin-provider-mark'>{config.mark}</div>
+                  <div className='plugin-provider-mark'><AgentLogo type={type} size={22} /></div>
                   <div className='plugin-provider-copy'><strong>{config.name}</strong><span>{connected ? t('plugin.alreadyConnected') : config.connectionType}</span></div>
                   <p>{config.description}</p>
                   {connected
