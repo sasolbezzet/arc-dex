@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatCircleUserOperationError, normalizeArbitrumUserOperationFees } from './modularWallet'
+import { formatCircleUserOperationError, getPasskeyRpId, normalizeArbitrumUserOperationFees } from './modularWallet'
 import { shouldAuthorizeDestinationChainsAfterActivation } from './agentSession'
 
 describe('multichain wallet activation invariants', () => {
+  it('uses the production RP ID for every passkey UserOperation ceremony', () => {
+    expect(getPasskeyRpId()).toBe('arcoxdex.vercel.app')
+  })
+
   it('keeps Arbitrum fee envelope valid when the provider returns zero fees', () => {
     const fees = normalizeArbitrumUserOperationFees(0n, 0n)
     expect(fees.maxPriorityFeePerGas).toBeGreaterThanOrEqual(1_000_000_000n)

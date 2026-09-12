@@ -588,11 +588,24 @@ async function ensureWebAuthnOwnerMapping(chainKey: string, agentKey = DEFAULT_A
       owners: [{ type: 'WEBAUTHOWNER', identifier: { publicKeyX: x.toString(), publicKeyY: y.toString() } }],
     }],
   }
-  const res = await fetch(`/api/circle-modular/w3s/buidl/${config.slug}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 20_000)
+  let res: Response
+  try {
+    res = await fetch(`/api/circle-modular/w3s/buidl/${config.slug}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (error) {
+    const message = error instanceof Error && error.name === 'AbortError'
+      ? 'proxy Circle timeout setelah 20 detik'
+      : error instanceof Error ? error.message : 'request proxy Circle gagal'
+    throw new Error(`${chainKey}: sender mapping gagal (${message})`, { cause: error })
+  } finally {
+    window.clearTimeout(timeout)
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok || data.error) {
     const message = String(data?.error?.message || res.statusText || 'unknown')
@@ -637,6 +650,23 @@ function createStoredCredential(id: unknown, publicKey: unknown, raw: unknown): 
   return { id: String(id), publicKey: normalizedPublicKey as `0x${string}`, raw }
 }
 
+/**
+ * Build every browser-side Circle account with the same RP ID that was used
+ * during registration/login. Without this explicit RP ID, viem/webauthn-p256
+ * falls back to `window.location.hostname`; on a Vercel preview, an embedded
+ * mobile tab, or an agent callback route that can differ from the credential's
+ * `arcoxdex.vercel.app` origin. Circle then never reaches the authenticator
+ * prompt and the UI appears stuck while preparing the UserOperation.
+ */
+function webAuthnOwner(credential: StoredCredential) {
+  const rpId = new URL(PASSKEY_ORIGIN).hostname
+  return toWebAuthnAccount({ credential, rpId })
+}
+
+export function getPasskeyRpId() {
+  return new URL(PASSKEY_ORIGIN).hostname
+}
+
 // ── Register passkey + create MSCA ──
 export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: OwnerSessionProof): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
@@ -661,7 +691,7 @@ export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?:
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
       const smartAccount = await toCircleSmartAccount({
         client: client as any,
-        owner: toWebAuthnAccount({ credential }),
+        owner: webAuthnOwner(credential),
       })
       const walletAddress = String(verified.address)
       if (String(smartAccount.address).toLowerCase() !== walletAddress.toLowerCase()) {
@@ -688,7 +718,7 @@ export async function deploySmartAccount(agentKey = DEFAULT_AGENT_KEY): Promise<
   const smartAccount = await toCircleSmartAccount({
     address: state.walletAddress as `0x${string}`,
     client: client as any,
-    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+    owner: webAuthnOwner(state.credential as StoredCredential),
   })
   const bundlerClient = bundlerClientFor('arc-testnet', smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
@@ -779,7 +809,7 @@ export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddr
   const smartAccount = await toCircleSmartAccount({
     address: address as `0x${string}`,
     client: client as any,
-    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+    owner: webAuthnOwner(state.credential as StoredCredential),
   })
   return smartAccount.isDeployed()
 }
@@ -798,7 +828,7 @@ export async function deploySmartAccountOnChain(chainKey: string, agentKey = DEF
   const smartAccount = await toCircleSmartAccount({
     address: state.walletAddress as `0x${string}`,
     client: client as any,
-    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+    owner: webAuthnOwner(state.credential as StoredCredential),
   })
   const bundlerClient = bundlerClientFor(chainKey, smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
@@ -859,7 +889,7 @@ export async function loginPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: Ow
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
       const smartAccount = await toCircleSmartAccount({
         client: client as any,
-        owner: toWebAuthnAccount({ credential }),
+        owner: webAuthnOwner(credential),
       })
       const walletAddress = String(verified.address)
       if (String(smartAccount.address).toLowerCase() !== walletAddress.toLowerCase()) {
@@ -1066,7 +1096,7 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   const smartAccount = await toCircleSmartAccount({
     address: state.walletAddress as `0x${string}`,
     client: client as any,
-    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+    owner: webAuthnOwner(state.credential as StoredCredential),
   })
 
   const saved = loadState(agentKey).deploymentStatus?.[chainKey]
@@ -1182,7 +1212,7 @@ export async function signPendingTx(txId: string, calls: Array<{ to: string; dat
   const smartAccount = await toCircleSmartAccount({
     address: state.walletAddress as `0x${string}`,
     client: client as any,
-    owner: toWebAuthnAccount({ credential: state.credential as { id: string; publicKey: `0x${string}` } }),
+    owner: webAuthnOwner(state.credential as StoredCredential),
   })
 
   // Normalize calls — value can be string "0x0" or bigint

@@ -2,7 +2,6 @@ import {
   setupSessionKey,
   registerDelegateOwner,
   getDeploymentStatus,
-  deploySmartAccountOnChain,
 } from './modularWallet'
 import type { ChainAuthStatus } from '../types/agent'
 
@@ -241,7 +240,13 @@ async function authorizeDestinationChains(
   const warnings: string[] = []
   for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
     try {
-      await deploySmartAccountOnChain(chainKey, agentKey)
+      // `registerDelegateOwner` submits the single passkey UserOperation for
+      // this chain. For a deterministic Circle MSCA that first addOwners op
+      // carries the factory initCode, so it performs deploy + delegate
+      // authorization together. Do not call deploySmartAccountOnChain first:
+      // that would create a second UserOperation, hide the expected passkey
+      // ceremony behind a redundant deploy step, and leave the flow stuck on
+      // chains that are not deployed yet.
       await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, vaultToken, agentKey)
       chainAuthorizationStatus[chainKey] = 'authorized'
     } catch (error) {
