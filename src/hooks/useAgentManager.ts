@@ -21,7 +21,7 @@ import {
   SESSION_EXPIRED,
 } from '../api/vaultApi'
 import { registerPasskey, loginPasskey, getMscaState } from '../services/modularWallet'
-import { activateAgentSession } from '../services/agentSession'
+import { activateAgentSession, isOwnerSessionRequiredError } from '../services/agentSession'
 import {
   AGENT_KEYS,
   agentTypeFromKey,
@@ -410,28 +410,47 @@ export function useAgentManager() {
     const passkey = mode === 'register'
       ? await registerPasskey(agentKey, owner || undefined)
       : await loginPasskey(agentKey)
-    const ownerAfterPasskey = owner || await ensureConnectedOwnerSession()
-
-    const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey,
-      {
-        eoaAddress: ownerAfterPasskey.address,
-        ownerSessionToken: ownerAfterPasskey.token,
-        credentialId: passkey.credential.id,
-        // Ordinary re-login keeps the existing delegate and only restores Arc.
-        // A revoked session is different: activateAgentSession detects the
-        // rotated delegate and repairs Base/Arbitrum authorization once.
-        skipDestinationChains: mode === 'login',
-      })
+    let ownerAfterPasskey = owner
+    let activation
+    try {
+      // Existing-agent Login is passkey-first. If the durable binding can be
+      // recovered, no SIWE is needed here. Only an explicit owner-session guard
+      // triggers the owner wallet signature fallback below.
+      activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey,
+        {
+          ...(owner ? { eoaAddress: owner.address, ownerSessionToken: owner.token } : {}),
+          credentialId: passkey.credential.id,
+          allowDurableBindingRecovery: mode === 'login',
+          skipDestinationChains: mode === 'login',
+        })
+    } catch (error) {
+      if (mode !== 'login' || !isOwnerSessionRequiredError(error)) throw error
+      ownerAfterPasskey = await ensureConnectedOwnerSession()
+      activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey,
+        {
+          eoaAddress: ownerAfterPasskey.address,
+          ownerSessionToken: ownerAfterPasskey.token,
+          credentialId: passkey.credential.id,
+          skipDestinationChains: true,
+        })
+    }
+    if (!activation || !ownerAfterPasskey) {
+      // The existing binding path intentionally has no fresh SIWE token. The
+      // owner address is only needed for local UI bookkeeping in this branch.
+      ownerAfterPasskey = owner || { address: '', token: '' }
+    }
 
     // Use the owner token when available for owner-scoped dashboard reads. If
     // login was recovered entirely with passkey, keep the exact MSCA token so
     // the just-authenticated agent remains visible and usable.
-    const dashboardToken = ownerAfterPasskey.token
+    const dashboardToken = ownerAfterPasskey.token || passkey.sessionToken
     setVaultToken(dashboardToken)
     localStorage.setItem('arx_vault_token', dashboardToken)
     localStorage.setItem('arx_passkey_vault_token', passkey.sessionToken)
-    localStorage.setItem('arx_owner_vault_token', ownerAfterPasskey.token)
-    localStorage.setItem('arx_eoa_vault_token', ownerAfterPasskey.token)
+    if (ownerAfterPasskey.token) {
+      localStorage.setItem('arx_owner_vault_token', ownerAfterPasskey.token)
+      localStorage.setItem('arx_eoa_vault_token', ownerAfterPasskey.token)
+    }
     if (activation.warnings.length > 0 && mounted.current) {
       setNotice(`Agent Wallet aktif di Arc, Base, dan Arbitrum. ${activation.warnings.join('; ')}`)
     }

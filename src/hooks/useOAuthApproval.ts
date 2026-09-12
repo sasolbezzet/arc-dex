@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { registerPasskey, loginPasskey } from '../services/modularWallet'
-import { activateAgentSession, readSessionStatus } from '../services/agentSession'
+import { activateAgentSession, isOwnerSessionRequiredError, readSessionStatus } from '../services/agentSession'
 import { ensureConnectedOwnerSession } from '../auth'
 
 /**
@@ -132,19 +132,36 @@ export function useOAuthApproval() {
       // The login passkey proves the exact existing MSCA first. Only after
       // that ceremony succeeds do we obtain the owner proof needed by the
       // activation/final OAuth binding.
-      ownerAfterPasskey = owner || await ensureConnectedOwnerSession()
-      await withApprovalTimeout(
-        activateAgentSession(walletAddress, sessionToken, agentKey,
-          {
-            eoaAddress: ownerAfterPasskey.address,
-            ownerSessionToken: ownerAfterPasskey.token,
-            credentialId: passkey.credential.id,
-            // OAuth login must finish the existing Arc session without starting
-            // extra destination-chain passkey UserOps in the approval flow.
-            skipDestinationChains: mode === 'login',
-          }),
-        'Kesiapan Agent Wallet belum selesai dalam batas waktu. Tidak ada akses yang diizinkan; periksa status jaringan/Circle lalu ulangi dari passkey yang sama.',
-      )
+      ownerAfterPasskey = owner
+      let activation
+      try {
+        activation = await withApprovalTimeout(
+          activateAgentSession(walletAddress, sessionToken, agentKey,
+            {
+              ...(owner ? { eoaAddress: owner.address, ownerSessionToken: owner.token } : {}),
+              credentialId: passkey.credential.id,
+              allowDurableBindingRecovery: mode === 'login',
+              // OAuth login must finish the existing Arc session without starting
+              // extra destination-chain passkey UserOps in the approval flow.
+              skipDestinationChains: mode === 'login',
+            }),
+          'Kesiapan Agent Wallet belum selesai dalam batas waktu. Tidak ada akses yang diizinkan; periksa status jaringan/Circle lalu ulangi dari passkey yang sama.',
+        )
+      } catch (error) {
+        if (mode !== 'login' || !isOwnerSessionRequiredError(error)) throw error
+        ownerAfterPasskey = await ensureConnectedOwnerSession()
+        activation = await withApprovalTimeout(
+          activateAgentSession(walletAddress, sessionToken, agentKey,
+            {
+              eoaAddress: ownerAfterPasskey.address,
+              ownerSessionToken: ownerAfterPasskey.token,
+              credentialId: passkey.credential.id,
+              skipDestinationChains: true,
+            }),
+          'Kesiapan Agent Wallet belum selesai dalam batas waktu. Tidak ada akses yang diizinkan; periksa status jaringan/Circle lalu ulangi dari passkey yang sama.',
+        )
+      }
+      void activation
       const session = await readSessionStatus(sessionToken)
       if (!session) throw new Error('Status Agent Wallet tidak dapat dibaca. Tidak ada akses yang diizinkan; periksa koneksi backend lalu coba lagi.')
       verified = Boolean(

@@ -265,7 +265,14 @@ export async function activateAgentSession(
   walletAddress: string,
   vaultToken: string,
   agentKey: string,
-  options: { eoaAddress?: string; ownerSessionToken?: string; credentialId?: string; skipDestinationChains?: boolean } = {},
+  options: {
+    eoaAddress?: string
+    ownerSessionToken?: string
+    credentialId?: string
+    skipDestinationChains?: boolean
+    /** Existing-agent login may recover the owner relationship from its durable binding. */
+    allowDurableBindingRecovery?: boolean
+  } = {},
 ): Promise<SessionActivation> {
   if (!vaultToken) throw new Error('Sesi Agent Wallet belum tersedia')
 
@@ -350,14 +357,15 @@ export async function activateAgentSession(
   // authenticate a different identity and cause the backend owner mismatch.
   const ownerSessionToken = options.ownerSessionToken
   const verifiedEoaAddress = ownerSessionToken && options.eoaAddress ? options.eoaAddress : undefined
-  if (!passkeyOnlyReauthorization && (!verifiedEoaAddress || !ownerSessionToken)) {
+  const canRecoverDurableBinding = Boolean(options.allowDurableBindingRecovery && agentKey)
+  if (!passkeyOnlyReauthorization && !canRecoverDurableBinding && (!verifiedEoaAddress || !ownerSessionToken)) {
     throw ownerSessionRequiredError()
   }
 
   const result = await setupSessionKey(
     vaultToken,
-    passkeyOnlyReauthorization ? undefined : verifiedEoaAddress,
-    passkeyOnlyReauthorization ? undefined : ownerSessionToken,
+    passkeyOnlyReauthorization || canRecoverDurableBinding ? undefined : verifiedEoaAddress,
+    passkeyOnlyReauthorization || canRecoverDurableBinding ? undefined : ownerSessionToken,
     agentKey,
   )
   const authorizeDestinations = shouldAuthorizeDestinationChainsAfterActivation(

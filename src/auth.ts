@@ -258,54 +258,58 @@ export async function requireConnectedOwnerWallet(): Promise<{ address: string; 
  */
 export async function ensureConnectedOwnerSession(): Promise<{ address: string; token: string }> {
   const { address: normalizedAddress } = await requireConnectedOwnerWallet()
-  let ownerSessionIsValid = false
+  let invalidOwnerToken = false
+  let probeFailedUnexpectedly = false
 
-  // The connected EOA session is the owner proof. Reuse it for every agent
-  // operation while it is still valid; do not ask the owner to sign SIWE again
-  // merely because a passkey flow (Hermes/Claude/GPT) starts. A new SIWE is
-  // required only on the first owner connection, after expiry, or after the
-  // user switches to a different EOA.
+  // Probe the durable owner token first. `arc-dex-auth` is the dapp token and
+  // may be valid while the dedicated arx_vs_* vault session is stale (or the
+  // reverse after a backend restart). Never let an unrelated stale namespace
+  // overwrite a token that has already been validated.
+  const candidates: string[] = []
+  const addCandidate = (value: string | null) => {
+    const token = String(value || '').trim()
+    if (token && !candidates.includes(token)) candidates.push(token)
+  }
+  try {
+    addCandidate(localStorage.getItem('arx_owner_vault_token'))
+    addCandidate(localStorage.getItem('arx_eoa_vault_token'))
+  } catch { /* storage can be unavailable */ }
   const existing = getAuthSession()
-  if (existing?.token && existing.address.toLowerCase() === normalizedAddress.toLowerCase()) {
-    // Confirm the owner token against the live backend before using it for
-    // agent binding. A stale local token can have the right address but belong
-    // to a different API worker/session store after deployment.
+  if (existing?.token && existing.address.toLowerCase() === normalizedAddress.toLowerCase()) addCandidate(existing.token)
+
+  for (const token of candidates) {
     try {
       const probe = await fetch('/api/vault/limits', {
-        headers: { Authorization: `Bearer ${existing.token}` },
+        headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(10_000),
       })
       if (probe.ok) {
-        ownerSessionIsValid = true
         try {
-          localStorage.setItem('arx_owner_vault_token', existing.token)
-          localStorage.setItem('arx_eoa_vault_token', existing.token)
+          localStorage.setItem('arx_owner_vault_token', token)
+          localStorage.setItem('arx_eoa_vault_token', token)
         } catch { /* ignore */ }
-        const ownerToken = localStorage.getItem('arx_owner_vault_token') || ''
-        if (ownerToken) return { address: normalizedAddress, token: ownerToken }
-        // The connected-wallet session itself is still valid. Reuse it for
-        // agent actions on deployments whose backend does not mint a separate
-        // owner vault token; do not trigger another SIWE ceremony.
-        if (existing.token) {
-          localStorage.setItem('arx_owner_vault_token', existing.token)
-          localStorage.setItem('arx_eoa_vault_token', existing.token)
-          return { address: normalizedAddress, token: existing.token }
-        }
-        localStorage.removeItem(STORAGE_KEY)
+        return { address: normalizedAddress, token }
       }
-    } catch { /* re-authenticate below */ }
+      if (probe.status === 401 || probe.status === 403) invalidOwnerToken = true
+      else probeFailedUnexpectedly = true
+    } catch {
+      probeFailedUnexpectedly = true
+    }
   }
-  // `ensureAuthSession()` normally reuses a matching cached token. That is
-  // exactly the wrong behavior after the live probe rejected an expired or
-  // worker-local session: it would loop back with the same dead token and never
-  // open the SIWE prompt. Force a fresh owner signature only in that case.
-  if (!ownerSessionIsValid) {
-    try {
-      localStorage.removeItem('arx_owner_vault_token')
-      localStorage.removeItem('arx_eoa_vault_token')
-    } catch { /* ignore */ }
+
+  // A timeout/5xx is not proof that SIWE expired. Do not open a wallet popup
+  // while the backend is unavailable; let the caller retry safely.
+  if (probeFailedUnexpectedly && !invalidOwnerToken) {
+    throw new Error('Sesi owner belum dapat diverifikasi karena backend belum merespons. Coba lagi tanpa menghapus koneksi wallet.')
   }
-  await ensureAuthSession(normalizedAddress, !ownerSessionIsValid)
+
+  // No valid owner proof remains. This is the only path that intentionally
+  // requests a fresh SIWE signature (first owner connection or real expiry).
+  try {
+    localStorage.removeItem('arx_owner_vault_token')
+    localStorage.removeItem('arx_eoa_vault_token')
+  } catch { /* ignore */ }
+  await ensureAuthSession(normalizedAddress, true)
   // `ensureAuthSession` stores the HMAC dapp token. The owner vault token is
   // returned separately by `/api/auth/session` and is copied above by
   // authenticate(); do not confuse the two token namespaces.

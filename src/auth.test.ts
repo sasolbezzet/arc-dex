@@ -148,6 +148,32 @@ describe('auth utilities', () => {
       expect(localStorage.getItem('arx_owner_vault_token')).toBe(token)
     })
 
+    it('tries every owner token namespace before requesting SIWE', async () => {
+      const staleToken = 'stale-owner-token'
+      const validToken = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token: staleToken, issuedAt: Date.now() }))
+      localStorage.setItem('arx_owner_vault_token', staleToken)
+      localStorage.setItem('arx_eoa_vault_token', validToken)
+      mockProvider.request.mockResolvedValueOnce([OWNER])
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 401 } as any)
+        .mockResolvedValueOnce({ ok: true, status: 200 } as any)
+
+      await expect(ensureConnectedOwnerSession()).resolves.toEqual({ address: OWNER, token: validToken })
+      expect(mockProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'personal_sign' }))
+      expect(localStorage.getItem('arx_owner_vault_token')).toBe(validToken)
+    })
+
+    it('does not request SIWE for a backend timeout or server error', async () => {
+      const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))
+      mockProvider.request.mockResolvedValueOnce([OWNER])
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 } as any)
+
+      await expect(ensureConnectedOwnerSession()).rejects.toThrow(/backend belum merespons/i)
+      expect(mockProvider.request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'personal_sign' }))
+    })
+
     it('forces SIWE after passkey when the cached owner session is rejected', async () => {
       const staleToken = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
       const freshToken = 'fresh-owner-token'
