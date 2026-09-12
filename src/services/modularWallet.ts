@@ -217,6 +217,22 @@ function clearState(agentKey?: string) {
   localStorage.removeItem(stateStorageKey(agentKey))
 }
 
+async function fetchJsonWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = 30_000,
+): Promise<{ response: Response; data: any }> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal })
+    const data = await response.json().catch(() => ({}))
+    return { response, data }
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 // ── Transports ──
 function ensurePasskeyEnvironment() {
   if (typeof window === 'undefined') throw new Error('Passkey hanya dapat digunakan di browser.')
@@ -883,16 +899,16 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
 
   // Reserve the automation signer on the backend. The private key never enters
   // the browser; only its public address is returned for passkey authorization.
-  const reserveRes = await fetch(`${API}/api/session/generate-key`, {
+  const reserveRes = await fetchJsonWithTimeout(`${API}/api/session/generate-key`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
     body: JSON.stringify({ walletAddress: state.walletAddress, ownerAddress, ownerSessionToken, agentKey }),
-  })
-  const reserved = await reserveRes.json()
+  }, 30_000)
+  const reserved = reserveRes.data
   // Owner proof is mandatory. Never retry without it: doing so would recreate
   // the historical bug where an MSCA passkey was silently attached to a stale
   // or foreign owner identity.
-  if (!reserveRes.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
+  if (!reserveRes.response.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
   const delegateAddress = reserved.delegateAddress
 
   // A passkey login may be restoring an existing on-chain authorization. Ask
@@ -901,13 +917,13 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   // when it can independently verify the stored receipt and calldata; this
   // avoids duplicate owner mutations and also repairs the old split-brain
   // vault/session state after a restart or lost browser response.
-  const existingStatus = await fetch(`${API}/api/session/status`, {
+  const existingStatusResult = await fetchJsonWithTimeout(`${API}/api/session/status`, {
     headers: { Authorization: `Bearer ${vaultToken}` },
-  }).then(async response => {
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data?.error || `Session status failed (${response.status})`)
-    return data?.session || null
-  })
+  }, 20_000)
+  if (!existingStatusResult.response.ok) {
+    throw new Error(existingStatusResult.data?.error || `Session status failed (${existingStatusResult.response.status})`)
+  }
+  const existingStatus = existingStatusResult.data?.session || null
   if (existingStatus?.active === true && String(existingStatus.walletAddress || '').toLowerCase() === state.walletAddress.toLowerCase()) {
     saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, sessionActive: true }, agentKey)
     return { walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, active: true }
@@ -918,16 +934,17 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   // Reconcile that proof before considering another owner mutation.
   if (existingStatus?.authorizationUserOpHash) {
     let lastReconcileReason = ''
+    const reconciliationDeadline = Date.now() + 90_000
     // The hash already exists, so keep reconciling that exact operation while
     // Circle's receipt/indexer catches up. Never submit another addOwners while
     // this path is pending; doing so could create duplicate owners.
-    for (let attempt = 0; attempt < 60; attempt++) {
-      const reconcileResponse = await fetch(`${API}/api/session/reconcile`, {
+    for (let attempt = 0; attempt < 60 && Date.now() < reconciliationDeadline; attempt++) {
+      const reconcileResult = await fetchJsonWithTimeout(`${API}/api/session/reconcile`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${vaultToken}` },
-      })
-      const reconcileData = await reconcileResponse.json().catch(() => ({}))
-      if (!reconcileResponse.ok) throw new Error(reconcileData?.error || `Session reconciliation failed (${reconcileResponse.status})`)
+      }, 75_000)
+      if (!reconcileResult.response.ok) throw new Error(reconcileResult.data?.error || `Session reconciliation failed (${reconcileResult.response.status})`)
+      const reconcileData = reconcileResult.data
       if (reconcileData?.session?.active === true) {
         const reconciledDelegate = reconcileData.session.delegateAddress || delegateAddress
         saveState({ ...state, walletAddress: state.walletAddress, delegateAddress: reconciledDelegate, sessionActive: true }, agentKey)
@@ -964,7 +981,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   if (!authorization.success || !authorization.userOpHash) throw new Error('Automation signer authorization did not return a UserOperation hash')
 
   // Activate the already-reserved signer only after authorization succeeded.
-  const res = await fetch(`${API}/api/session/setup`, {
+  const setupResult = await fetchJsonWithTimeout(`${API}/api/session/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${vaultToken}` },
     body: JSON.stringify({
@@ -973,9 +990,9 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
       authorizationUserOpHash: authorization.userOpHash,
       ownerAddress,
     }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok || !data.success) {
+  }, 30_000)
+  const data = setupResult.data
+  if (!setupResult.response.ok || !data.success) {
     const detail = [data.code, data.retryAllowed === true ? 'retry_allowed' : '', data.receiptStatus ? `receipt=${data.receiptStatus}` : '', data.transactionHash ? `tx=${data.transactionHash}` : ''].filter(Boolean).join(' ')
     throw new Error(`${data.error || 'Session setup gagal'}${detail ? ` (${detail})` : ''}`)
   }

@@ -1,7 +1,7 @@
 import { safePost, HttpError } from './api'
 import { getAddress } from 'viem'
-import { findConnectedWalletProvider, type Eip1193Provider } from './walletProvider'
-import { openWalletConnectAppForSigning, resumeWalletConnect } from './services/walletConnect'
+import { findConnectedWalletProvider, setWalletProvider, type Eip1193Provider } from './walletProvider'
+import { openWalletConnectAppForSigning, resumeWalletConnect, restoreWalletConnect, getWalletConnectProviderSync } from './services/walletConnect'
 
 const STORAGE_KEY = 'arc-dex-auth'
 const BACKEND_PREFERENCE_KEY = 'arc-dex-auth-backend-pref'
@@ -225,11 +225,28 @@ export function getAuthToken() {
 }
 
 export async function requireConnectedOwnerWallet(): Promise<{ address: string; provider: Eip1193Provider }> {
-  const provider = await findConnectedWalletProvider()
-  if (!provider) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
-  const accounts = await provider.request({ method: 'eth_accounts' })
-  const address = String(accounts?.[0] || '').trim()
-  if (!address) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
+  // WalletConnect sessions are persisted independently from the injected
+  // provider. Restore them passively before searching providers so a mobile
+  // Chrome refresh does not turn an already-connected owner into an apparent
+  // disconnected wallet. `restoreWalletConnect` only calls eth_accounts; it
+  // never opens the QR modal, requests accounts, or asks for SIWE.
+  let provider = await findConnectedWalletProvider()
+  let accounts = provider ? await provider.request({ method: 'eth_accounts' }).catch(() => []) : []
+  let address = String(accounts?.[0] || '').trim()
+  if (!address) {
+    try {
+      const restoredAddress = await restoreWalletConnect()
+      const restoredProvider = getWalletConnectProviderSync()
+      if (restoredAddress && restoredProvider) {
+        provider = await findConnectedWalletProvider(restoredAddress) || restoredProvider
+        if (!provider) throw new Error('WalletConnect provider tidak tersedia setelah restore.')
+        setWalletProvider(provider)
+        accounts = await provider.request({ method: 'eth_accounts' }).catch(() => [])
+        address = String(accounts?.[0] || restoredAddress).trim()
+      }
+    } catch { /* explicit connect/signature below remains the recovery path */ }
+  }
+  if (!provider || !address) throw new Error('Hubungkan wallet utama terlebih dahulu sebelum Login passkey Agent Wallet.')
   return { address: getAddress(address), provider }
 }
 
