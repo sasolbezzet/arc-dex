@@ -16,7 +16,7 @@ import { isSuccessfulUserOpReceipt } from './mscaPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { parsePublicKey } from 'webauthn-p256'
 import { arcTestnet } from 'viem/chains'
-import { requireConnectedOwnerWallet } from '../auth'
+import { ensureConnectedOwnerSession, requireConnectedOwnerWallet } from '../auth'
 
 // Circle's documented Modular Wallet endpoint and credential names.
 // The Client Key must be created in Circle Console and bound to this web origin;
@@ -33,10 +33,6 @@ type PasskeyMode = 'Login' | 'Register'
 export interface OwnerSessionProof {
   address: string
   token: string
-}
-
-function requiresPluginOwnerSession(agentKey: string): boolean {
-  return String(agentKey || '').trim().toLowerCase() !== DEFAULT_AGENT_KEY
 }
 
 // ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
@@ -671,9 +667,10 @@ export function getPasskeyRpId() {
 export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: OwnerSessionProof): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
   const selectedAgentKey = resolveAgentKey(agentKey)
-  if (requiresPluginOwnerSession(selectedAgentKey) && (!ownerProof?.address || !ownerProof?.token)) {
-    throw new Error('Hubungkan wallet utama terlebih dahulu sebelum membuat Agent Wallet.')
-  }
+  // Registration is deliberately passkey-first. The owner EOA is still
+  // required, but its SIWE proof is collected only after the browser has
+  // completed navigator.credentials.create(), so a stale owner token cannot
+  // prevent the passkey prompt from appearing.
   localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
   // Keep one browser credential request at a time. The browser assertion is
   // verified by Circle exactly once on the backend; the SDK high-level helper
@@ -685,7 +682,8 @@ export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?:
         publicKey: registrationPublicKeyOptions(options),
       }) as any
       if (!rawCredential) throw new Error('No credential created.')
-      const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId, selectedAgentKey, ownerProof)
+      const verifiedOwner = ownerProof || await ensureConnectedOwnerSession()
+      const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId, selectedAgentKey, verifiedOwner)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
       const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
@@ -938,7 +936,11 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   // Owner proof is mandatory. Never retry without it: doing so would recreate
   // the historical bug where an MSCA passkey was silently attached to a stale
   // or foreign owner identity.
-  if (!reserveRes.response.ok || !reserved.success || !reserved.delegateAddress) throw new Error(reserved.error || 'Automation signer reservation failed')
+  if (!reserveRes.response.ok || !reserved.success || !reserved.delegateAddress) {
+    const error = new Error(reserved.error || 'Automation signer reservation failed') as Error & { code?: string }
+    if (reserved.code) error.code = String(reserved.code)
+    throw error
+  }
   const delegateAddress = reserved.delegateAddress
 
   // A passkey login may be restoring an existing on-chain authorization. Ask

@@ -393,7 +393,7 @@ export function useAgentManager() {
    * EOA owns the agent binding, while the passkey authenticates the MSCA.
    */
   const openAgentWallet = useCallback(async (
-    agentType: AgentType,
+    agentType: AgentType | string,
     mode: 'login' | 'register',
   ): Promise<{ walletAddress: string; sessionToken: string }> => {
     const rawAgentKey = typeof agentType === 'string'
@@ -402,15 +402,14 @@ export function useAgentManager() {
     const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
     if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
 
-    // Create/register needs the owner proof before WebAuthn because it creates
-    // a new owner↔MSCA binding. Existing-agent Login is different: loginPasskey
-    // performs the silent connected-wallet preflight and opens WebAuthn first;
-    // owner SIWE is requested only after that passkey succeeds.
-    const owner = mode === 'register' ? await ensureConnectedOwnerSession() : null
+    // Both modes perform the WebAuthn ceremony before any owner SIWE fallback.
+    // Register will obtain the owner proof inside registerPasskey after the
+    // credential is created; Login obtains it only if activation explicitly
+    // reports owner_session_required.
     const passkey = mode === 'register'
-      ? await registerPasskey(agentKey, owner || undefined)
+      ? await registerPasskey(agentKey)
       : await loginPasskey(agentKey)
-    let ownerAfterPasskey = owner
+    let ownerAfterPasskey = mode === 'register' ? await ensureConnectedOwnerSession() : null
     let activation
     try {
       // Existing-agent Login is passkey-first. If the durable binding can be
@@ -418,7 +417,7 @@ export function useAgentManager() {
       // triggers the owner wallet signature fallback below.
       activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey,
         {
-          ...(owner ? { eoaAddress: owner.address, ownerSessionToken: owner.token } : {}),
+          ...(ownerAfterPasskey ? { eoaAddress: ownerAfterPasskey.address, ownerSessionToken: ownerAfterPasskey.token } : {}),
           credentialId: passkey.credential.id,
           allowDurableBindingRecovery: mode === 'login',
           skipDestinationChains: mode === 'login',
@@ -435,9 +434,9 @@ export function useAgentManager() {
         })
     }
     if (!activation || !ownerAfterPasskey) {
-      // The existing binding path intentionally has no fresh SIWE token. The
-      // owner address is only needed for local UI bookkeeping in this branch.
-      ownerAfterPasskey = owner || { address: '', token: '' }
+      // The existing binding path intentionally has no fresh SIWE token. Keep
+      // the MSCA token as the dashboard credential until owner proof is needed.
+      ownerAfterPasskey = { address: '', token: '' }
     }
 
     // Use the owner token when available for owner-scoped dashboard reads. If
@@ -502,32 +501,12 @@ export function useAgentManager() {
       const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
       if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
 
-      // Existing-agent Login does the silent wallet preflight inside
-      // loginPasskey, then opens WebAuthn. Only after the passkey succeeds do we
-      // request/renew the owner SIWE session needed for activation.
-      const passkey = await loginPasskey(agentKey)
-      const owner = await ensureConnectedOwnerSession()
-      const activation = await activateAgentSession(passkey.walletAddress, passkey.sessionToken, agentKey, {
-        eoaAddress: owner.address,
-        ownerSessionToken: owner.token,
-        credentialId: passkey.credential.id,
-        // Re-login normally restores Arc only. When revoke rotated the
-        // delegate, activateAgentSession detects the old/new pair and performs
-        // the required Base/Arbitrum authorization for the new delegate.
-        skipDestinationChains: true,
-      })
-
-      const dashboardToken = owner.token
-      setVaultToken(dashboardToken)
-      localStorage.setItem('arx_vault_token', dashboardToken)
-      localStorage.setItem('arx_passkey_vault_token', passkey.sessionToken)
-      localStorage.setItem('arx_owner_vault_token', owner.token)
-      localStorage.setItem('arx_eoa_vault_token', owner.token)
-      if (activation.warnings.length > 0) {
-        safeSet(setNotice, `Aktif di Arc, Base, dan Arbitrum. ${activation.warnings.join('; ')}`)
-      }
+      // Reuse the same passkey-first path as onboarding. This is important:
+      // the card button must not introduce a second implementation that asks
+      // for SIWE unconditionally after every successful passkey.
+      await openAgentWallet(agentKey, 'login')
       await refreshAll()
-    }), [run, refreshAll, setVaultToken, safeSet])
+    }), [run, refreshAll, openAgentWallet])
 
   /** Issue a fresh connection token for an agent that already has a binding. */
   const createToken = useCallback((agentKey: string) =>

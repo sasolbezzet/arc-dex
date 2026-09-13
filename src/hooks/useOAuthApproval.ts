@@ -108,37 +108,35 @@ export function useOAuthApproval() {
     const agentKey = `oauth:${request.clientId}`
 
     try {
-      // Existing-agent Login must show the passkey first. loginPasskey performs
-      // the silent connected-wallet check and rejects with no WebAuthn prompt
-      // when eth_accounts is empty. Registration remains owner-first because it
-      // creates a new owner↔MSCA binding.
-      const owner = mode === 'register' ? await ensureConnectedOwnerSession() : null
+      // Both modes show the passkey before any owner SIWE fallback. Register
+      // obtains the owner proof inside registerPasskey after the credential is
+      // created; Login obtains it only if activation explicitly requires it.
       let walletAddress = ''
       let sessionToken = ''
       // Login obtains this proof only after the passkey ceremony. Keep it in
       // scope for the final passkey-verify call; otherwise the backend cannot
       // issue the OAuth code and the browser never redirects back to Claude/GPT.
-      let ownerAfterPasskey = owner
+      let ownerAfterPasskey: Awaited<ReturnType<typeof ensureConnectedOwnerSession>> | null = null
       let verified = false
 
       setStep('passkey')
       const passkey = mode === 'register'
-        ? await registerPasskey(agentKey, owner || undefined)
+        ? await registerPasskey(agentKey)
         : await loginPasskey(agentKey)
       walletAddress = passkey.walletAddress
       sessionToken = passkey.sessionToken
+      if (mode === 'register') ownerAfterPasskey = await ensureConnectedOwnerSession()
 
       setStep('checking')
       // The login passkey proves the exact existing MSCA first. Only after
       // that ceremony succeeds do we obtain the owner proof needed by the
       // activation/final OAuth binding.
-      ownerAfterPasskey = owner
       let activation
       try {
         activation = await withApprovalTimeout(
           activateAgentSession(walletAddress, sessionToken, agentKey,
             {
-              ...(owner ? { eoaAddress: owner.address, ownerSessionToken: owner.token } : {}),
+              ...(ownerAfterPasskey ? { eoaAddress: ownerAfterPasskey.address, ownerSessionToken: ownerAfterPasskey.token } : {}),
               credentialId: passkey.credential.id,
               allowDurableBindingRecovery: mode === 'login',
               // OAuth login must finish the existing Arc session without starting
