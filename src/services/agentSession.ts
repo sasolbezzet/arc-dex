@@ -44,7 +44,10 @@ interface SessionStatusResponse {
     manualRevokePending?: boolean
     authorizationUserOpHash?: string
     pendingAuthorization?: boolean
-  }
+    agentBindingActive?: boolean
+    agentBindingFound?: boolean
+    agentBindingReason?: string
+}
 }
 
 /**
@@ -99,6 +102,9 @@ interface ReconcileResponse {
   retryAllowed?: boolean
   userOpHash?: string
   reconciled?: boolean
+  agentBindingActive?: boolean
+  agentBindingFound?: boolean
+  agentBindingReason?: string
 }
 
 /**
@@ -111,14 +117,15 @@ export function shouldReconcileExistingSession(
   walletAddress: string,
 ): boolean {
   if (!session?.walletAddress || String(session.walletAddress).toLowerCase() !== walletAddress.toLowerCase()) return false
-  if (['manual_revoke', 'agent_manual'].includes(String(session.statusReason || session.revokeReason || ''))) return false
+  if (['manual_revoke', 'agent_manual', 'agent_deleted', 'clear'].includes(String(session.statusReason || session.revokeReason || ''))) return false
   return session.manualRevokePending !== true
 }
 
 /** Read the backend's view of the session bound to this token. */
-export async function readSessionStatus(vaultToken: string): Promise<SessionStatusResponse['session'] | null> {
+export async function readSessionStatus(vaultToken: string, agentKey = ''): Promise<SessionStatusResponse['session'] | null> {
   try {
-    const response = await fetch(`${API}/api/session/status`, {
+    const query = agentKey ? `?agentKey=${encodeURIComponent(agentKey)}` : ''
+    const response = await fetch(`${API}/api/session/status${query}`, {
       headers: { Authorization: `Bearer ${vaultToken}` },
       signal: AbortSignal.timeout(20_000),
     })
@@ -204,7 +211,7 @@ async function activateBindingAfterSession(
   agentKey: string,
   ownerProof?: { address?: string; token?: string },
   credentialId = '',
-): Promise<void> {
+): Promise<boolean> {
   const response = await fetch(`${API}/api/session/activate-binding`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${vaultToken}` },
@@ -218,11 +225,12 @@ async function activateBindingAfterSession(
     }),
     signal: AbortSignal.timeout(20_000),
   })
-  if (response.status === 404) return
+  if (response.status === 404) return false
   const data = await response.json().catch(() => ({})) as { success?: boolean; error?: string }
   if (!response.ok || !data.success) {
     throw new Error(data.error || `Binding agent gagal diaktifkan (${response.status})`)
   }
+  return true
 }
 
 async function destinationAuthorizationMissing(
@@ -304,21 +312,25 @@ export async function activateAgentSession(
 
   // Re-running setup revokes and re-authorizes the delegate, leaving a window
   // where agent tools fail. If this exact wallet is already active, adopt it.
-  const existing = await readSessionStatus(vaultToken)
+  const existing = await readSessionStatus(vaultToken, agentKey)
   if (
     existing?.active
     && existing.delegateAddress
     && String(existing.walletAddress || '').toLowerCase() === walletAddress.toLowerCase()
   ) {
-    const authorizeDestinations = !options.skipDestinationChains
+    const authorizeDestinations = (!options.skipDestinationChains || existing.agentBindingActive === false)
       && await destinationAuthorizationMissing(walletAddress, vaultToken)
     const { chainAuthorizationStatus, warnings } = authorizeDestinations
       ? await authorizeDestinationChains(walletAddress, existing.delegateAddress, vaultToken, agentKey)
       : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
-    await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
+    const bindingActivated = await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
       address: options.eoaAddress,
       token: options.ownerSessionToken,
     }, options.credentialId)
+    // A cleared agent may share an active MSCA session with another agent. In
+    // that case the wallet session is healthy but this exact binding is gone;
+    // do not silently report success or resurrect it without fresh owner proof.
+    if (!bindingActivated) throw ownerSessionRequiredError()
     return {
       walletAddress,
       delegateAddress: existing.delegateAddress,
@@ -335,18 +347,21 @@ export async function activateAgentSession(
   // deliberately surfaced instead of being replaced, preventing duplicate
   // delegate owners.
   let passkeyOnlyReauthorization = false
+  const ownerProofRequiredForClearedWallet = existing?.agentBindingFound === false
+    || ['agent_deleted', 'clear'].includes(String(existing?.statusReason || existing?.revokeReason || ''))
   if (shouldReconcileExistingSession(existing, walletAddress)) {
     const reconciled = await reconcileWithPasskey(vaultToken, walletAddress)
     if (reconciled?.active && reconciled.delegateAddress) {
-      const authorizeDestinations = !options.skipDestinationChains
+      const authorizeDestinations = (!options.skipDestinationChains || reconciled.agentBindingActive === false)
       && await destinationAuthorizationMissing(walletAddress, vaultToken)
       const { chainAuthorizationStatus, warnings } = authorizeDestinations
         ? await authorizeDestinationChains(walletAddress, reconciled.delegateAddress, vaultToken, agentKey)
         : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
-      await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
+      const bindingActivated = await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
         address: options.eoaAddress,
         token: options.ownerSessionToken,
       }, options.credentialId)
+      if (!bindingActivated) throw ownerSessionRequiredError()
       return {
         walletAddress,
         delegateAddress: reconciled.delegateAddress,
@@ -383,8 +398,14 @@ export async function activateAgentSession(
   // authenticate a different identity and cause the backend owner mismatch.
   const ownerSessionToken = options.ownerSessionToken
   const verifiedEoaAddress = ownerSessionToken && options.eoaAddress ? options.eoaAddress : undefined
-  const canRecoverDurableBinding = Boolean(options.allowDurableBindingRecovery && agentKey)
-  if (!passkeyOnlyReauthorization && !canRecoverDurableBinding && (!verifiedEoaAddress || !ownerSessionToken)) {
+  // Durable recovery is valid for Revoke (the binding remains) and ordinary
+  // login. Clear deletes the binding, so it must use the owner-proof path to
+  // recreate exactly one binding for this already-proven wallet.
+  const canRecoverDurableBinding = Boolean(
+    options.allowDurableBindingRecovery && agentKey && !ownerProofRequiredForClearedWallet,
+  )
+  if ((!passkeyOnlyReauthorization && !canRecoverDurableBinding)
+    || (ownerProofRequiredForClearedWallet && !verifiedEoaAddress)) {
     throw ownerSessionRequiredError()
   }
 
@@ -394,8 +415,15 @@ export async function activateAgentSession(
     passkeyOnlyReauthorization || canRecoverDurableBinding ? undefined : ownerSessionToken,
     agentKey,
   )
-  const authorizeDestinations = !options.skipDestinationChains
-    && await destinationAuthorizationMissing(walletAddress, vaultToken)
+  // A normal login keeps the same delegate and can remain Arc-only. Clear and
+  // manual revoke may produce a fresh delegate, however; that delegate has no
+  // Base/Arbitrum authorization history and must complete the same three-chain
+  // setup before the agent is reported ready.
+  const authorizeDestinations = shouldAuthorizeDestinationChainsAfterActivation(
+    options.skipDestinationChains && existing?.agentBindingActive !== false,
+    existing?.delegateAddress,
+    result.delegateAddress,
+  ) && await destinationAuthorizationMissing(walletAddress, vaultToken)
   const { chainAuthorizationStatus, warnings } = authorizeDestinations
     ? await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
     : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
