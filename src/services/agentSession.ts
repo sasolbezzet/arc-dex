@@ -13,10 +13,12 @@ import type { ChainAuthStatus } from '../types/agent'
  *   1. reuse an already-active session for this exact wallet (idempotent), else
  *   2. reserve a delegate + addOwners on Arc (deploy + authorize in one UserOp)
  *      and register it with the backend, then
- *   3. best-effort authorize the same delegate on Base/Arbitrum.
+ *   3. authorize and verify the same deterministic MSCA on Base/Arbitrum.
  *
- * Step 3 must never fail the whole flow: a destination-chain problem cannot be
- * allowed to deactivate the Arc session that MCP tools depend on.
+ * Agent Wallet creation is fail-closed: the function does not return a usable
+ * activation until Arc, Base Sepolia, and Arbitrum Sepolia are all deployed
+ * and authorized. A destination-chain failure is therefore an error, never a
+ * token-issuance warning.
  */
 
 const API = '' // same-origin
@@ -27,7 +29,7 @@ export interface SessionActivation {
   sessionActive: boolean
   chainAuthorizationStatus: Record<string, ChainAuthStatus>
   deploymentStatus: Record<string, unknown>
-  /** Non-fatal problems from destination chains, surfaced as a soft warning. */
+  /** Empty on success. Destination-chain failures throw before activation is returned. */
   warnings: string[]
 }
 
@@ -210,24 +212,23 @@ async function activateBindingAfterSession(
 async function destinationAuthorizationMissing(
   walletAddress: string,
   vaultToken: string,
-  skipDestinationChains = false,
 ): Promise<boolean> {
-  if (!skipDestinationChains) return false
-  try {
-    const statuses = await Promise.all(['base-sepolia', 'arbitrum-sepolia'].map(async chainKey => {
-      const response = await fetch(`${API}/api/session/destination-status?chainKey=${chainKey}&walletAddress=${encodeURIComponent(walletAddress)}`, {
-        headers: { Authorization: `Bearer ${vaultToken}` },
-        signal: AbortSignal.timeout(20_000),
-      })
-      if (!response.ok) return null
-      return await response.json().catch(() => null) as { authorized?: boolean } | null
-    }))
-    // Only an explicit successful status response can trigger extra UserOps.
-    // An unavailable status remains fail-closed and can be retried by Login.
-    return statuses.some(status => status && status.authorized !== true)
-  } catch {
-    return false
-  }
+  // Always read both destination chains. Registration and login share this
+  // check so an already-complete wallet is not asked to submit duplicate
+  // addOwners operations, while an incomplete wallet remains fail-closed.
+  const statuses = await Promise.all(['base-sepolia', 'arbitrum-sepolia'].map(async chainKey => {
+    const response = await fetch(`${API}/api/session/destination-status?chainKey=${chainKey}&walletAddress=${encodeURIComponent(walletAddress)}`, {
+      headers: { Authorization: `Bearer ${vaultToken}` },
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = await response.json().catch(() => null) as { authorized?: boolean; deployed?: boolean; error?: string } | null
+    if (!response.ok || !data) {
+      throw new Error(`${chainKey}: status deployment/otorisasi tidak tersedia (${data?.error || response.status})`)
+    }
+    // An authorization hash without deployed bytecode is not a ready MSCA.
+    return data.authorized === true && data.deployed === true
+  }))
+  return statuses.some(ready => !ready)
 }
 
 async function authorizeDestinationChains(
@@ -244,9 +245,7 @@ async function authorizeDestinationChains(
       // this chain. For a deterministic Circle MSCA that first addOwners op
       // carries the factory initCode, so it performs deploy + delegate
       // authorization together. Do not call deploySmartAccountOnChain first:
-      // that would create a second UserOperation, hide the expected passkey
-      // ceremony behind a redundant deploy step, and leave the flow stuck on
-      // chains that are not deployed yet.
+      // that would create a second UserOperation and make retries ambiguous.
       await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, vaultToken, agentKey)
       chainAuthorizationStatus[chainKey] = 'authorized'
     } catch (error) {
@@ -254,7 +253,18 @@ async function authorizeDestinationChains(
       warnings.push(error instanceof Error ? error.message : `${chainKey}: gagal`)
     }
   }
-  return { chainAuthorizationStatus, warnings }
+  if (warnings.length > 0) {
+    const error = new Error(`Deployment/otorisasi 3-chain belum lengkap: ${warnings.join('; ')}`) as Error & {
+      code?: string
+      chainAuthorizationStatus?: Record<string, ChainAuthStatus>
+      warnings?: string[]
+    }
+    error.code = 'destination_chain_authorization_incomplete'
+    error.chainAuthorizationStatus = chainAuthorizationStatus
+    error.warnings = warnings
+    throw error
+  }
+  return { chainAuthorizationStatus, warnings: [] }
 }
 
 /**
@@ -284,8 +294,7 @@ export async function activateAgentSession(
     && existing.delegateAddress
     && String(existing.walletAddress || '').toLowerCase() === walletAddress.toLowerCase()
   ) {
-    const authorizeDestinations = destinationChainAuthorizationEnabled(options.skipDestinationChains)
-      || await destinationAuthorizationMissing(walletAddress, vaultToken, Boolean(options.skipDestinationChains))
+    const authorizeDestinations = await destinationAuthorizationMissing(walletAddress, vaultToken)
     const { chainAuthorizationStatus, warnings } = authorizeDestinations
       ? await authorizeDestinationChains(walletAddress, existing.delegateAddress, vaultToken, agentKey)
       : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
@@ -312,8 +321,7 @@ export async function activateAgentSession(
   if (existing?.walletAddress && String(existing.walletAddress).toLowerCase() === walletAddress.toLowerCase()) {
     const reconciled = await reconcileWithPasskey(vaultToken, walletAddress)
     if (reconciled?.active && reconciled.delegateAddress) {
-      const authorizeDestinations = destinationChainAuthorizationEnabled(options.skipDestinationChains)
-        || await destinationAuthorizationMissing(walletAddress, vaultToken, Boolean(options.skipDestinationChains))
+      const authorizeDestinations = await destinationAuthorizationMissing(walletAddress, vaultToken)
       const { chainAuthorizationStatus, warnings } = authorizeDestinations
         ? await authorizeDestinationChains(walletAddress, reconciled.delegateAddress, vaultToken, agentKey)
         : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
@@ -368,11 +376,7 @@ export async function activateAgentSession(
     passkeyOnlyReauthorization || canRecoverDurableBinding ? undefined : ownerSessionToken,
     agentKey,
   )
-  const authorizeDestinations = shouldAuthorizeDestinationChainsAfterActivation(
-    options.skipDestinationChains,
-    existing?.delegateAddress,
-    result.delegateAddress,
-  )
+  const authorizeDestinations = await destinationAuthorizationMissing(walletAddress, vaultToken)
   const { chainAuthorizationStatus, warnings } = authorizeDestinations
     ? await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
     : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }

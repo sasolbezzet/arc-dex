@@ -45,6 +45,7 @@ export type OAuthStep = 'idle' | 'passkey' | 'checking' | 'approving' | 'done' |
 export interface OAuthRequest {
   requestId: string
   clientId: string
+  agentName: string
   redirectUri: string
   state: string
   codeChallenge: string
@@ -70,18 +71,22 @@ export function readOAuthRequestFromUrl(search = window.location.search): OAuthR
   return {
     requestId,
     clientId,
+    agentName: params.get('agent_name') || '',
     redirectUri,
     state: params.get('state') || '',
     codeChallenge: params.get('code_challenge') || '',
   }
 }
 
-/** Friendly agent name from an OAuth clientId such as `arcox_1a2b…`. */
-export function oauthAgentLabel(clientId: string): string {
-  const value = clientId.toLowerCase()
-  if (value.includes('claude')) return 'Claude'
-  if (value.includes('chatgpt') || value.includes('gpt')) return 'ChatGPT'
-  return 'Agent MCP'
+/** Friendly agent name from an OAuth clientId or DCR client_name. */
+export function oauthAgentLabel(clientId: string, explicitAgentName = ''): string {
+  const value = `${clientId} ${explicitAgentName}`.toLowerCase()
+  if (value.includes('claude') || value.includes('anthropic')) return 'Claude'
+  if (value.includes('chatgpt') || value.includes('gpt') || value.includes('openai')) return 'ChatGPT'
+  if (value.includes('grok') || value.includes('xai')) return 'Grok'
+  if (value.includes('hermes')) return 'Hermes'
+  const cleaned = String(explicitAgentName || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()
+  return cleaned && !/^(agent|mcp)(\s+agent)?$/i.test(cleaned) ? cleaned.slice(0, 48) : 'Agent MCP'
 }
 
 export function useOAuthApproval() {
@@ -106,6 +111,7 @@ export function useOAuthApproval() {
     // session, so a stored token is never trusted on its own.
     const storageKey = `arx_oauth_vault_token:${request.clientId}`
     const agentKey = `oauth:${request.clientId}`
+    const agentName = oauthAgentLabel(request.clientId, request.agentName)
 
     try {
       // Both modes show the passkey before any owner SIWE fallback. Register
@@ -121,7 +127,7 @@ export function useOAuthApproval() {
 
       setStep('passkey')
       const passkey = mode === 'register'
-        ? await registerPasskey(agentKey)
+        ? await registerPasskey(agentKey, undefined, `${agentName} Agent Wallet`)
         : await loginPasskey(agentKey)
       walletAddress = passkey.walletAddress
       sessionToken = passkey.sessionToken
@@ -218,7 +224,7 @@ export function useOAuthApproval() {
     setRequest(null)
     // Drop the approval parameters so a reload does not re-open the prompt.
     const url = new URL(window.location.href)
-    for (const key of ['auth', 'request_id', 'client_id', 'redirect_uri', 'state', 'code_challenge']) {
+    for (const key of ['auth', 'request_id', 'client_id', 'agent_name', 'redirect_uri', 'state', 'code_challenge']) {
       url.searchParams.delete(key)
     }
     window.history.replaceState({}, '', url.toString())
@@ -226,7 +232,7 @@ export function useOAuthApproval() {
 
   return {
     request,
-    agentLabel: request ? oauthAgentLabel(request.clientId) : '',
+    agentLabel: request ? oauthAgentLabel(request.clientId, request.agentName) : '',
     step,
     stepLabel: OAUTH_STEP_LABEL[step],
     busy: step === 'passkey' || step === 'checking' || step === 'approving',

@@ -29,10 +29,61 @@ let passkeyOperationInFlight: Promise<unknown> | null = null
 const PASSKEY_REGISTRATION_USERNAME_KEY = 'arx_passkey_registration_username'
 type PasskeyMode = 'Login' | 'Register'
 
-/** Verified owner-wallet session passed to Plugin agent login flows. */
+/** Proof that the connected primary EOA has an authenticated owner session. */
 export interface OwnerSessionProof {
   address: string
   token: string
+}
+
+/** Human-readable labels used by the browser/password-manager passkey UI. */
+const PASSKEY_AGENT_LABELS = {
+  claude: 'Claude Agent Wallet',
+  chatgpt: 'ChatGPT Agent Wallet',
+  grok: 'Grok Agent Wallet',
+  hermes: 'Hermes Agent Wallet',
+  custom: 'Custom Agent Wallet',
+} as const
+
+function cleanPasskeyLabel(value: unknown) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48)
+}
+
+/**
+ * Resolve the provider label independently from the durable agent key. OAuth
+ * client IDs are dynamically generated, so callers may pass the server-provided
+ * client name as the second argument when the key itself has no provider name.
+ */
+export function passkeyAgentDisplayName(agentKey = '', explicitAgentName = ''): string {
+  const value = `${String(agentKey || '')} ${String(explicitAgentName || '')}`.toLowerCase()
+  if (value.includes('chatgpt') || value.includes('gpt')) return PASSKEY_AGENT_LABELS.chatgpt
+  if (value.includes('claude') || value.includes('anthropic')) return PASSKEY_AGENT_LABELS.claude
+  if (value.includes('grok') || value.includes('xai')) return PASSKEY_AGENT_LABELS.grok
+  if (value.includes('hermes')) return PASSKEY_AGENT_LABELS.hermes
+
+  const explicit = cleanPasskeyLabel(explicitAgentName)
+  if (explicit && !/^(agent|mcp)(\s+agent)?$/i.test(explicit)) {
+    return `${explicit} Agent Wallet`.slice(0, 64)
+  }
+  return PASSKEY_AGENT_LABELS.custom
+}
+
+function registrationAgentSlug(agentKey = '', explicitAgentName = '') {
+  const identity = `${String(agentKey || '')} ${String(explicitAgentName || '')}`.toLowerCase()
+  if (identity.includes('chatgpt') || identity.includes('gpt')) return 'chatgpt'
+  if (identity.includes('claude') || identity.includes('anthropic')) return 'claude'
+  if (identity.includes('grok') || identity.includes('xai')) return 'grok'
+  if (identity.includes('hermes')) return 'hermes'
+  const explicitSlug = cleanPasskeyLabel(explicitAgentName).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 12)
+  const keySlug = String(agentKey || DEFAULT_AGENT_KEY).toLowerCase()
+    .replace(/^oauth:/, '')
+    .replace(/\|.*$/, '')
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 12)
+  return explicitSlug || keySlug || 'agent'
 }
 
 // ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
@@ -253,36 +304,16 @@ function runPasskeyOperation<T>(operation: () => Promise<T>): Promise<T> {
   return request
 }
 
-function registrationUsername(agentKey = DEFAULT_AGENT_KEY) {
-  // Circle requires a globally unique username for each registration. Never
-  // reuse the old single global username: creating a second agent otherwise
-  // fails before WebAuthn with `username is duplicate`.
-  //
-  // Username rules enforced by Circle:
-  //   - 5 to 50 characters
-  //   - only alphanumeric and _@.:+-
-  //
-  // OAuth agent keys are long (e.g. `oauth:claude|0xabc...`) and would exceed
-  // the 50-char limit or contain invalid characters after normalization.
-  // Collapse every agent to a short stable slug so the full username always
-  // fits within Circle's limit.
-  const AGENT_SLUGS: Record<string, string> = {
-    [DEFAULT_AGENT_KEY]: 'claude',
-    'oauth:claude': 'claude',
-    'oauth:chatgpt': 'gpt',
-    'hermes-mcp': 'hermes',
-  }
-  const rawSlug = AGENT_SLUGS[String(agentKey || '').toLowerCase()]
-    || String(agentKey || DEFAULT_AGENT_KEY).toLowerCase()
-      .replace(/^oauth:/, '')
-      .replace(/\|.*$/, '')
-      .replace(/[^a-z0-9]+/g, '')
-      .slice(0, 12)
-  const safeAgent = (rawSlug || 'agent').slice(0, 12)
+export function registrationUsername(agentKey = DEFAULT_AGENT_KEY, explicitAgentName = '') {
+  // Circle requires a globally unique username for each registration. Keep the
+  // unique suffix for Circle/backend deduplication, but make the value itself
+  // human-readable as a fallback for authenticators that display user.name.
+  // The browser-facing user.name/displayName are normalized separately below.
+  const safeAgent = registrationAgentSlug(agentKey, explicitAgentName).slice(0, 12)
   const stamp = Date.now().toString(36).slice(-6)
   const rand = Math.random().toString(36).slice(2, 6)
-  // arx-<slug12>-<stamp6>-<rand4> = max 4+12+1+6+1+4 = 28 chars, well under 50.
-  const value = `arx-${safeAgent}-${stamp}-${rand}`
+  // <slug>-agent-wallet-<stamp>-<rand> stays below Circle's 50-char limit.
+  const value = `${safeAgent}-agent-wallet-${stamp}-${rand}`.slice(0, 50)
   const key = `${PASSKEY_REGISTRATION_USERNAME_KEY}:${safeAgent}`
   try { localStorage.setItem(key, value) } catch { /* ignore */ }
   return value
@@ -293,9 +324,9 @@ function registrationUsername(agentKey = DEFAULT_AGENT_KEY) {
  * browser assertion is sent to the backend, which performs the one and only
  * rp_get*Verification call and returns the verified public key.
  */
-async function freshPasskeyOptions(mode: PasskeyMode, agentKey = '', ownerProof?: OwnerSessionProof) {
+async function freshPasskeyOptions(mode: PasskeyMode, agentKey = '', ownerProof?: OwnerSessionProof, explicitAgentName = '') {
   ensurePasskeyEnvironment()
-  const username = mode === 'Register' ? registrationUsername(agentKey) : ''
+  const username = mode === 'Register' ? registrationUsername(agentKey, explicitAgentName) : ''
   const response = await fetch(`${API}/api/auth/passkey-options`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -352,12 +383,28 @@ export function loginPublicKeyOptions(options: any) {
   return result
 }
 
-function registrationPublicKeyOptions(options: any) {
+export function registrationPublicKeyOptions(options: any, agentKey = DEFAULT_AGENT_KEY, explicitAgentName = '') {
+  const agentLabel = passkeyAgentDisplayName(agentKey, explicitAgentName)
+  const user = options?.user || {}
   return {
     ...options,
     challenge: base64UrlToBytes(options.challenge),
-    ...(options.rp ? { rp: { ...options.rp, id: normalizeRpId(options.rp.id) } } : {}),
-    user: { ...options.user, id: base64UrlToBytes(options.user.id) },
+    ...(options.rp ? {
+      // `rp.name` is presentation-only. Include the agent here as well as in
+      // `user.name`/`displayName` because some platform credential managers
+      // show the RP label instead of the WebAuthn user label.
+      rp: { ...options.rp, id: normalizeRpId(options.rp.id), name: `ARCOX · ${agentLabel}` },
+    } : {}),
+    user: {
+      ...user,
+      id: base64UrlToBytes(user.id),
+      // Circle receives a unique internal username in rp_getRegistrationOptions.
+      // Replace only the browser-facing labels so the passkey picker says which
+      // Agent Wallet is being created instead of exposing `arx-<random>`. The
+      // unique server username remains in Circle's challenge/session state.
+      name: agentLabel,
+      displayName: agentLabel,
+    },
     ...(Array.isArray(options.excludeCredentials) ? {
       excludeCredentials: options.excludeCredentials.map((credential: any) => ({
         ...credential,
@@ -512,10 +559,10 @@ const EVM_CHAIN_CONFIG = {
   'arbitrum-sepolia': { slug: 'arbitrumSepolia', chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia-rollup.arbitrum.io/rpc'] } } }) },
 } as const
 
-// Gas Station supports Ethereum Sepolia, but Circle Modular MSCA does not.
-// Keep it in the status matrix so the UI explains the limitation without
-// submitting an invalid UserOperation.
-export const MSCA_DEPLOYMENT_CHAINS = ['arc-testnet', 'ethereum-sepolia', 'base-sepolia', 'arbitrum-sepolia'] as const
+// Exactly these three networks are part of Agent Wallet creation. Ethereum
+// Sepolia remains available to CCTP/balance features, but it is not an MSCA
+// deployment target and must never produce an "unsupported" pseudo-success.
+export const MSCA_DEPLOYMENT_CHAINS = ['arc-testnet', 'base-sepolia', 'arbitrum-sepolia'] as const
 
 function chainConfig(chainKey = 'arc-testnet') {
   if (chainKey === 'ethereum-sepolia') {
@@ -664,25 +711,24 @@ export function getPasskeyRpId() {
 }
 
 // ── Register passkey + create MSCA ──
-export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: OwnerSessionProof): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
+export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: OwnerSessionProof, explicitAgentName = ''): Promise<{ walletAddress: string; credential: StoredCredential; sessionToken: string }> {
   ensurePasskeyEnvironment()
   const selectedAgentKey = resolveAgentKey(agentKey)
-  // Registration is deliberately passkey-first. The owner EOA is still
-  // required, but its SIWE proof is collected only after the browser has
-  // completed navigator.credentials.create(), so a stale owner token cannot
-  // prevent the passkey prompt from appearing.
+  // A new Agent Wallet is an owner-bound resource. Obtain and validate the
+  // primary EOA session before opening WebAuthn so the passkey ceremony cannot
+  // create an orphaned wallet that cannot later be attached to an agent.
   localStorage.setItem(AGENT_STORAGE_KEY, selectedAgentKey)
-  // Keep one browser credential request at a time. The browser assertion is
-  // verified by Circle exactly once on the backend; the SDK high-level helper
-  // is intentionally not used because it would verify the same session again.
   return runPasskeyOperation(async () => {
     try {
-      const { options, flowId } = await freshPasskeyOptions('Register', selectedAgentKey, ownerProof)
+      // This happens before navigator.credentials.create(). `ownerProof` is
+      // accepted from OAuth approval callers that already completed the owner
+      // session; otherwise the connected wallet is verified here exactly once.
+      const verifiedOwner = ownerProof || await ensureConnectedOwnerSession()
+      const { options, flowId } = await freshPasskeyOptions('Register', selectedAgentKey, verifiedOwner, explicitAgentName)
       const rawCredential = await navigator.credentials.create({
-        publicKey: registrationPublicKeyOptions(options),
+        publicKey: registrationPublicKeyOptions(options, selectedAgentKey, explicitAgentName),
       }) as any
       if (!rawCredential) throw new Error('No credential created.')
-      const verifiedOwner = ownerProof || await ensureConnectedOwnerSession()
       const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId, selectedAgentKey, verifiedOwner)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
@@ -769,10 +815,6 @@ export async function deployAllSmartAccounts(agentKey = DEFAULT_AGENT_KEY): Prom
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum deploy multi-chain.')
   const results: Record<string, DeploymentStatus> = {}
   for (const chainKey of MSCA_DEPLOYMENT_CHAINS) {
-    if (chainKey === 'ethereum-sepolia') {
-      const result: DeploymentStatus = { status: 'unsupported', error: 'Circle saat ini tidak mendukung MSCA di Ethereum Sepolia.', updatedAt: Date.now() }
-      results[chainKey] = result; saveDeploymentStatus(chainKey, result, agentKey); continue
-    }
     try {
       await deploySmartAccountOnChain(chainKey, agentKey)
       const result: DeploymentStatus = { status: 'deployed', ...(loadState(agentKey).deploymentStatus?.[chainKey] || {}), updatedAt: Date.now() }

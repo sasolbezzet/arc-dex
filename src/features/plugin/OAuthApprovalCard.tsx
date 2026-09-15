@@ -3,6 +3,7 @@ import { useI18n } from '../../i18n'
 
 export interface OAuthApprovalCardProps {
   clientId: string
+  agentName?: string
   step: OAuthStep
   stepLabel: string
   busy: boolean
@@ -27,6 +28,7 @@ const ORDER: OAuthStep[] = ['idle', 'passkey', 'checking', 'approving', 'done']
  */
 export function OAuthApprovalCard({
   clientId,
+  agentName = '',
   step,
   stepLabel,
   busy,
@@ -35,7 +37,7 @@ export function OAuthApprovalCard({
   onCancel,
 }: OAuthApprovalCardProps) {
   const { t } = useI18n()
-  const agentLabel = oauthAgentLabel(clientId)
+  const agentLabel = oauthAgentLabel(clientId, agentName)
   const currentIndex = ORDER.indexOf(step === 'error' ? 'idle' : step)
 
   return (

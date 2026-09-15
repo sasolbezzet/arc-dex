@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { formatCircleUserOperationError, getPasskeyRpId, normalizeArbitrumUserOperationFees } from './modularWallet'
 import { shouldAuthorizeDestinationChainsAfterActivation } from './agentSession'
+import { oauthAgentLabel, readOAuthRequestFromUrl } from '../hooks/useOAuthApproval'
 
 describe('multichain wallet activation invariants', () => {
   it('uses the production RP ID for every passkey UserOperation ceremony', () => {
@@ -27,6 +28,23 @@ describe('multichain wallet activation invariants', () => {
   it('repairs destination authorization when revoke rotated the delegate', () => {
     expect(shouldAuthorizeDestinationChainsAfterActivation(true, '0x' + '11'.repeat(20), '0x' + '22'.repeat(20))).toBe(true)
     expect(shouldAuthorizeDestinationChainsAfterActivation(true, undefined, '0x' + '22'.repeat(20))).toBe(false)
+  })
+
+  it('uses the OAuth client_name supplied by the agent for dynamic approval labels', () => {
+    expect(oauthAgentLabel('arcox_7f91c2', 'Claude Desktop')).toBe('Claude')
+    expect(oauthAgentLabel('arcox_92ab10', 'My Research Agent')).toBe('My Research Agent')
+    expect(oauthAgentLabel('arcox_92ab10', 'Agent MCP')).toBe('Agent MCP')
+  })
+
+  it('preserves the dynamic agent name while parsing an OAuth approval URL', () => {
+    const request = readOAuthRequestFromUrl(
+      '?auth=mcp&request_id=req-1&client_id=arcox_dynamic&agent_name=Claude%20Desktop&redirect_uri=https%3A%2F%2Fclient.example%2Fcallback',
+    )
+    expect(request).toMatchObject({
+      requestId: 'req-1',
+      clientId: 'arcox_dynamic',
+      agentName: 'Claude Desktop',
+    })
   })
 
   it('explains a wrapped Gas Station daily native-token policy rejection', () => {

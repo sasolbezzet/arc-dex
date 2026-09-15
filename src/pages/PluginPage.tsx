@@ -97,6 +97,7 @@ export default function PluginPage() {
       {oauth.request && (
         <OAuthApprovalCard
           clientId={oauth.request.clientId}
+          agentName={oauth.request.agentName}
           step={oauth.step}
           stepLabel={oauth.stepLabel}
           busy={oauth.busy}

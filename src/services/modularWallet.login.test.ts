@@ -31,7 +31,12 @@ vi.mock('viem/account-abstraction', async () => {
   }
 })
 
-import { loginPasskey } from './modularWallet'
+import {
+  loginPasskey,
+  passkeyAgentDisplayName,
+  registrationPublicKeyOptions,
+  registrationUsername,
+} from './modularWallet'
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -170,6 +175,28 @@ describe('Login passkey ceremony', () => {
     expect((window as Window & { ethereum?: { request: ReturnType<typeof vi.fn> } }).ethereum?.request).not.toHaveBeenCalledWith(
       expect.objectContaining({ method: 'personal_sign' }),
     )
+  })
+
+  it('labels the passkey picker with the selected agent and keeps the RP identity stable', () => {
+    const options = registrationPublicKeyOptions({
+      challenge: 'AQ',
+      rp: { id: 'arcoxdex.vercel.app', name: 'ARCOX' },
+      user: { id: 'Ag', name: 'random-user', displayName: 'random-user' },
+    }, 'oauth:claude', 'Claude')
+
+    expect(options.rp).toMatchObject({ id: 'arcoxdex.vercel.app', name: 'ARCOX · Claude Agent Wallet' })
+    expect(options.user).toMatchObject({ name: 'Claude Agent Wallet', displayName: 'Claude Agent Wallet' })
+    expect(options.user.id).toBeInstanceOf(Uint8Array)
+  })
+
+  it('uses a unique, agent-readable registration username for every passkey attempt', () => {
+    const first = registrationUsername('oauth:claude', 'Claude')
+    const second = registrationUsername('oauth:claude', 'Claude')
+
+    expect(first).not.toBe(second)
+    expect(first).toMatch(/^claude-agent-wallet-/)
+    expect(first.length).toBeLessThanOrEqual(50)
+    expect(passkeyAgentDisplayName('arcox_random-client', 'Claude')).toBe('Claude Agent Wallet')
   })
 
   it('allows the passkey ceremony without owner proof after wallet preflight', async () => {
