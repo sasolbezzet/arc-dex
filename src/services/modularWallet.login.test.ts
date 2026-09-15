@@ -184,19 +184,48 @@ describe('Login passkey ceremony', () => {
       user: { id: 'Ag', name: 'random-user', displayName: 'random-user' },
     }, 'oauth:claude', 'Claude')
 
-    expect(options.rp).toMatchObject({ id: 'arcoxdex.vercel.app', name: 'ARCOX · Claude Agent Wallet' })
-    expect(options.user).toMatchObject({ name: 'Claude Agent Wallet', displayName: 'Claude Agent Wallet' })
+    expect(options.rp).toMatchObject({ id: 'arcoxdex.vercel.app', name: 'ARCOX · Claude Agent Wallet #01' })
+    expect(options.user).toMatchObject({ name: 'Claude Agent Wallet #01', displayName: 'Claude Agent Wallet #01' })
     expect(options.user.id).toBeInstanceOf(Uint8Array)
   })
 
-  it('uses a unique, agent-readable registration username for every passkey attempt', () => {
+  it('uses a unique numbered label and registration username for every wallet', () => {
     const first = registrationUsername('oauth:claude', 'Claude')
+    const firstOptions = registrationPublicKeyOptions({
+      challenge: 'AQ',
+      rp: { id: 'arcoxdex.vercel.app', name: 'ARCOX' },
+      user: { id: 'Ag', name: 'random-user', displayName: 'random-user' },
+    }, 'oauth:claude', 'Claude')
     const second = registrationUsername('oauth:claude', 'Claude')
+    const secondOptions = registrationPublicKeyOptions({
+      challenge: 'AQ',
+      rp: { id: 'arcoxdex.vercel.app', name: 'ARCOX' },
+      user: { id: 'Ag', name: 'random-user', displayName: 'random-user' },
+    }, 'oauth:claude', 'Claude')
 
     expect(first).not.toBe(second)
-    expect(first).toMatch(/^claude-agent-wallet-/)
+    expect(first).toMatch(/^claude-agent-wallet-01-/)
+    expect(second).toMatch(/^claude-agent-wallet-02-/)
+    expect(firstOptions.user.displayName).toBe('Claude Agent Wallet #01')
+    expect(secondOptions.user.displayName).toBe('Claude Agent Wallet #02')
     expect(first.length).toBeLessThanOrEqual(50)
     expect(passkeyAgentDisplayName('arcox_random-client', 'Claude')).toBe('Claude Agent Wallet')
+  })
+
+  it('numbers every built-in agent label independently', () => {
+    for (const [agentKey, label] of [
+      ['oauth:grok', 'Grok Agent Wallet #01'],
+      ['oauth:chatgpt', 'ChatGPT Agent Wallet #01'],
+      ['hermes', 'Hermes Agent Wallet #01'],
+    ] as const) {
+      localStorage.clear()
+      const options = registrationPublicKeyOptions({
+        challenge: 'AQ',
+        rp: { id: 'arcoxdex.vercel.app', name: 'ARCOX' },
+        user: { id: 'Ag', name: 'random-user', displayName: 'random-user' },
+      }, agentKey)
+      expect(options.user.displayName).toBe(label)
+    }
   })
 
   it('allows the passkey ceremony without owner proof after wallet preflight', async () => {

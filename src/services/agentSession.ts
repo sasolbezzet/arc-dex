@@ -40,6 +40,8 @@ interface SessionStatusResponse {
     delegateAddress?: string
     active?: boolean
     statusReason?: string
+    revokeReason?: string
+    manualRevokePending?: boolean
     authorizationUserOpHash?: string
     pendingAuthorization?: boolean
   }
@@ -97,6 +99,20 @@ interface ReconcileResponse {
   retryAllowed?: boolean
   userOpHash?: string
   reconciled?: boolean
+}
+
+/**
+ * Manual revoke is an explicit fresh-passkey reactivation path. Reconcile is
+ * reserved for inactivity/unknown authorization state and must never poll an
+ * old proof after the user intentionally revoked this agent.
+ */
+export function shouldReconcileExistingSession(
+  session: Pick<NonNullable<SessionStatusResponse['session']>, 'walletAddress' | 'statusReason' | 'revokeReason' | 'manualRevokePending'> | null | undefined,
+  walletAddress: string,
+): boolean {
+  if (!session?.walletAddress || String(session.walletAddress).toLowerCase() !== walletAddress.toLowerCase()) return false
+  if (['manual_revoke', 'agent_manual'].includes(String(session.statusReason || session.revokeReason || ''))) return false
+  return session.manualRevokePending !== true
 }
 
 /** Read the backend's view of the session bound to this token. */
@@ -294,7 +310,8 @@ export async function activateAgentSession(
     && existing.delegateAddress
     && String(existing.walletAddress || '').toLowerCase() === walletAddress.toLowerCase()
   ) {
-    const authorizeDestinations = await destinationAuthorizationMissing(walletAddress, vaultToken)
+    const authorizeDestinations = !options.skipDestinationChains
+      && await destinationAuthorizationMissing(walletAddress, vaultToken)
     const { chainAuthorizationStatus, warnings } = authorizeDestinations
       ? await authorizeDestinationChains(walletAddress, existing.delegateAddress, vaultToken, agentKey)
       : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
@@ -318,10 +335,11 @@ export async function activateAgentSession(
   // deliberately surfaced instead of being replaced, preventing duplicate
   // delegate owners.
   let passkeyOnlyReauthorization = false
-  if (existing?.walletAddress && String(existing.walletAddress).toLowerCase() === walletAddress.toLowerCase()) {
+  if (shouldReconcileExistingSession(existing, walletAddress)) {
     const reconciled = await reconcileWithPasskey(vaultToken, walletAddress)
     if (reconciled?.active && reconciled.delegateAddress) {
-      const authorizeDestinations = await destinationAuthorizationMissing(walletAddress, vaultToken)
+      const authorizeDestinations = !options.skipDestinationChains
+      && await destinationAuthorizationMissing(walletAddress, vaultToken)
       const { chainAuthorizationStatus, warnings } = authorizeDestinations
         ? await authorizeDestinationChains(walletAddress, reconciled.delegateAddress, vaultToken, agentKey)
         : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
@@ -376,7 +394,8 @@ export async function activateAgentSession(
     passkeyOnlyReauthorization || canRecoverDurableBinding ? undefined : ownerSessionToken,
     agentKey,
   )
-  const authorizeDestinations = await destinationAuthorizationMissing(walletAddress, vaultToken)
+  const authorizeDestinations = !options.skipDestinationChains
+    && await destinationAuthorizationMissing(walletAddress, vaultToken)
   const { chainAuthorizationStatus, warnings } = authorizeDestinations
     ? await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
     : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }

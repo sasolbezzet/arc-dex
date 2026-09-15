@@ -164,6 +164,32 @@ describe('auth utilities', () => {
       expect(localStorage.getItem('arx_owner_vault_token')).toBe(validToken)
     })
 
+    it('rejects a valid owner token belonging to a different connected wallet', async () => {
+      const staleToken = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
+      const freshToken = 'fresh-owner-token'
+      const otherOwner = '0x2222222222222222222222222222222222222222'
+      localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token: staleToken, issuedAt: Date.now() }))
+      localStorage.setItem('arx_owner_vault_token', staleToken)
+      mockProvider.request
+        .mockResolvedValueOnce([OWNER])
+        .mockResolvedValueOnce('0xsignature')
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ownerAddress: otherOwner }),
+        } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ token: freshToken, ownerSessionToken: freshToken })),
+        } as any)
+
+      await expect(ensureConnectedOwnerSession()).resolves.toEqual({ address: OWNER, token: freshToken })
+      expect(mockProvider.request).toHaveBeenCalledWith({ method: 'personal_sign', params: expect.any(Array) })
+      expect(localStorage.getItem('arx_owner_vault_token')).toBe(freshToken)
+    })
+
     it('does not request SIWE for a backend timeout or server error', async () => {
       const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
       localStorage.setItem('arc-dex-auth', JSON.stringify({ address: OWNER, token, issuedAt: Date.now() }))

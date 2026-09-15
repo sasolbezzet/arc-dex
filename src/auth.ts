@@ -283,12 +283,25 @@ export async function ensureConnectedOwnerSession(): Promise<{ address: string; 
         headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(10_000),
       })
-      if (probe.ok) {
+      const probeData = (typeof (probe as Response).json === 'function'
+        ? await probe.json().catch(() => ({}))
+        : {}) as { ownerAddress?: string }
+      // A token can still be cryptographically valid after the user switches
+      // wallets in the same browser. Never pair that token with the newly
+      // connected EOA: the backend would correctly reject ownerAddress during
+      // Grok/Claude/ChatGPT wallet creation. Older backends omit ownerAddress,
+      // so retain compatibility there; the current backend always includes it.
+      const tokenOwner = String(probeData.ownerAddress || '').toLowerCase()
+      if (probe.ok && (!tokenOwner || tokenOwner === normalizedAddress.toLowerCase())) {
         try {
           localStorage.setItem('arx_owner_vault_token', token)
           localStorage.setItem('arx_eoa_vault_token', token)
         } catch { /* ignore */ }
         return { address: normalizedAddress, token }
+      }
+      if (probe.ok && tokenOwner && tokenOwner !== normalizedAddress.toLowerCase()) {
+        invalidOwnerToken = true
+        continue
       }
       if (probe.status === 401 || probe.status === 403) invalidOwnerToken = true
       else probeFailedUnexpectedly = true

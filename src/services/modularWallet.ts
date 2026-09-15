@@ -27,6 +27,8 @@ const API = ''  // same origin proxy
 const PASSKEY_ORIGIN = String(import.meta.env.VITE_PASSKEY_ORIGIN || 'https://arcoxdex.vercel.app').replace(/\/$/, '')
 let passkeyOperationInFlight: Promise<unknown> | null = null
 const PASSKEY_REGISTRATION_USERNAME_KEY = 'arx_passkey_registration_username'
+const PASSKEY_REGISTRATION_COUNTER_KEY = 'arx_passkey_registration_counter'
+const PASSKEY_REGISTRATION_LABEL_KEY = 'arx_passkey_registration_label'
 type PasskeyMode = 'Login' | 'Register'
 
 /** Proof that the connected primary EOA has an authenticated owner session. */
@@ -84,6 +86,40 @@ function registrationAgentSlug(agentKey = '', explicitAgentName = '') {
     .replace(/[^a-z0-9]+/g, '')
     .slice(0, 12)
   return explicitSlug || keySlug || 'agent'
+}
+
+function registrationCounterStorageKey(safeAgent: string) {
+  return `${PASSKEY_REGISTRATION_COUNTER_KEY}:${safeAgent}`
+}
+
+function registrationLabelStorageKey(safeAgent: string) {
+  return `${PASSKEY_REGISTRATION_LABEL_KEY}:${safeAgent}`
+}
+
+function nextRegistrationNumber(safeAgent: string): string {
+  let current = 0
+  try {
+    current = Number.parseInt(localStorage.getItem(registrationCounterStorageKey(safeAgent)) || '0', 10)
+  } catch { /* use the first sequence number */ }
+  const next = Number.isSafeInteger(current) && current >= 0 ? current + 1 : 1
+  try { localStorage.setItem(registrationCounterStorageKey(safeAgent), String(next)) } catch { /* ignore storage errors */ }
+  return String(next).padStart(2, '0')
+}
+
+/**
+ * Allocate one display label per registration ceremony. The pending label is
+ * shared by registrationUsername() and registrationPublicKeyOptions() so the
+ * Circle username and the authenticator UI show the same wallet number.
+ */
+function registrationLabel(agentKey = DEFAULT_AGENT_KEY, explicitAgentName = ''): string {
+  const safeAgent = registrationAgentSlug(agentKey, explicitAgentName).slice(0, 12)
+  try {
+    const pending = localStorage.getItem(registrationLabelStorageKey(safeAgent))
+    if (pending) return pending
+  } catch { /* allocate below */ }
+  const label = cleanPasskeyLabel(`${passkeyAgentDisplayName(agentKey, explicitAgentName)} #${nextRegistrationNumber(safeAgent)}`)
+  try { localStorage.setItem(registrationLabelStorageKey(safeAgent), label) } catch { /* ignore storage errors */ }
+  return label
 }
 
 // ── Fetch interceptor: redirect Circle Modular SDK requests to backend proxy ──
@@ -305,15 +341,16 @@ function runPasskeyOperation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export function registrationUsername(agentKey = DEFAULT_AGENT_KEY, explicitAgentName = '') {
-  // Circle requires a globally unique username for each registration. Keep the
-  // unique suffix for Circle/backend deduplication, but make the value itself
-  // human-readable as a fallback for authenticators that display user.name.
-  // The browser-facing user.name/displayName are normalized separately below.
+  // Circle requires a globally unique username for each registration. The
+  // numeric sequence is human-readable and the timestamp/random suffix keeps
+  // the Circle username unique even if a user creates wallets on another tab.
   const safeAgent = registrationAgentSlug(agentKey, explicitAgentName).slice(0, 12)
+  const label = registrationLabel(agentKey, explicitAgentName)
+  const number = label.match(/#(\d+)$/)?.[1] || '01'
   const stamp = Date.now().toString(36).slice(-6)
   const rand = Math.random().toString(36).slice(2, 6)
-  // <slug>-agent-wallet-<stamp>-<rand> stays below Circle's 50-char limit.
-  const value = `${safeAgent}-agent-wallet-${stamp}-${rand}`.slice(0, 50)
+  // <slug>-agent-wallet-<number>-<stamp>-<rand> stays below Circle's 50-char limit.
+  const value = `${safeAgent}-agent-wallet-${number}-${stamp}-${rand}`.slice(0, 50)
   const key = `${PASSKEY_REGISTRATION_USERNAME_KEY}:${safeAgent}`
   try { localStorage.setItem(key, value) } catch { /* ignore */ }
   return value
@@ -384,9 +421,10 @@ export function loginPublicKeyOptions(options: any) {
 }
 
 export function registrationPublicKeyOptions(options: any, agentKey = DEFAULT_AGENT_KEY, explicitAgentName = '') {
-  const agentLabel = passkeyAgentDisplayName(agentKey, explicitAgentName)
+  const safeAgent = registrationAgentSlug(agentKey, explicitAgentName).slice(0, 12)
+  const agentLabel = registrationLabel(agentKey, explicitAgentName)
   const user = options?.user || {}
-  return {
+  const result = {
     ...options,
     challenge: base64UrlToBytes(options.challenge),
     ...(options.rp ? {
@@ -412,6 +450,11 @@ export function registrationPublicKeyOptions(options: any, agentKey = DEFAULT_AG
       })),
     } : {}),
   }
+  // The pending label is consumed by this registration ceremony. A failed or
+  // cancelled ceremony gets a fresh number on the next attempt instead of
+  // reusing the label from an older wallet.
+  try { localStorage.removeItem(registrationLabelStorageKey(safeAgent)) } catch { /* ignore */ }
+  return result
 }
 
 async function verifyPasskeyWithBackend(rawCredential: any, mode: PasskeyMode, flowId: string, agentKey = '', ownerProof?: OwnerSessionProof) {
@@ -538,19 +581,28 @@ export function normalizeArbitrumUserOperationFees(maxFeePerGas: bigint, maxPrio
 }
 
 async function circleGasFees(chainKey: string): Promise<{ maxPriorityFeePerGas?: bigint; maxFeePerGas?: bigint }> {
-  if (chainKey !== 'arbitrum-sepolia') return {}
+  // Circle's default viem fee can fall below the bundler's minimum on Arc.
+  // Query Circle's recommendation for every MSCA creation chain so a quiet
+  // network does not produce an underpriced precheck, while retaining a safe
+  // 1 gwei floor for Arc and other providers that require it.
+  const safeFloor = { maxPriorityFeePerGas: 1_000_000_000n, maxFeePerGas: 2_000_000_000n }
   try {
     const config = chainConfig(chainKey)
     const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
     const price = await (client as any).request({ method: 'circle_getUserOperationGasPrice', params: [] }).catch(() => null) as any
     for (const level of [price?.medium, price?.fast, price?.slow]) {
       if (!level) continue
-      const maxFeePerGas = BigInt(level.maxFeePerGas || 0)
-      const maxPriorityFeePerGas = BigInt(level.maxPriorityFeePerGas || 0)
-      if (maxFeePerGas > 0n || maxPriorityFeePerGas > 0n) return normalizeArbitrumUserOperationFees(maxFeePerGas, maxPriorityFeePerGas)
+      const suggestedMax = BigInt(level.maxFeePerGas || 0)
+      const suggestedPriority = BigInt(level.maxPriorityFeePerGas || 0)
+      if (suggestedMax <= 0n && suggestedPriority <= 0n) continue
+      const priority = suggestedPriority > safeFloor.maxPriorityFeePerGas
+        ? suggestedPriority
+        : safeFloor.maxPriorityFeePerGas
+      const max = suggestedMax >= priority ? suggestedMax : safeFloor.maxFeePerGas
+      return { maxPriorityFeePerGas: priority, maxFeePerGas: max }
     }
   } catch { /* fall through to the safe floor */ }
-  return normalizeArbitrumUserOperationFees(2_000_000_000n, 1_000_000_000n)
+  return safeFloor
 }
 
 const EVM_CHAIN_CONFIG = {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatCircleUserOperationError, getPasskeyRpId, normalizeArbitrumUserOperationFees } from './modularWallet'
-import { shouldAuthorizeDestinationChainsAfterActivation } from './agentSession'
+import { shouldAuthorizeDestinationChainsAfterActivation, shouldReconcileExistingSession } from './agentSession'
 import { oauthAgentLabel, readOAuthRequestFromUrl } from '../hooks/useOAuthApproval'
 
 describe('multichain wallet activation invariants', () => {
@@ -28,6 +28,15 @@ describe('multichain wallet activation invariants', () => {
   it('repairs destination authorization when revoke rotated the delegate', () => {
     expect(shouldAuthorizeDestinationChainsAfterActivation(true, '0x' + '11'.repeat(20), '0x' + '22'.repeat(20))).toBe(true)
     expect(shouldAuthorizeDestinationChainsAfterActivation(true, undefined, '0x' + '22'.repeat(20))).toBe(false)
+  })
+
+  it('does not poll an old authorization after manual revoke', () => {
+    const walletAddress = '0x' + '11'.repeat(20)
+    expect(shouldReconcileExistingSession({ walletAddress, statusReason: 'manual_revoke' }, walletAddress)).toBe(false)
+    expect(shouldReconcileExistingSession({ walletAddress, revokeReason: 'agent_manual' }, walletAddress)).toBe(false)
+    expect(shouldReconcileExistingSession({ walletAddress, manualRevokePending: true }, walletAddress)).toBe(false)
+    expect(shouldReconcileExistingSession({ walletAddress, statusReason: 'inactivity_24h' }, walletAddress)).toBe(true)
+    expect(shouldReconcileExistingSession({ walletAddress: '0x' + '22'.repeat(20) }, walletAddress)).toBe(false)
   })
 
   it('uses the OAuth client_name supplied by the agent for dynamic approval labels', () => {
