@@ -190,6 +190,7 @@ export function useAgentManager() {
     activity,
     connectionToken,
     setAgents,
+    removeAgent,
     setMcpSessions,
     setApprovals,
     setActivity,
@@ -353,7 +354,7 @@ export function useAgentManager() {
         if (mounted.current) updateAgent(agent.agentKey, { readinessLoading: false })
       }
     }))
-  }, [vaultToken, clearVaultToken, setVaultToken, setAgents, setMcpSessions, setApprovals, setActivity, setCredentials, setLimits, refreshAgentBalances, tokenForAgent, updateAgent])
+  }, [vaultToken, clearVaultToken, setVaultToken, setAgents, removeAgent, setMcpSessions, setApprovals, setActivity, setCredentials, setLimits, refreshAgentBalances, tokenForAgent, updateAgent])
 
   useEffect(() => {
     // OAuth passkey sessions are intentionally stored per MCP client and do
@@ -402,14 +403,18 @@ export function useAgentManager() {
     const agentKey = typeof rawAgentKey === 'string' ? rawAgentKey.trim() : ''
     if (!agentKey) throw new Error('Agent key tidak tersedia. Muat ulang dashboard lalu coba lagi.')
 
-    // Both modes perform the WebAuthn ceremony before any owner SIWE fallback.
-    // Register will obtain the owner proof inside registerPasskey after the
-    // credential is created; Login obtains it only if activation explicitly
-    // reports owner_session_required.
+    // Capture the connected EOA proof once for a new wallet and pass the exact
+    // same address/token pair through registration and session activation. The
+    // old flow let registerPasskey() and activation call
+    // ensureConnectedOwnerSession() independently; after an account switch or
+    // stale-token refresh that could pair ownerAddress A with token B and make
+    // /api/session/generate-key fail with ownerAddress authentication errors.
+    // Login remains passkey-first and only obtains SIWE when activation needs it.
+    const ownerBeforePasskey = mode === 'register' ? await ensureConnectedOwnerSession() : null
     const passkey = mode === 'register'
-      ? await registerPasskey(agentKey)
+      ? await registerPasskey(agentKey, ownerBeforePasskey || undefined)
       : await loginPasskey(agentKey)
-    let ownerAfterPasskey = mode === 'register' ? await ensureConnectedOwnerSession() : null
+    let ownerAfterPasskey = ownerBeforePasskey
     let activation
     try {
       // Existing-agent Login is passkey-first. If the durable binding can be
@@ -522,9 +527,13 @@ export function useAgentManager() {
       const token = tokenForAgent(agentKey)
       if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
       await deleteVaultAgent(agentKey, token)
+      // Remove the exact card immediately. The subsequent owner-scoped refresh
+      // remains authoritative, but a delayed read from another cached token
+      // must not make Clear appear to do nothing.
+      removeAgent(agentKey)
       safeSet(setNotice, 'Agent dihapus dari dashboard dan session dinonaktifkan.')
       await refreshAll()
-    }), [run, tokenForAgent, refreshAll, safeSet])
+    }), [run, tokenForAgent, removeAgent, refreshAll, safeSet])
 
   const revokeAgent = useCallback((agentKey: string) =>
     run(`revoke:${agentKey}`, async () => {

@@ -114,24 +114,23 @@ export function useOAuthApproval() {
     const agentName = oauthAgentLabel(request.clientId, request.agentName)
 
     try {
-      // Both modes show the passkey before any owner SIWE fallback. Register
-      // obtains the owner proof inside registerPasskey after the credential is
-      // created; Login obtains it only if activation explicitly requires it.
+      // Register captures the owner proof once and reuses the exact same
+      // address/token pair for passkey registration, session activation, and
+      // OAuth approval. This prevents ownerAddress A from being paired with a
+      // stale owner token B when the browser account/session changes during
+      // the WebAuthn prompt. Login remains passkey-first.
       let walletAddress = ''
       let sessionToken = ''
-      // Login obtains this proof only after the passkey ceremony. Keep it in
-      // scope for the final passkey-verify call; otherwise the backend cannot
-      // issue the OAuth code and the browser never redirects back to Claude/GPT.
       let ownerAfterPasskey: Awaited<ReturnType<typeof ensureConnectedOwnerSession>> | null = null
       let verified = false
 
       setStep('passkey')
+      if (mode === 'register') ownerAfterPasskey = await ensureConnectedOwnerSession()
       const passkey = mode === 'register'
-        ? await registerPasskey(agentKey, undefined, `${agentName} Agent Wallet`)
+        ? await registerPasskey(agentKey, ownerAfterPasskey || undefined, `${agentName} Agent Wallet`)
         : await loginPasskey(agentKey)
       walletAddress = passkey.walletAddress
       sessionToken = passkey.sessionToken
-      if (mode === 'register') ownerAfterPasskey = await ensureConnectedOwnerSession()
 
       setStep('checking')
       // The login passkey proves the exact existing MSCA first. Only after
