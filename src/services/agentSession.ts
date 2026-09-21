@@ -94,6 +94,19 @@ function ownerSessionRequiredError() {
   return error
 }
 
+/**
+ * The wallet session may be perfectly healthy while this exact agent has no
+ * durable binding row (Clear removed it, or the row was never created). That is
+ * NOT an owner-session failure, so it must not reuse the owner message: the
+ * caller already supplied a verified SIWE proof and re-signing would change
+ * nothing.
+ */
+function agentBindingMissingError() {
+  const error = new Error('Binding agent ini belum ada untuk wallet tersebut. Selesaikan langkah owner (SIWE) lalu ulangi Login passkey.') as Error & { code?: string }
+  error.code = 'agent_binding_missing'
+  return error
+}
+
 interface ReconcileResponse {
   active?: boolean
   walletAddress?: string
@@ -226,9 +239,13 @@ async function activateBindingAfterSession(
     signal: AbortSignal.timeout(20_000),
   })
   if (response.status === 404) return false
-  const data = await response.json().catch(() => ({})) as { success?: boolean; error?: string }
+  const data = await response.json().catch(() => ({})) as { success?: boolean; error?: string; code?: string }
   if (!response.ok || !data.success) {
-    throw new Error(data.error || `Binding agent gagal diaktifkan (${response.status})`)
+    const error = new Error(data.error || `Binding agent gagal diaktifkan (${response.status})`) as Error & { code?: string }
+    // Keep the backend code so callers can tell a genuinely unverified owner
+    // session (retry SIWE) apart from an owner/binding mismatch (do not retry).
+    if (data.code) error.code = data.code
+    throw error
   }
   return true
 }
@@ -310,6 +327,15 @@ export async function activateAgentSession(
 ): Promise<SessionActivation> {
   if (!vaultToken) throw new Error('Sesi Agent Wallet belum tersedia')
 
+  // Binding an EOA requires a separate signature proof in this browser. The
+  // passkey/MSCA token is a different identity and must never be substituted
+  // for it, nor may the legacy `arx_eoa_vault_token` key be trusted here. The
+  // proof is decided once per call and is a first-class activation path: the
+  // backend re-verifies it against the same address before it creates or
+  // repairs anything.
+  const ownerSessionToken = options.ownerSessionToken
+  const verifiedEoaAddress = ownerSessionToken && options.eoaAddress ? options.eoaAddress : undefined
+
   // Re-running setup revokes and re-authorizes the delegate, leaving a window
   // where agent tools fail. If this exact wallet is already active, adopt it.
   const existing = await readSessionStatus(vaultToken, agentKey)
@@ -328,9 +354,11 @@ export async function activateAgentSession(
       token: options.ownerSessionToken,
     }, options.credentialId)
     // A cleared agent may share an active MSCA session with another agent. In
-    // that case the wallet session is healthy but this exact binding is gone;
-    // do not silently report success or resurrect it without fresh owner proof.
-    if (!bindingActivated) throw ownerSessionRequiredError()
+    // that case the wallet session is healthy but this exact binding is gone.
+    // Never report success. When owner proof was supplied the backend already
+    // had its chance to recreate the row, so the missing row is the real error;
+    // without proof the caller must be asked for the owner session.
+    if (!bindingActivated) throw verifiedEoaAddress ? agentBindingMissingError() : ownerSessionRequiredError()
     return {
       walletAddress,
       delegateAddress: existing.delegateAddress,
@@ -361,7 +389,7 @@ export async function activateAgentSession(
         address: options.eoaAddress,
         token: options.ownerSessionToken,
       }, options.credentialId)
-      if (!bindingActivated) throw ownerSessionRequiredError()
+      if (!bindingActivated) throw verifiedEoaAddress ? agentBindingMissingError() : ownerSessionRequiredError()
       return {
         walletAddress,
         delegateAddress: reconciled.delegateAddress,
@@ -391,20 +419,18 @@ export async function activateAgentSession(
       || (reason === 'authorization_proof_missing' && reconciled?.retryAllowed !== false)
   }
 
-  // Binding an EOA is optional and requires a separate signature proof in this
-  // browser. The passkey/MSCA token is not an EOA proof and must not be sent.
-  // The owner proof is passed explicitly by the caller. Never substitute the
-  // passkey/MSCA token or the legacy `arx_eoa_vault_token` key: those tokens
-  // authenticate a different identity and cause the backend owner mismatch.
-  const ownerSessionToken = options.ownerSessionToken
-  const verifiedEoaAddress = ownerSessionToken && options.eoaAddress ? options.eoaAddress : undefined
   // Durable recovery is valid for Revoke (the binding remains) and ordinary
   // login. Clear deletes the binding, so it must use the owner-proof path to
   // recreate exactly one binding for this already-proven wallet.
   const canRecoverDurableBinding = Boolean(
     options.allowDurableBindingRecovery && agentKey && !ownerProofRequiredForClearedWallet,
   )
-  if ((!passkeyOnlyReauthorization && !canRecoverDurableBinding)
+  // A verified owner proof is a first-class path: Create New Wallet and the
+  // Clear re-binding both arrive here with a fresh SIWE token, and the backend
+  // verifies it against the same EOA before creating or repairing the binding.
+  // Omitting `!verifiedEoaAddress` here discarded that proof and showed
+  // "Sesi wallet utama belum tervalidasi" right after the user signed SIWE.
+  if ((!passkeyOnlyReauthorization && !canRecoverDurableBinding && !verifiedEoaAddress)
     || (ownerProofRequiredForClearedWallet && !verifiedEoaAddress)) {
     throw ownerSessionRequiredError()
   }
@@ -428,14 +454,21 @@ export async function activateAgentSession(
     ? await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
     : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
 
-  await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
+  // The session key exists now, but the agent still needs its durable binding
+  // row before any agent tool may use this wallet. `activate-binding` creates
+  // that row only when the owner proof is present, so a missing row here must
+  // fail closed instead of reporting a ready agent.
+  const finalBindingActivated = await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
     address: options.eoaAddress,
     token: options.ownerSessionToken,
   }, options.credentialId)
+  if (!finalBindingActivated) throw verifiedEoaAddress ? agentBindingMissingError() : ownerSessionRequiredError()
   return {
     walletAddress,
     delegateAddress: result.delegateAddress,
-    sessionActive: result.active,
+    // `setupSessionKey` only returns after the backend activated the signer, so
+    // treat anything other than an explicit negative as active.
+    sessionActive: result.active !== false,
     chainAuthorizationStatus,
     deploymentStatus: getDeploymentStatus(agentKey),
     warnings,

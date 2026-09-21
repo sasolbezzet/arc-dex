@@ -541,8 +541,8 @@ export function useAgentManager() {
       if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
       await revokeVaultAgent(agentKey, token)
       // Revoke disables the active session but intentionally retains the
-      // binding/card so the same wallet can be reactivated with Login passkey.
-      safeSet(setNotice, 'Session agent dinonaktifkan. Wallet tetap tersimpan; gunakan Login passkey untuk mengaktifkannya kembali.')
+      // binding/card so the same wallet can be reactivated with Relogin.
+      safeSet(setNotice, 'Session agent dinonaktifkan. Wallet tetap tersimpan; gunakan tombol Relogin untuk mengaktifkannya kembali.')
       await refreshAll()
     }), [run, tokenForAgent, refreshAll, safeSet])
 

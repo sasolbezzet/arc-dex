@@ -192,7 +192,7 @@ export function AgentCard({
         )}
         {agent && (
           <button type='button' className='mini-button' disabled={anyBusy} onClick={onLogin}>
-            {busy ? t('plugin.waitingPasskey') : t('plugin.loginPasskey')}
+            {busy ? t('plugin.waitingPasskey') : agent.status === 'revoked' ? t('plugin.relogin') : t('plugin.loginPasskey')}
           </button>
         )}
         {agent && (
