@@ -3,6 +3,7 @@ import {
   registerDelegateOwner,
   getDeploymentStatus,
 } from './modularWallet'
+import { proofWasInvalidatedByPolicy } from './sessionProofPolicy'
 import type { ChainAuthStatus } from '../types/agent'
 
 /**
@@ -130,7 +131,9 @@ export function shouldReconcileExistingSession(
   walletAddress: string,
 ): boolean {
   if (!session?.walletAddress || String(session.walletAddress).toLowerCase() !== walletAddress.toLowerCase()) return false
-  if (['manual_revoke', 'agent_manual', 'agent_deleted', 'clear'].includes(String(session.statusReason || session.revokeReason || ''))) return false
+  // Revoke and Clear must never resurrect the stored proof; a legacy inactivity
+  // expiry still may. The rule lives in one place so all three flows agree.
+  if (proofWasInvalidatedByPolicy(session)) return false
   return session.manualRevokePending !== true
 }
 

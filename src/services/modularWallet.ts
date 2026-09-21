@@ -13,6 +13,7 @@ import {
 } from '@circle-fin/modular-wallets-core'
 import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
 import { isSuccessfulUserOpReceipt } from './mscaPolicy'
+import { proofWasInvalidatedByPolicy } from './sessionProofPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { parsePublicKey } from 'webauthn-p256'
 import { arcTestnet } from 'viem/chains'
@@ -1055,10 +1056,16 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
     return { walletAddress: state.walletAddress, delegateAddress: existingStatus.delegateAddress || delegateAddress, active: true }
   }
 
-  // An inactivity sweep can make the authoritative store look inactive even
+  // A revoked or cleared record must never replay its old proof: the user did
+  // not re-approve that UserOperation, and resurrecting it would silently
+  // re-enable a delegate they revoked. The reservation above already rotated
+  // the delegate for those cases, so this guard only protects records written
+  // before the backend started dropping the stale hash.
+  const proofIsDead = proofWasInvalidatedByPolicy(existingStatus)
+  // An inactivity expiry can leave the authoritative store inactive even
   // though the exact addOwners UserOperation already succeeded on-chain.
   // Reconcile that proof before considering another owner mutation.
-  if (existingStatus?.authorizationUserOpHash) {
+  if (existingStatus?.authorizationUserOpHash && !proofIsDead) {
     let lastReconcileReason = ''
     const reconciliationDeadline = Date.now() + 90_000
     // The hash already exists, so keep reconciling that exact operation while
