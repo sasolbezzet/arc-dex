@@ -1,5 +1,14 @@
 # ARC DEX Security & Code Audit Report
 
+> **Catatan status (September 2026):** dokumen di folder ini adalah laporan
+> historis dan tidak diperbarui lagi. Infrastruktur yang berlaku sekarang:
+> aplikasi web `https://arcoxdex.vercel.app`, MCP publik
+> `https://arcoxdex.vercel.app/mcp`, dan backend upstream internal
+> `https://43.134.14.43.nip.io` (dipublikasikan lewat rewrite Vercel, bukan
+> Vercel function). Alamat `43.163.98.128.nip.io` dan `arc-dex-bice.vercel.app`
+> yang disebut di laporan lama sudah tidak dipakai. Temuan keamanan yang masih
+> relevan tetap dirujuk oleh `docs/mainnet-security.md`.
+
 **Project:** ARCOX DEX Web UI, API, and MCP Agent
 **Auditor:** Codebuff AI Audit
 **Date:** June 14, 2026 (delta update to the June 4, 2026 report)

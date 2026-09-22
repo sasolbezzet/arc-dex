@@ -1,39 +1,32 @@
 # ARCOX DEX
 
-Retail testnet DEX for Arc Network using Circle App Kit, CCTP v2, MetaMask, and Solana Devnet wallets.
+Retail DEX + AI-agent wallet frontend for Arc Network, using Circle App Kit,
+CCTP v2, WalletConnect/MetaMask, Solana Devnet, and passkey-backed Agent
+Wallets (MSCA).
 
-Live app: https://arcoxdex.vercel.app/
+**Live app: https://arcoxdex.vercel.app**
 
-## Local Development
+Frontend is the only Vercel project. It is a Vite SPA; the backend
+(`arc-dex-api`) runs outside Vercel and is reached through the rewrites in
+`vercel.json`.
 
-Frontend:
+```text
+Frontend         : https://arcoxdex.vercel.app
+Public MCP       : https://arcoxdex.vercel.app/mcp
+API via frontend : https://arcoxdex.vercel.app/api/*
+OpenAI-compat API: https://arcoxdex.vercel.app/v1
+Backend upstream : https://43.134.14.43.nip.io   (internal, behind Vercel rewrites)
+```
+
+## Local development
 
 ```bash
 cd /home/ubuntu/arc-dex
 npm install
-npm run dev
+npm run dev          # Vite dev server, /api/* diproksi ke http://localhost:3001
 ```
 
-Repo ini bukan monorepo frontend/backend. Source frontend ada langsung di `src/`, jadi tidak ada langkah `cd frontend`.
-
-## App Pages
-
-The UI is page-based:
-
-- `/` intro/dashboard
-- `/portfolio`
-- `/swap`
-- `/bridge`
-- `/send`
-- `/receive`
-- `/unified-balance`
-- `/agent-jobs`
-- `/info`
-- `/docs`
-- `/pay?invoice=...`
-- `/pay/status`
-
-Backend:
+Backend (repo terpisah):
 
 ```bash
 cd /home/ubuntu/arc-dex-api
@@ -41,114 +34,109 @@ npm install
 node --env-file=.env server.mjs
 ```
 
-The Vite dev server proxies `/api/*` to `http://localhost:3001`.
+Repo ini bukan monorepo frontend/backend: source frontend ada di `src/`
+langsung, backend di repo `arc-dex-api`.
+
+## Pages
+
+```text
+/                 intro/dashboard
+/portfolio        saldo per chain
+/swap             swap
+/bridge           CCTP bridge
+/send             kirim
+/receive          request pembayaran
+/unified-balance  Circle Gateway unified balance
+/ai-router        ARCOX AI Router (OpenAI-compatible)
+/plugin           Agent Wallet + konektor MCP (menu Plugin)
+/agent-jobs       ERC-8004 / ERC-8183 agent jobs
+/intel            ARCOX Intel (x402 berbayar)
+/cards            agent cards
+/connect          merchant/payment connect
+/pay, /pay/status public USDC invoice + x402 status
+/info, /docs      info & dokumentasi in-app
+```
+
+## Menu Plugin (Agent Wallet + MCP)
+
+Halaman `/plugin` adalah pintu masuk semua agent (Hermes, Grok, Claude,
+ChatGPT, Codex). Tiga alur yang harus dibedakan dengan jelas:
+
+| Alur | Trigger | Proof yang dibutuhkan |
+|---|---|---|
+| **Buat Wallet Baru** | kartu agent → `Buat Wallet Baru` | SIWE (owner) + passkey baru; deploy/otorisasi di Arc + Base Sepolia + Arbitrum Sepolia |
+| **Relogin (setelah Cabut Akses)** | kartu agent → `Relogin` | passkey saja; delegate dirotasi, binding lama dipakai lagi |
+| **Login Passkey (setelah Hapus/Clear)** | kartu agent → `Login Passkey` | passkey + SIWE; binding dibuat ulang |
+
+Aturan teknis yang berlaku sekarang:
+
+- Satu agent = satu `clientId` = satu Agent Wallet (MSCA) + limit harian,
+  scope audit, dan state revoke sendiri.
+- Nama passkey selalu menyertakan agent dan nomor unik, mis.
+  `Agent Wallet Grok #01`, `Agent Wallet Hermes #01`, sehingga beberapa wallet
+  pada agent yang sama tidak tertukar saat memilih di dialog passkey.
+- Clear/Hapus menghapus kartu agent (kedua namespace baris Hermes sekaligus);
+  Revoke hanya menonaktifkan akses tanpa menghapus wallet.
+- Agent non-Hermes biasanya terhubung dari sisi agent (OAuth ke
+  `https://arcoxdex.vercel.app/mcp`), sehingga halaman approval di `/plugin`
+  harus diselesaikan dengan passkey sampai redirect balik ke agent.
+
+Policy proof per alur terpusat di `src/services/sessionProofPolicy.ts`
+(dipakai `agentSession.ts`), sehingga perubahan aturan tidak tersebar.
+
+Jika agent mengaku "terhubung" tetapi tidak menemukan tool ARCOX, jalankan
+diagnosa dari repo backend:
+
+```bash
+cd /home/ubuntu/arc-dex-api
+npm run diag:mcp -- --agent grok
+```
 
 ## ARCOX Agent
 
-The local agent is a separate repository and npm package:
+Agent lokal adalah repo & paket npm terpisah:
 
 ```text
 /home/ubuntu/arcox-agent
 https://github.com/sasolbezzet/arcox-agent
 ```
 
-Install and configure the local-first agent:
-
 ```bash
 npm install -g arcox-agent
 arcox-agent setup
-nano ~/.arcox/agent.env
-arcox-agent sync
+ARCOX_MCP_URL=https://arcoxdex.vercel.app/mcp arcox-agent connect --prompt-token
 arcox-agent doctor
 ```
 
-`arcox-agent` automatically installs `arcox-mcp`, so end users do not need a
-separate global `arcox-mcp` install for the normal Hermes/Codex flow.
+Token koneksi dibuat dari kartu agent di halaman Plugin. Untuk Grok, Claude,
+dan ChatGPT, agent memakai OAuth remote MCP ke `/mcp` (bukan token tempel).
+Detail: https://github.com/sasolbezzet/arcox-agent#readme
 
-For Hermes, `setup` and `sync` wire the local `arcox` MCP entry automatically.
-If you also want the installer to write the ARCOX model provider into Hermes,
-run:
+## Authentication
 
-```bash
-arcox-agent sync --with-provider
-```
+- SIWE (EIP-4361) aktif untuk koneksi owner pertama; sesi owner yang sudah
+  terverifikasi dipakai ulang oleh alur Plugin (tidak perlu tanda tangan
+  berulang). Matikan/hidupkan lewat `VITE_SIWE_ENABLED`.
+- Agent Wallet memakai passkey (WebAuthn) sebagai signer; private key tidak
+  pernah dikirim ke browser atau backend.
+- Token koneksi/MCP disimpan backend sebagai bearer dengan masa berlaku 24 jam
+  (refresh 30 hari) dan bisa dicabut per agent.
+- Spesifikasi verifier SIWE backend: `docs/backend-siwe-verifier.md`.
 
-For Codex, add a manual MCP entry that runs:
+## Circle webhooks
 
-```json
-{
-  "mcpServers": {
-    "arcox": {
-      "command": "arcox-agent",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+Daftarkan URL backend ini di Circle Console (verifikasi signature ada di
+backend, bukan di Vercel):
 
-Signer and Hermes credentials belong only in `~/.arcox/agent.env`. They must
-not be copied into this frontend repository or the dApp backend environment.
-
-Full guide: https://github.com/sasolbezzet/arcox-agent#readme
-
-## Vercel Frontend
-
-### SIWE Authentication
-
-The frontend supports EIP-4361 Sign-In with Ethereum (SIWE) for better
-MetaMask/Blockaid reputation. SIWE is disabled by default
-(`VITE_SIWE_ENABLED=false`) to keep the site working with the existing legacy
-backend. Once the backend `/api/auth/session` endpoint is migrated, set
-`VITE_SIWE_ENABLED=true` in the Vercel dashboard and redeploy. See
-[`docs/backend-siwe-verifier.md`](docs/backend-siwe-verifier.md) for the
-backend migration spec.
-
-The frontend is the only Vercel project. `vercel.json` builds with `VITE_BASE_PATH=/` and forwards `/api/*`, `/v1/*`, and `/.well-known/*` to the non-Vercel backend at `https://43.134.14.43.nip.io`. The backend is deployed separately from the API repository through the server's GitHub auto-deploy path; it is not a Vercel function.
-
-```txt
-Frontend: https://arcoxdex.vercel.app
-Backend:  https://43.134.14.43.nip.io
-API via frontend: https://arcoxdex.vercel.app/api/*
-```
-
-The public MCP endpoint is served from the production web origin. Vercel forwards it to the non-Vercel backend, so users and AI clients never need the VPS URL:
-
-```txt
-https://arcoxdex.vercel.app/mcp
-```
-
-Deploy frontend steps:
-
-```bash
-cd /home/ubuntu/arc-dex
-vercel --prod
-```
-
-If the backend moves, update the external destinations in `vercel.json`; keep the public MCP URL as `https://arcoxdex.vercel.app/mcp`.
-
-Circle Gateway webhook callback (configure this exact backend URL in Circle Console):
-
-```txt
+```text
 https://43.134.14.43.nip.io/api/webhooks/circle
-```
-
-Circle Wallets v2 webhook callback (separate subscription):
-
-```txt
 https://43.134.14.43.nip.io/api/webhooks/circle-wallet
 ```
 
-The backend owns webhook signature verification and raw-body handling. Do not configure the deleted Vercel API project or its serverless routes.
-
-Webhook env:
+Env terkait:
 
 ```bash
 ARCOX_PAY_BASE_URL=https://arcoxdex.vercel.app
-ARCOX_DEFAULT_PAY_CURRENCY=usdcbase
-ARCOX_DEFAULT_PRICE_CURRENCY=usd
-ARCOX_ARC_TREASURY_ADDRESS=
-ARCOX_BASE_TREASURY_ADDRESS=
-
 CIRCLE_API_KEY=
 CIRCLE_BASE_URL=https://api-sandbox.circle.com
 CIRCLE_ENV=TEST
@@ -164,78 +152,75 @@ X402_BASE_AMOUNT=0.005
 X402_PAYMENT_TTL_SECONDS=300
 ```
 
-ARCOX x402 uses internal invoices, exact Arc Testnet USDC amounts, and Arc Transaction Memo reconciliation. Open `/pay/status` to create an invoice, view the exact unique USDC amount, and poll paid status. There is no NowPayments flow and no manual txHash fallback.
+## x402 / ARCOX Pay
 
-x402 reconciliation details:
+ARCOX x402 memakai invoice internal, amount USDC Arc Testnet yang unik, dan
+reconciliation lewat Arc Transaction Memo. Buka `/pay/status` untuk membuat
+invoice dan memantau status.
 
-- Backend memakai `rpc.testnet.arc.network` (RPC publik sinkron). Jangan pakai `arc-node.thecanteenapp.com` karena tertinggal ~1 blok.
-- `eth_getLogs` di-chunk menjadi 8,000 block per request untuk menghormati batas 10,000 RPC.
-- Invoice yang sudah `expired` tetap di-reconcile jika ada bukti on-chain. Pembayaran tidak hilang meski TTL 300 detik berlalu.
-- Frontend `IntelPanel` memakai retry logic dengan `paymentId` untuk mengambil result setelah status `paid`.
+- Backend memakai `rpc.testnet.arc.network` (RPC publik sinkron) sebagai
+  fallback; jangan pakai node tertinggal.
+- `eth_getLogs` di-chunk 2.000–8.000 block agar aman terhadap batas RPC.
+- Invoice `expired` tetap di-reconcile bila ada bukti on-chain.
+- `IntelPanel` memakai retry dengan `paymentId` setelah status `paid`.
 
 ## AI Router
 
-Open `/ai-router` or the “AI Router” menu.
-
-Flow:
-
 ```text
-Connect wallet -> Deposit USDC to Unified Balance -> Auto Pay ON -> Create API Key -> Use AI Router
+Connect wallet -> Deposit USDC ke Unified Balance -> Auto Pay ON -> Create API Key -> Pakai AI Router
 ```
-
-AI Router pays each AI request from the user’s Unified Balance through Auto Pay. It does not ask users for provider API keys and does not use NowPayments or sandbox payments.
-
-ARCOX AI Router uses standard bearer API keys. Keys are shown once, stored only as hashes, and can be revoked from the connected wallet.
-
-Auto Pay authorization is tracked per funded source chain. Cross-chain x402 and AI Router spends estimate Gateway fees first and spend enough for the recipient to receive the exact service amount.
-
-Agent Identity is auto-detected from Arc Testnet ERC-8004. AI Router remains available without an identity; Agent Jobs require one. New API keys bind to the selected identity and owner wallet when available. See [docs/agent-identity.md](docs/agent-identity.md).
-
-OpenAI-compatible client config:
 
 ```text
 base_url = https://arcoxdex.vercel.app/v1
-api_key = arx_sk_...
-model = arcox/auto
+api_key  = arx_sk_...
+model    = arcox/auto
 ```
 
-Runtime check:
+Auto Pay dilacak per chain sumber dana. Agent Identity dideteksi otomatis dari
+Arc Testnet ERC-8004 (`docs/agent-identity.md`).
 
-- Header app menampilkan `API online/offline`.
-- Jika halaman terlihat kosong, cek asset JS di DevTools Network. Vercel harus serve `/assets/*.js` sebagai `application/javascript`, bukan fallback `index.html`.
-- Jika API offline, swap/bridge/send tidak akan berjalan walaupun frontend berhasil load. Periksa juga health backend `https://43.134.14.43.nip.io/health`.
-
-## Security Notes
-
-- Circle Wallet actions require MetaMask signature authentication.
-- Auth tokens are sent as `Authorization: Bearer <token>`.
-- `/api/send`, `/api/swap`, `/api/quote`, `/api/wallet`, `/api/prepare-bridge`, and `/api/send-estimate` reject requests without a valid wallet token.
-- Server-signed mint endpoints are disabled unless `ENABLE_SERVER_SIGNED_MINT=true`.
-- Set a dedicated backend `AUTH_SECRET` before production.
-- Keep Circle secrets and private keys only in backend env vars, never in Vercel frontend env.
-
-Recommended backend env:
+## Tests & checks
 
 ```bash
-AUTH_SECRET=<random-32-byte-secret>
-ALLOWED_ORIGINS=https://arcoxdex.vercel.app
-CIRCLE_API_KEY=...
-CIRCLE_ENTITY_SECRET=...
-KIT_KEY=...
-SOLANA_DEVNET_RPC=https://api.devnet.solana.com
-ENABLE_SERVER_SIGNED_MINT=false
+npm run typecheck    # tsc --noEmit
+npm test             # typecheck + vitest (unit/regresi frontend)
+npm run build        # vite build
 ```
 
-## Build
+Vitest mengunci perilaku kritis: `agentSession`, `sessionProofPolicy`,
+`modularWallet` (nama passkey per agent), `agentReadiness`, `mscaPolicy`,
+`walletConnect`, dan isolasi state antar agent.
 
-VPS subpath build:
+## Deploy
 
 ```bash
-npm run build
+cd /home/ubuntu/arc-dex
+vercel --prod
 ```
 
-Vercel/root build:
+`vercel.json` membangun dengan `VITE_BASE_PATH=/`, menjalankan `npm test`
+sebelum build, dan me-rewrite `/api/*`, `/v1/*`, `/mcp`,
+`/.well-known/*`, dan `/health` ke backend. Jika backend pindah, ubah
+destinasi rewrite — URL publik MCP tetap `https://arcoxdex.vercel.app/mcp`.
 
-```bash
-VITE_BASE_PATH=/ npm run build
-```
+Security notes:
+
+- Aksi Circle Wallet butuh autentikasi tanda tangan MetaMask.
+- Token dikirim sebagai `Authorization: Bearer <token>`.
+- Endpoint mint server-signed nonaktif kecuali `ENABLE_SERVER_SIGNED_MINT=true`.
+- Simpan secret Circle/backend hanya di env backend, jangan di Vercel frontend.
+
+## Mainnet
+
+Status & prasyarat Arc mainnet (kontrak yang sudah ada, passkey LIVE,
+Gas Station policy, dual network key) ada di
+[`docs/mainnet-readiness.md`](docs/mainnet-readiness.md).
+
+## Referensi internal
+
+- `docs/repo-structure.md` — peta repo.
+- `docs/agent-identity.md` — ERC-8004 di Arc.
+- `docs/mainnet-readiness.md` — checklist mainnet.
+- `MAINTENANCE.md` — operasional harian.
+- `audit/` — laporan audit historis (host backend di dalamnya sudah tidak
+  berlaku; lihat catatan di `audit/README.md`).
