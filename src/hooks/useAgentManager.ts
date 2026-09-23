@@ -23,6 +23,12 @@ import {
 import { registerPasskey, loginPasskey, getMscaState } from '../services/modularWallet'
 import { activateAgentSession, isOwnerSessionRequiredError } from '../services/agentSession'
 import {
+  SCOPED_VAULT_TOKEN_PREFIX,
+  agentTokenCandidates,
+  forgetVaultToken,
+  isStaleTokenError,
+} from '../services/agentTokenSelection'
+import {
   AGENT_KEYS,
   agentTypeFromKey,
   clientIdFromAgentKey,
@@ -203,18 +209,33 @@ export function useAgentManager() {
   const setVaultToken = useAuthStore(state => state.setVaultToken)
   const clearVaultToken = useAuthStore(state => state.clearVaultToken)
 
-  const tokenForAgent = useCallback((agentKey: string): string | null => {
-    const clientId = clientIdFromAgentKey(agentKey)
-    if (typeof window === 'undefined') return vaultToken
-    try {
-      if (clientId) {
-        const scoped = localStorage.getItem(`arx_oauth_vault_token:${clientId}`)
-        if (scoped) return scoped
+  /**
+   * Run one agent-scoped action with the first vault session that the backend
+   * still accepts.
+   *
+   * Card actions used to send the agent own (possibly 24h-old) session and stop
+   * there: a rejected token answered "Sesi berakhir" for Revoke/Clear forever,
+   * even right after a successful passkey Relogin — because the fresh login only
+   * refreshed the global slots while the dead per-agent slot stayed preferred.
+   * A 401/403 now retires that proof and retries with the next candidate, so a
+   * freshly authenticated passkey always wins.
+   */
+  const withAgentToken = useCallback(async <T,>(agentKey: string, action: (token: string) => Promise<T>): Promise<T> => {
+    const candidates = agentTokenCandidates(agentKey, vaultToken)
+    if (candidates.length === 0) throw new Error('Masuk dengan passkey agent terlebih dahulu')
+    for (let index = 0; index < candidates.length; index += 1) {
+      const token = candidates[index]
+      try {
+        return await action(token)
+      } catch (error) {
+        const isLast = index === candidates.length - 1
+        // Real failures (validation, business rules, network) must surface
+        // unchanged; only a rejected session is worth replaying.
+        if (isLast || !isStaleTokenError(error)) throw error
+        forgetVaultToken(token)
       }
-      return vaultToken || localStorage.getItem('arx_vault_token') || localStorage.getItem('arx_passkey_vault_token')
-    } catch {
-      return vaultToken
     }
+    throw new Error('Masuk dengan passkey agent terlebih dahulu')
   }, [vaultToken])
 
   const safeSet = useCallback(<T,>(setter: (value: T) => void, value: T) => {
@@ -313,6 +334,16 @@ export function useAgentManager() {
       if (!firstLimits && read.limits.status === 'fulfilled') firstLimits = read.limits.value
     }
 
+    // Retire every token the backend just rejected. Keeping an expired session
+    // in localStorage is what made card actions keep answering 401 minutes
+    // after a fresh passkey login, until site data was cleared by hand.
+    const deadTokens = new Set(reads
+      .filter(read => read.agents.status === 'rejected'
+        && read.agents.reason instanceof VaultApiError
+        && read.agents.reason.code === SESSION_EXPIRED)
+      .map(read => read.token))
+    for (const token of deadTokens) forgetVaultToken(token)
+
     // A dead token makes every owner read fail. If another OAuth passkey token
     // is still valid, keep it and continue rendering the connected agents.
     if (!successfulAgentRead) {
@@ -322,7 +353,16 @@ export function useAgentManager() {
       if (allExpired) clearVaultToken()
       return
     }
-    if (!vaultToken && candidateToken) setVaultToken(candidateToken)
+    // Adopt the working session when the dashboard token is the dead one, so the
+    // next refresh and every card action start from a healthy proof instead of
+    // replaying the expired one.
+    if (candidateToken && (!vaultToken || deadTokens.has(vaultToken))) {
+      setVaultToken(candidateToken)
+      try {
+        localStorage.setItem('arx_vault_token', candidateToken)
+        localStorage.setItem('arx_passkey_vault_token', candidateToken)
+      } catch { /* storage can be unavailable in privacy mode */ }
+    }
 
     const sessions = [...sessionMap.values()]
     const nextAgents = [...agentMap.values()].map(agent => toAgentState(agent, sessions))
@@ -342,11 +382,10 @@ export function useAgentManager() {
     // Failures remain non-fatal so Claude/GPT/Hermes cards still render from
     // the existing owner-scoped binding/session reads.
     void Promise.all(nextAgents.map(async agent => {
-      const token = tokenForAgent(agent.agentKey)
-      if (!token) return
+      if (agentTokenCandidates(agent.agentKey, vaultToken).length === 0) return
       if (mounted.current) updateAgent(agent.agentKey, { readinessLoading: true })
       try {
-        const readiness = await getAgentReadiness(agent.agentKey, token)
+        const readiness = await withAgentToken(agent.agentKey, token => getAgentReadiness(agent.agentKey, token))
         if (mounted.current) updateAgent(agent.agentKey, { readiness, readinessLoading: false })
       } catch {
         // The readiness endpoint is additive observability; do not turn a
@@ -354,7 +393,7 @@ export function useAgentManager() {
         if (mounted.current) updateAgent(agent.agentKey, { readinessLoading: false })
       }
     }))
-  }, [vaultToken, clearVaultToken, setVaultToken, setAgents, removeAgent, setMcpSessions, setApprovals, setActivity, setCredentials, setLimits, refreshAgentBalances, tokenForAgent, updateAgent])
+  }, [vaultToken, clearVaultToken, setVaultToken, setAgents, removeAgent, setMcpSessions, setApprovals, setActivity, setCredentials, setLimits, refreshAgentBalances, withAgentToken, updateAgent])
 
   useEffect(() => {
     // OAuth passkey sessions are intentionally stored per MCP client and do
@@ -455,6 +494,13 @@ export function useAgentManager() {
       localStorage.setItem('arx_owner_vault_token', ownerAfterPasskey.token)
       localStorage.setItem('arx_eoa_vault_token', ownerAfterPasskey.token)
     }
+    // Refresh this agent own slot with the session that just authenticated its
+    // wallet. Without it, Relogin kept the card usable for reads while Revoke
+    // and Clear still sent the previous, now-expired per-agent token.
+    const agentClientId = clientIdFromAgentKey(agentKey)
+    if (agentClientId) {
+      try { localStorage.setItem(`${SCOPED_VAULT_TOKEN_PREFIX}${agentClientId}`, dashboardToken) } catch { /* privacy mode */ }
+    }
     if (activation.warnings.length > 0 && mounted.current) {
       setNotice(`Agent Wallet aktif di Arc, Base, dan Arbitrum. ${activation.warnings.join('; ')}`)
     }
@@ -516,35 +562,29 @@ export function useAgentManager() {
   /** Issue a fresh connection token for an agent that already has a binding. */
   const createToken = useCallback((agentKey: string) =>
     run(`token:${agentKey}`, async () => {
-      const token = tokenForAgent(agentKey)
-      if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
-      const issued = await createAgentConnectionToken(agentKey, token, 90)
+      const issued = await withAgentToken(agentKey, token => createAgentConnectionToken(agentKey, token, 90))
       safeSet(setConnectionToken, issued)
-    }), [run, tokenForAgent, safeSet, setConnectionToken])
+    }), [run, withAgentToken, safeSet, setConnectionToken])
 
   const deleteAgent = useCallback((agentKey: string) =>
     run(`delete:${agentKey}`, async () => {
-      const token = tokenForAgent(agentKey)
-      if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
-      await deleteVaultAgent(agentKey, token)
+      await withAgentToken(agentKey, token => deleteVaultAgent(agentKey, token))
       // Remove the exact card immediately. The subsequent owner-scoped refresh
       // remains authoritative, but a delayed read from another cached token
       // must not make Clear appear to do nothing.
       removeAgent(agentKey)
       safeSet(setNotice, 'Agent dihapus dari dashboard dan session dinonaktifkan.')
       await refreshAll()
-    }), [run, tokenForAgent, removeAgent, refreshAll, safeSet])
+    }), [run, withAgentToken, removeAgent, refreshAll, safeSet])
 
   const revokeAgent = useCallback((agentKey: string) =>
     run(`revoke:${agentKey}`, async () => {
-      const token = tokenForAgent(agentKey)
-      if (!token) throw new Error('Masuk dengan passkey agent terlebih dahulu')
-      await revokeVaultAgent(agentKey, token)
+      await withAgentToken(agentKey, token => revokeVaultAgent(agentKey, token))
       // Revoke disables the active session but intentionally retains the
       // binding/card so the same wallet can be reactivated with Relogin.
       safeSet(setNotice, 'Session agent dinonaktifkan. Wallet tetap tersimpan; gunakan tombol Relogin untuk mengaktifkannya kembali.')
       await refreshAll()
-    }), [run, tokenForAgent, refreshAll, safeSet])
+    }), [run, withAgentToken, refreshAll, safeSet])
 
   const saveLimits = useCallback((next: Partial<Limits>) =>
     run('limits', async () => {

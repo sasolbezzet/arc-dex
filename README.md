@@ -84,6 +84,15 @@ Aturan teknis yang berlaku sekarang:
 Policy proof per alur terpusat di `src/services/sessionProofPolicy.ts`
 (dipakai `agentSession.ts`), sehingga perubahan aturan tidak tersebar.
 
+Sesi dashboard juga disimpan per agent di `arx_oauth_vault_token:<clientId>`.
+Sesi ini berumur 24 jam dan bisa kedaluwarsa lebih dulu daripada sesi global,
+sehingga aksi kartu (Relogin/Revoke/Clear) mencoba kandidat token berikutnya
+setelah `401`/`403`, lalu membuang token yang ditolak (`forgetVaultToken`) dan
+menulis ulang slot agent saat Relogin berhasil. Aturan itu ada di
+`src/services/agentTokenSelection.ts` — tanpa keduanya, kartu akan terus
+menjawab "Sesi berakhir. Masuk kembali dengan passkey." walaupun passkey baru
+saja dipakai login.
+
 Jika agent mengaku "terhubung" tetapi tidak menemukan tool ARCOX, jalankan
 diagnosa dari repo backend:
 
