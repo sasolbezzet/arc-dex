@@ -1,6 +1,6 @@
 # ARCOX Mainnet Readiness (Arc Mainnet)
 
-Status dokumen: 17 September 2026.
+Status dokumen: 25 September 2026.
 Semua temuan di bawah berasal dari **probe read-only** (JSON-RPC `eth_*`, Circle Modular RPC, Circle Wallets API). Tidak ada transaksi on-chain, tidak ada wallet baru, dan tidak ada perubahan kode saat verifikasi ini.
 
 Dokumen ini adalah catatan prasyarat. Pekerjaan kode dimulai setelah seluruh item di bagian [Prasyarat](#prasyarat) berstatus lengkap.
@@ -15,8 +15,8 @@ Dokumen ini adalah catatan prasyarat. Pekerjaan kode dimulai setelah seluruh ite
 | Slug transport mainnet (`arc`/`base`/`arbitrum`) | ✅ terverifikasi |
 | Kontrak Circle di Arc mainnet (USDC, EURC, USYC, Memo, CCTP, Gateway) | ✅ ada |
 | ERC-8004 IdentityRegistry mainnet | ✅ `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
-| Passkey mainnet (`rp_*`) | ❌ diblokir konfigurasi Console |
-| Gasless paymaster mainnet | ❌ diblokir konfigurasi Console |
+| Passkey mainnet (`rp_*`) | ✅ 24 Sep 2026 — `rp.name = arcoxdex.vercel.app` |
+| Gasless paymaster mainnet | ✅ 25 Sep 2026 — Gas Station policy LIVE aktif |
 | Kontrak ARCOX sendiri di mainnet | ❌ belum di-deploy |
 | API Key mainnet (dev-controlled wallet/webhook) | ✅ aktif |
 
@@ -59,8 +59,8 @@ Header: `Authorization: Bearer <client key>`, `X-AppInfo: platform=web;version=1
 | `circle_getUserOperationGasPrice` | ✅ | ✅ nilai low/medium/high + `deployed`/`notDeployed` |
 | `circle_getAddress` | ✅ | ✅ `state: "LIVE"`, ownership contract `0x0000000C984AFf541D6cE86Bb697e68ec57873C8` |
 | `eth_getBalance` | ✅ | ✅ |
-| `pm_getPaymasterStubData` | ✅ paymaster `0x03df76c8c30a88f424cf3cbbc36a1ca02763103b` | ❌ `Default policy is not found.` |
-| `rp_getRegistrationOptions` | ✅ `rp.name = arcoxdex.vercel.app` | ❌ `Cannot find the entity config in the system.` |
+| `pm_getPaymasterStubData` | ✅ paymaster `0x03df76c8c30a88f424cf3cbbc36a1ca02763103b` | ✅ 25 Sep 2026 — `paymaster + paymasterData` diterima |
+| `rp_getRegistrationOptions` | ✅ `rp.name = arcoxdex.vercel.app` | ✅ 24 Sep 2026 — `rp.name = arcoxdex.vercel.app` |
 | `rp_*` pada testnet | ✅ | ❌ ditolak (`LIVE_API` tidak untuk testnet) |
 
 Perbandingan penting: key TEST mentok di mainnet dengan pesan `TEST_API key cannot be used with blockchain mainnets…`, dan key LIVE mentok di testnet dengan pesan sebaliknya. Jadi **satu Client Key tidak bisa dipakai dua network** — dual network wajib menyimpan dua key.
@@ -71,7 +71,11 @@ Catatan teknis yang terbukti dari probe:
 - **`X-AppInfo`'s `uri` terikat ke passkey domain yang terdaftar.** `uri=arcoxdex.vercel.app` diterima; `uri=localhost:5173` ditolak `Invalid credentials`. Kalau domain passkey pindah, tiga hal harus sinkron: Console (passkey domain), `circleModularProxyHeaders()` di backend, dan `VITE_*` frontend.
 - **Alamat MSCA bersifat deterministik** dari (public key webauthn + `scaCore`) sehingga bisa dihitung sebelum deploy. Berguna untuk pre-flight check mainnet tanpa transaksi.
 
-## Dua blocker mainnet (keduanya konfigurasi Console)
+## Blocker mainnet (konfigurasi Console) — Selesai 25 Sep 2026
+
+Kedua langkah di bawah sudah dieksekusi di Console; `npm run probe:mainnet` di
+`arc-dex-api` sekarang **19 lulus / 0 blocker**. Bagian ini disimpan sebagai
+catatan langkah + cara verifikasi ulang bila konfigurasi Console berubah.
 
 ### 1. Passkey domain untuk environment LIVE
 
@@ -90,13 +94,14 @@ Console → Gas Station → buat policy
 → jadikan default policy untuk environment LIVE
 ```
 
-Docs Circle menegaskan policy adalah gerbang sponsorship, dan Arc Mainnet termasuk jaringan yang didukung. Environment LIVE belum punya policy → `Default policy is not found.`
+Docs Circle menegaskan policy adalah gerbang sponsorship, dan Arc Mainnet termasuk jaringan yang didukung. Dulu environment LIVE belum punya policy → `Default policy is not found.`, lalu `Policy is not activated and cannot be used.`; setelah policy diaktifkan/dijadikan default pada 25 Sep 2026, sponsorship mainnet sudah valid.
 
-Verifikasi setelah dua langkah di atas:
+Verifikasi setelah dua langkah di atas (skrip: `npm run probe:mainnet` di
+`arc-dex-api`, read-only):
 
 ```text
-rp_getRegistrationOptions (LIVE)  → challenge + rp.name
-pm_getPaymasterStubData  (LIVE)   → paymaster + paymasterData
+rp_getRegistrationOptions (LIVE)  → challenge + rp.name      ✅ 24 Sep 2026
+pm_getPaymasterStubData  (LIVE)   → paymaster + paymasterData ✅ 25 Sep 2026 ("Policy is not activated" sudah selesai)
 ```
 
 ## Kontrak di Arc Mainnet (`eth_getCode`)
@@ -129,8 +134,8 @@ ERC-8004 ValidationRegistry tidak dipakai oleh kode (`grep` = 0), jadi item lama
 | # | Item | Status |
 |---|---|---|
 | A1 | Client Key **LIVE_API** untuk passkey/MSCA/paymaster | ✅ ada (`CIRCLE_CLIENT_KEY_LIVE`) |
-| A2 | Passkey domain `arcoxdex.vercel.app` untuk environment LIVE | ❌ **blocker** |
-| A3 | Gas Station default policy mencakup Arc Mainnet | ❌ **blocker** |
+| A2 | Passkey domain `arcoxdex.vercel.app` untuk environment LIVE | ✅ terverifikasi 24 Sep 2026 (`rp_getRegistrationOptions` LIVE → `rp.name = arcoxdex.vercel.app`); probe harus ke base path `…/v1/rpc/w3s/buidl` tanpa slug chain |
+| A3 | Gas Station default policy mencakup Arc Mainnet | ✅ aktif 25 Sep 2026 (`pm_getPaymasterStubData` menerima `paymaster + paymasterData`) |
 | A4 | Client Key **TEST_API** (agar testnet tetap jalan) | ✅ ada (`CIRCLE_CLIENT_KEY`) |
 | A5 | API Key environment produksi (dev-controlled wallet, webhook) | ✅ aktif (`CIRCLE_API_KEY_MAINNET`, HTTP 200) |
 | A6 | Entity secret terdaftar untuk environment produksi | perlu konfirmasi |
