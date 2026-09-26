@@ -129,11 +129,11 @@ describe('Create New Wallet (register) activation', () => {
       skipDestinationChains: false,
     })
 
-    expect(registerDelegateOwnerMock.mock.calls.map(call => call[1])).toEqual(['base-sepolia', 'arbitrum-sepolia'])
+    expect(registerDelegateOwnerMock.mock.calls.map(call => call[1])).toEqual(['base-mainnet', 'arbitrum-mainnet'])
     expect(activation.chainAuthorizationStatus).toEqual({
-      'arc-testnet': 'authorized',
-      'base-sepolia': 'authorized',
-      'arbitrum-sepolia': 'authorized',
+      'arc-mainnet': 'authorized',
+      'base-mainnet': 'authorized',
+      'arbitrum-mainnet': 'authorized',
     })
   })
 })
@@ -273,9 +273,9 @@ describe('Relogin after Revoke', () => {
     })
 
     expect(calls.some(call => call.url.includes('destination-status'))).toBe(true)
-    expect(registerDelegateOwnerMock.mock.calls.map(call => call[1])).toEqual(['base-sepolia', 'arbitrum-sepolia'])
-    expect(activation.chainAuthorizationStatus['base-sepolia']).toBe('authorized')
-    expect(activation.chainAuthorizationStatus['arbitrum-sepolia']).toBe('authorized')
+    expect(registerDelegateOwnerMock.mock.calls.map(call => call[1])).toEqual(['base-mainnet', 'arbitrum-mainnet'])
+    expect(activation.chainAuthorizationStatus['base-mainnet']).toBe('authorized')
+    expect(activation.chainAuthorizationStatus['arbitrum-mainnet']).toBe('authorized')
   })
 
   it('keeps a genuine backend owner_session_required retryable', async () => {

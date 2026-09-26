@@ -3,26 +3,27 @@ import { useState, useEffect, useCallback } from 'react'
 import { useI18n } from '../i18n'
 
 const API = ''
-const CHAIN_KEYS = ['arc-testnet', 'ethereum-sepolia', 'arbitrum-sepolia', 'base-sepolia'] as const
+const CHAIN_KEYS = ['arc-mainnet', 'ethereum-mainnet', 'arbitrum-mainnet', 'base-mainnet'] as const
 const CHAIN_NAMES: Record<string, string> = {
-  'arc-testnet': 'Arc Testnet',
-  'ethereum-sepolia': 'Ethereum Sepolia',
-  'arbitrum-sepolia': 'Arbitrum Sepolia',
-  'base-sepolia': 'Base Sepolia',
+  'arc-mainnet': 'Arc Mainnet',
+  'ethereum-mainnet': 'Ethereum',
+  'arbitrum-mainnet': 'Arbitrum',
+  'base-mainnet': 'Base',
 }
 const CHAIN_ICONS: Record<string, string> = {
-  'arc-testnet': '🔵',
-  'ethereum-sepolia': '🔷',
-  'arbitrum-sepolia': '🟣',
-  'base-sepolia': '🔵',
+  'arc-mainnet': '🔵',
+  'ethereum-mainnet': '🔷',
+  'arbitrum-mainnet': '🟣',
+  'base-mainnet': '🔵',
 }
 const CHAIN_ACCENTS: Record<string, string> = {
-  'arc-testnet': '#38bdf8',
-  'ethereum-sepolia': '#818cf8',
-  'arbitrum-sepolia': '#a78bfa',
-  'base-sepolia': '#60a5fa',
+  'arc-mainnet': '#38bdf8',
+  'ethereum-mainnet': '#818cf8',
+  'arbitrum-mainnet': '#a78bfa',
+  'base-mainnet': '#60a5fa',
 }
-const TOKENS = ['USDC', 'ETH', 'EURC', 'cirBTC'] as const
+// cirBTC belum ada di mainnet, jadi tidak ditampilkan sebagai token saldo.
+const TOKENS = ['USDC', 'ETH', 'EURC'] as const
 
 type ChainKey = typeof CHAIN_KEYS[number]
 type Token = typeof TOKENS[number]
@@ -91,7 +92,7 @@ export function MultiChainBalances({ walletAddress }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
-  const [activeChain, setActiveChain] = useState<ChainKey>('arc-testnet')
+  const [activeChain, setActiveChain] = useState<ChainKey>('arc-mainnet')
   const { t } = useI18n()
 
   const fetchBalances = useCallback(async () => {
@@ -173,7 +174,7 @@ export function MultiChainBalances({ walletAddress }: Props) {
       <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
           <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 650 }}>{t('balance.totalNetworks')}</span>
-          <span style={{ color: '#64748b', fontSize: 10 }}>USDC · ETH · EURC · cirBTC</span>
+          <span style={{ color: '#64748b', fontSize: 10 }}>USDC · ETH · EURC</span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(116px, 1fr))', gap: 8 }}>
           {TOKENS.map(token => (

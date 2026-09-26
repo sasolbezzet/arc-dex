@@ -49,37 +49,37 @@ export const TOKEN_META: Record<string,LogoMeta> = {
 }
 
 const CHAIN_META: Record<string,LogoMeta> = {
-  Arc_Testnet: {
+  Arc: {
     short:'Arc',
     color:'#0f172a',
     mark:'A',
     logo:'https://www.arc.io/favicon.ico',
   },
-  Ethereum_Sepolia: {
+  Ethereum: {
     short:'Ethereum',
     color:'#627eea',
     mark:'Ξ',
     logo:'https://cryptologos.cc/logos/ethereum-eth-logo.svg',
   },
-  Base_Sepolia: {
+  Base: {
     short:'Base',
     color:'#0052ff',
     mark:'B',
     logo:'https://icons.llamao.fi/icons/chains/rsz_base.jpg',
   },
-  Arbitrum_Sepolia: {
+  Arbitrum: {
     short:'Arbitrum',
     color:'#28a0f0',
     mark:'A',
     logo:'https://cryptologos.cc/logos/arbitrum-arb-logo.svg',
   },
-  HyperEVM_Testnet: {
+  HyperEVM: {
     short:'HyperEVM',
     color:'#00d7a7',
     mark:'H',
     logo:'https://icons.llamao.fi/icons/chains/rsz_hyperevm.jpg',
   },
-  Solana_Devnet: {
+  Solana: {
     short:'Solana',
     color:'#14f195',
     mark:'S',

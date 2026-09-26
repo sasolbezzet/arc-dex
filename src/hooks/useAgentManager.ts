@@ -252,7 +252,7 @@ export function useAgentManager() {
     safeSet(setError, message || fallback)
   }, [clearVaultToken, safeSet])
 
-  const refreshAgentBalances = useCallback((nextAgents: AgentState[], chain: SupportedChain = 'arc-testnet') => {
+  const refreshAgentBalances = useCallback((nextAgents: AgentState[], chain: SupportedChain = 'arc-mainnet') => {
     void Promise.all(nextAgents.map(async agent => {
       const requestKey = `${agent.agentKey}:${chain}`
       if (balanceRequestsInFlight.current.has(requestKey)) return

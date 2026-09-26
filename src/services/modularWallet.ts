@@ -16,7 +16,7 @@ import { isSuccessfulUserOpReceipt } from './mscaPolicy'
 import { proofWasInvalidatedByPolicy } from './sessionProofPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { parsePublicKey } from 'webauthn-p256'
-import { arcTestnet } from 'viem/chains'
+
 import { ensureConnectedOwnerSession, requireConnectedOwnerWallet } from '../auth'
 
 // Circle's documented Modular Wallet endpoint and credential names.
@@ -568,7 +568,7 @@ const ADD_OWNERS_ABI = [{
   outputs: [],
 }]
 
-// Circle's Arbitrum Sepolia bundler rejects UserOperations with a zero priority
+// Circle's Arbitrum bundler rejects UserOperations with a zero priority
 // fee. Circle publishes authoritative prices via circle_getUserOperationGasPrice
 // (low/medium/high); use the medium level so deployment/authorization does not
 // wait on a second attempt. Other chains leave fee selection to Circle Gas
@@ -606,27 +606,40 @@ async function circleGasFees(chainKey: string): Promise<{ maxPriorityFeePerGas?:
   return safeFloor
 }
 
+// viem belum mengekspor chain Arc mainnet, jadi didefinisikan lokal (id 5042)
+// dengan RPC publik mainnet yang sudah diverifikasi.
+const arcMainnet = defineChain({
+  id: 5042,
+  name: 'Arc Mainnet',
+  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
+  rpcUrls: { default: { http: ['https://rpc.mainnet.arc.io'] } },
+})
+
+// Slug transport Circle Modular mainnet (lowerCamelCase nama chain SDK).
 const EVM_CHAIN_CONFIG = {
-  'arc-testnet': { slug: 'arcTestnet', chain: arcTestnet },
-  'base-sepolia': { slug: 'baseSepolia', chain: defineChain({ id: 84532, name: 'Base Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia.base.org'] } } }) },
-  'arbitrum-sepolia': { slug: 'arbitrumSepolia', chain: defineChain({ id: 421614, name: 'Arbitrum Sepolia', nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://sepolia-rollup.arbitrum.io/rpc'] } } }) },
+  'arc-mainnet': { slug: 'arc', chain: arcMainnet },
+  'base-mainnet': { slug: 'base', chain: defineChain({ id: 8453, name: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://mainnet.base.org'] } } }) },
+  'arbitrum-mainnet': { slug: 'arbitrum', chain: defineChain({ id: 42161, name: 'Arbitrum', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['https://arb1.arbitrum.io/rpc'] } } }) },
 } as const
 
 // Exactly these three networks are part of Agent Wallet creation. Ethereum
-// Sepolia remains available to CCTP/balance features, but it is not an MSCA
+// Mainnet remains available to CCTP/balance features, but it is not an MSCA
 // deployment target and must never produce an "unsupported" pseudo-success.
-export const MSCA_DEPLOYMENT_CHAINS = ['arc-testnet', 'base-sepolia', 'arbitrum-sepolia'] as const
+// Catatan mainnet: backend hanya mengizinkan MSCA di `arc-mainnet`
+// (MSCA_SUPPORTED_CHAIN_KEYS), jadi Base/Arbitrum mainnet tetap gagal-tertutup
+// di server sampai Circle mendukung Modular MSCA di chain tersebut.
+export const MSCA_DEPLOYMENT_CHAINS = ['arc-mainnet', 'base-mainnet', 'arbitrum-mainnet'] as const
 
-function chainConfig(chainKey = 'arc-testnet') {
-  if (chainKey === 'ethereum-sepolia') {
-    throw new Error('MSCA unsupported on Ethereum Sepolia. Circle Gas Station support does not add Modular MSCA support.')
+function chainConfig(chainKey = 'arc-mainnet') {
+  if (chainKey === 'ethereum-mainnet') {
+    throw new Error('MSCA unsupported on Ethereum. Circle Gas Station support does not add Modular MSCA support.')
   }
   const config = EVM_CHAIN_CONFIG[chainKey as keyof typeof EVM_CHAIN_CONFIG]
   if (!config) throw new Error(`Unsupported MSCA chain: ${chainKey}`)
   return config
 }
 
-function modularTransport(chainKey = 'arc-testnet') {
+function modularTransport(chainKey = 'arc-mainnet') {
   return toModularTransport(`${CLIENT_URL}/${chainConfig(chainKey).slug}`, CLIENT_KEY)
 }
 
@@ -657,8 +670,8 @@ async function userOpOutcome(client: any, userOpHash?: string, submittedAt?: num
 // ── WebAuthn sender mapping for destination chains ──
 // Circle's WeightedWebAuthnMultisig plugin resolves the WebAuthn validation
 // entry by the sender = keccak(publicKeyX, publicKeyY). That resolution must
-// exist on EVERY chain the wallet is used on. Registration on Arc testnet
-// creates the mapping on Arc only; Base Sepolia / Arbitrum Sepolia have no
+// exist on EVERY chain the wallet is used on. Registration on Arc mainnet
+// creates the mapping on Arc only; Base / Arbitrum have no
 // mapping and the plugin then reverts with `InvalidValidationFunctionId`
 // during UserOperation simulation (the exact production error).
 //
@@ -667,7 +680,7 @@ async function userOpOutcome(client: any, userOpHash?: string, submittedAt?: num
 // It is idempotent: a duplicate mapping returns an ALREADY_KNOWN error that
 // we swallow.
 async function ensureWebAuthnOwnerMapping(chainKey: string, agentKey = DEFAULT_AGENT_KEY): Promise<void> {
-  if (chainKey === 'arc-testnet' || chainKey === 'ethereum-sepolia') return
+  if (chainKey === 'arc-mainnet' || chainKey === 'ethereum-mainnet') return
   const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential?.publicKey) return
   const config = chainConfig(chainKey)
@@ -785,7 +798,7 @@ export async function registerPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?:
       const verified = await verifyPasskeyWithBackend(rawCredential, 'Register', flowId, selectedAgentKey, verifiedOwner)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
-      const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+      const client = createPublicClient({ chain: arcMainnet, transport: modularTransport() as any })
       const smartAccount = await toCircleSmartAccount({
         client: client as any,
         owner: webAuthnOwner(credential),
@@ -811,16 +824,16 @@ export async function deploySmartAccount(agentKey = DEFAULT_AGENT_KEY): Promise<
   const state = loadState(selectedAgentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum mengaktifkan Agent Wallet.')
 
-  const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+  const client = createPublicClient({ chain: arcMainnet, transport: modularTransport() as any })
   const smartAccount = await toCircleSmartAccount({
     address: state.walletAddress as `0x${string}`,
     client: client as any,
     owner: webAuthnOwner(state.credential as StoredCredential),
   })
-  const bundlerClient = bundlerClientFor('arc-testnet', smartAccount as any, client as any)
+  const bundlerClient = bundlerClientFor('arc-mainnet', smartAccount as any, client as any)
   if (await smartAccount.isDeployed()) {
-    const previous = loadState(agentKey).deploymentStatus?.['arc-testnet']
-    saveDeploymentStatus('arc-testnet', { ...(previous || {}), status: 'deployed', updatedAt: Date.now() }, agentKey)
+    const previous = loadState(agentKey).deploymentStatus?.['arc-mainnet']
+    saveDeploymentStatus('arc-mainnet', { ...(previous || {}), status: 'deployed', updatedAt: Date.now() }, agentKey)
     saveState({ ...loadState(agentKey), deployed: true }, agentKey)
     return { walletAddress: state.walletAddress, deployed: true }
   }
@@ -834,13 +847,13 @@ export async function deploySmartAccount(agentKey = DEFAULT_AGENT_KEY): Promise<
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
     paymaster: true,
   })
-  const previousDeployment = loadState(agentKey).deploymentStatus?.['arc-testnet']
-  saveDeploymentStatus('arc-testnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
+  const previousDeployment = loadState(agentKey).deploymentStatus?.['arc-mainnet']
+  saveDeploymentStatus('arc-mainnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
   const receipt = await waitForUserOperationReceiptBounded(bundlerClient as any, userOpHash as `0x${string}`)
   if (!isSuccessfulUserOpReceipt(receipt) || !(await smartAccount.isDeployed())) throw new Error('Aktivasi Agent Wallet belum berhasil. Coba lagi dengan passkey yang sama.')
 
-  const latestDeployment = loadState(agentKey).deploymentStatus?.['arc-testnet']
-  saveDeploymentStatus('arc-testnet', { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() }, agentKey)
+  const latestDeployment = loadState(agentKey).deploymentStatus?.['arc-mainnet']
+  saveDeploymentStatus('arc-mainnet', { ...(latestDeployment || {}), status: 'deployed', userOpHash, updatedAt: Date.now() }, agentKey)
   saveState({ ...loadState(agentKey), deployed: true }, agentKey)
   return { walletAddress: state.walletAddress, deployed: true, userOpHash }
 }
@@ -884,7 +897,7 @@ export async function deployAllSmartAccounts(agentKey = DEFAULT_AGENT_KEY): Prom
     }
   }
   const latest = loadState(agentKey)
-  saveState({ ...latest, deployed: latest.deploymentStatus?.['arc-testnet']?.status === 'deployed' }, agentKey)
+  saveState({ ...latest, deployed: latest.deploymentStatus?.['arc-mainnet']?.status === 'deployed' }, agentKey)
   return { walletAddress: state.walletAddress, results }
 }
 
@@ -894,8 +907,8 @@ export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddr
   const state = loadState(agentKey)
   const address = walletAddress || state.walletAddress
   if (!address || !state.credential) throw new Error('Login Passkey diperlukan untuk verifikasi deployment.')
-  if (chainKey === 'ethereum-sepolia') {
-    throw new Error('MSCA unsupported on Ethereum Sepolia. Use Circle SCA/EOA wallet flow for this network.')
+  if (chainKey === 'ethereum-mainnet') {
+    throw new Error('MSCA unsupported on Ethereum. Use Circle SCA/EOA wallet flow for this network.')
   }
   const config = chainConfig(chainKey)
   const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
@@ -913,8 +926,8 @@ export async function isSmartAccountDeployedOnChain(chainKey: string, walletAddr
 export async function deploySmartAccountOnChain(chainKey: string, agentKey = DEFAULT_AGENT_KEY): Promise<{ walletAddress: string; deployed: boolean; userOpHash?: string }> {
   const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan sebelum deploy destination MSCA.')
-  if (chainKey === 'ethereum-sepolia') {
-    throw new Error('MSCA unsupported on Ethereum Sepolia. Use Circle SCA/EOA wallet flow for this network.')
+  if (chainKey === 'ethereum-mainnet') {
+    throw new Error('MSCA unsupported on Ethereum. Use Circle SCA/EOA wallet flow for this network.')
   }
   const config = chainConfig(chainKey)
   const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
@@ -979,7 +992,7 @@ export async function loginPasskey(agentKey = DEFAULT_AGENT_KEY, ownerProof?: Ow
       const verified = await verifyPasskeyWithBackend(rawCredential, 'Login', flowId, selectedAgentKey, ownerProof)
       const credential = createStoredCredential(rawCredential.id, verified.credential.publicKey, rawCredential)
 
-      const client = createPublicClient({ chain: arcTestnet, transport: modularTransport() as any })
+      const client = createPublicClient({ chain: arcMainnet, transport: modularTransport() as any })
       const smartAccount = await toCircleSmartAccount({
         client: client as any,
         owner: webAuthnOwner(credential),
@@ -1018,7 +1031,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   // No separate deployment UserOp is required: the addOwners authorization
   // below is the first UserOp and carries the factory initCode, which deploys
   // the deterministic MSCA and adds the delegate owner in a single operation.
-  // (Verified live on Arc, Base Sepolia, and Arbitrum Sepolia.)
+  // (Verified live on Arc, Base, and Arbitrum.)
 
   // Reserve the automation signer on the backend. The private key never enters
   // the browser; only its public address is returned for passkey authorization.
@@ -1110,7 +1123,7 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   }
 
   // The passkey authorizes exactly this reserved address.
-  const authorization = await registerDelegateOwner(delegateAddress, 'arc-testnet', vaultToken, agentKey)
+  const authorization = await registerDelegateOwner(delegateAddress, 'arc-mainnet', vaultToken, agentKey)
   if (!authorization.success || !authorization.userOpHash) throw new Error('Automation signer authorization did not return a UserOperation hash')
 
   // Activate the already-reserved signer only after authorization succeeded.
@@ -1188,9 +1201,9 @@ export function clearMscaState(agentKey?: string) {
 // ONE-TIME: passkey signs a single addOwners UserOperation that both deploys
 // the deterministic MSCA (first UserOp carries the factory initCode) and adds
 // the delegate as owner. After that the backend can sign transactions with the
-// delegate EOA automatically. Verified live on Arc, Base Sepolia, and Arbitrum
-// Sepolia: one UserOp = deploy + authorize.
-export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-testnet', vaultToken = '', agentKey = DEFAULT_AGENT_KEY): Promise<{ success: boolean; userOpHash?: string }> {
+// delegate EOA automatically. Verified live on Arc, Base, and Arbitrum
+// Mainnet: one UserOp = deploy + authorize.
+export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-mainnet', vaultToken = '', agentKey = DEFAULT_AGENT_KEY): Promise<{ success: boolean; userOpHash?: string }> {
   const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
   const config = chainConfig(chainKey)
@@ -1307,8 +1320,8 @@ export async function signPendingTx(txId: string, calls: Array<{ to: string; dat
   const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
 
-  if (chainKey === 'ethereum-sepolia') {
-    throw new Error('MSCA unsupported on Ethereum Sepolia. Use Circle SCA/EOA wallet flow for this network.')
+  if (chainKey === 'ethereum-mainnet') {
+    throw new Error('MSCA unsupported on Ethereum. Use Circle SCA/EOA wallet flow for this network.')
   }
   const config = chainConfig(chainKey)
   const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })

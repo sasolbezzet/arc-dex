@@ -101,7 +101,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
   const [agentLookup, setAgentLookup] = useState<{ owner: string; metadataUri: string } | null>(null)
   const [provider, setProvider] = useState('')
   const [evaluator, setEvaluator] = useState('')
-  const [description, setDescription] = useState('ARCOX agentic demo job on Arc Testnet')
+  const [description, setDescription] = useState('ARCOX agentic demo job on Arc Mainnet')
   const [expiresInHours, setExpiresInHours] = useState('24')
   const [jobId, setJobId] = useState('')
   const [budget, setBudget] = useState('1')
@@ -113,7 +113,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
   const [aiEndpoint, setAiEndpoint] = useState('/api/agent/ask')
   const [aiCapabilities, setAiCapabilities] = useState('send_usdc_on_arc, plan_swap, plan_bridge, create_erc8183_job, submit_erc8183_deliverable, complete_erc8183_job')
   const [agentMetadataJson, setAgentMetadataJson] = useState('')
-  const [simulationPrompt, setSimulationPrompt] = useState('Create a retail payment escrow job for 1 USDC on Arc Testnet and verify the deliverable.')
+  const [simulationPrompt, setSimulationPrompt] = useState('Create a retail payment escrow job for 1 USDC on Arc Mainnet and verify the deliverable.')
   const [simulationResult, setSimulationResult] = useState<SimResult | null>(null)
 
   useEffect(() => {
@@ -384,7 +384,7 @@ export function AgenticPanel({ address, eoaBalances, onRefresh, identities, acti
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12}}>
         <div style={{display:'flex',justifyContent:'space-between',gap:10}}>
           <span style={{color:'#64748b'}}>{t('agentic.network')}</span>
-          <span>Arc Testnet · ERC-8004 / ERC-8183</span>
+          <span>Arc Mainnet · ERC-8004 / ERC-8183</span>
         </div>
         <div style={{display:'flex',justifyContent:'space-between',gap:10,marginTop:4}}>
           <span style={{color:'#64748b'}}>{t('agentic.signer')}</span>

@@ -16,7 +16,7 @@ const TYPE_LABEL_KEYS: Record<string, 'plugin.activitySend' | 'plugin.activitySw
   session: 'plugin.activitySession',
 }
 
-const EXPLORER = 'https://explorer-testnet.arc.network/tx/'
+const EXPLORER = 'https://explorer.arc.io/tx/'
 
 function formatTime(timestamp: number, locale: string): string {
   if (!timestamp) return ''

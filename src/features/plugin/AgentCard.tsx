@@ -19,10 +19,10 @@ export interface AgentCardProps {
   onBalanceChainChange: (chain: SupportedChain) => void
 }
 
-const CHAIN_LABELS: Record<SupportedChain, { short: string; tone: string; fullKey: 'plugin.arcTestnet' | 'plugin.baseSepolia' | 'plugin.arbitrumSepolia' }> = {
-  'arc-testnet': { short: 'Arc', fullKey: 'plugin.arcTestnet', tone: 'arc' },
-  'base-sepolia': { short: 'Base', fullKey: 'plugin.baseSepolia', tone: 'base' },
-  'arbitrum-sepolia': { short: 'Arbitrum', fullKey: 'plugin.arbitrumSepolia', tone: 'arb' },
+const CHAIN_LABELS: Record<SupportedChain, { short: string; tone: string; fullKey: 'plugin.arcMainnet' | 'plugin.baseMainnet' | 'plugin.arbitrumMainnet' }> = {
+  'arc-mainnet': { short: 'Arc', fullKey: 'plugin.arcMainnet', tone: 'arc' },
+  'base-mainnet': { short: 'Base', fullKey: 'plugin.baseMainnet', tone: 'base' },
+  'arbitrum-mainnet': { short: 'Arbitrum', fullKey: 'plugin.arbitrumMainnet', tone: 'arb' },
 }
 
 function formatTime(value: number | null, locale: string): string {
@@ -64,7 +64,7 @@ export function AgentCard({
   onDelete,
   onBalanceChainChange,
 }: AgentCardProps) {
-  const [balanceChain, setBalanceChain] = useState<SupportedChain>('arc-testnet')
+  const [balanceChain, setBalanceChain] = useState<SupportedChain>('arc-mainnet')
   const { lang, t } = useI18n()
   const config = AGENT_CONFIGS[agentType]
   const copyKeys = AGENT_COPY_KEYS[agentType]
@@ -110,7 +110,7 @@ export function AgentCard({
             </div>
             <div className='agent-chain-tabs' role='tablist' aria-label={t('plugin.selectBalanceNetwork')}>
               {SUPPORTED_CHAINS.map(chain => <button key={chain} type='button' className={`agent-chain-tab agent-chain-tab--${CHAIN_LABELS[chain].tone} ${balanceChain === chain ? 'active' : ''}`} onClick={() => { setBalanceChain(chain); onBalanceChainChange(chain) }} role='tab' aria-selected={balanceChain === chain}>
-                <span className='agent-chain-dot' /><span>{CHAIN_LABELS[chain].short}</span><small>{chain === 'arc-testnet' ? 'Testnet' : 'Sepolia'}</small>
+                <span className='agent-chain-dot' /><span>{CHAIN_LABELS[chain].short}</span><small>Mainnet</small>
               </button>)}
             </div>
             <div className='agent-balance-updated'>{agent.balanceUpdatedAt ? t('plugin.balanceUpdated') : t('plugin.loadingBalance')}</div>

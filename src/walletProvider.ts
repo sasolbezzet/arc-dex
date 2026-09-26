@@ -184,7 +184,7 @@ async function refreshArbitrumFees(provider: Eip1193Provider, params: unknown[] 
   if (!tx) return params
   try {
     const chainId = normalizeChainId(tx.chainId) || normalizeChainId(await provider.request({ method: 'eth_chainId' }))
-    if (chainId !== '0x66eee') return params
+    if (chainId !== '0xa4b1') return params
     const [block, rpcPriority] = await Promise.all([
       provider.request({ method: 'eth_getBlockByNumber', params: ['pending', false] }),
       provider.request({ method: 'eth_maxPriorityFeePerGas' }).catch(() => '0x186a0'),

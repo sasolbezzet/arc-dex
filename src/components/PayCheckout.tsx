@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { estimateSendTokenFromEoa, sendTokenFromEoa } from '../services/eoaTransactions'
-import { ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
+import { ARC_MAINNET_EXPLORER_TX } from '../domain/arcNetwork'
 import { getInvoice, markInvoicePaid, quoteEcoRoute } from '../payApi'
 import type { ArcoxInvoice } from '../payApi'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
@@ -20,7 +20,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
   const [preview, setPreview] = useState<any>(null)
   const [busy, setBusy] = useState(false)
   const [paymentMode, setPaymentMode] = useState<'arc-eoa' | 'cross-chain'>('arc-eoa')
-  const [sourceChain, setSourceChain] = useState('base-sepolia')
+  const [sourceChain, setSourceChain] = useState('base-mainnet')
   const { t } = useI18n()
 
   const load = async () => {
@@ -61,7 +61,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
       if (paymentMode === 'cross-chain') {
         const route = await quoteEcoRoute({
           sourceChain,
-          destinationChain: 'arc-testnet',
+          destinationChain: 'arc-mainnet',
           sourceToken: invoice.token,
           destinationToken: invoice.token,
           amount: invoice.amount,
@@ -76,7 +76,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
           amount: invoice.amount,
           token: invoice.token,
           sourceChain,
-          network: 'Arc Testnet',
+          network: 'Arc Mainnet',
           route,
         })
         return
@@ -94,7 +94,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
         to: invoice.merchantAddress,
         amount: invoice.amount,
         token: invoice.token,
-        network: 'Arc Testnet',
+        network: 'Arc Mainnet',
         estimate,
       })
     } finally {
@@ -148,7 +148,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
           <>
             <div className='pay-grid'>
               <Info label='You Pay' value={`${invoice.amount} ${invoice.token}`} />
-              <Info label='Merchant Receives' value={`${invoice.amount} ${invoice.token} on Arc Testnet`} />
+              <Info label='Merchant Receives' value={`${invoice.amount} ${invoice.token} on Arc Mainnet`} />
               <Info label='Receiver Wallet' value={invoice.merchantAddress} mono />
               <Info label='Your Wallet' value={address || 'Connect wallet to continue'} mono />
               <Info label='Order ID' value={invoice.orderId || '-'} />
@@ -181,10 +181,10 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
               <label className='sandbox-field pay-source-chain'>
                 <span>{t('common.sourceChain')}</span>
                 <select className='input' value={sourceChain} onChange={event => setSourceChain(event.target.value)}>
-                  <option value='base-sepolia'>Base Sepolia</option>
-                  <option value='ethereum-sepolia'>Ethereum Sepolia</option>
-                  <option value='arbitrum-sepolia'>Arbitrum Sepolia</option>
-                  <option value='solana-devnet'>Solana Devnet</option>
+                  <option value='base-mainnet'>Base</option>
+                  <option value='ethereum-mainnet'>Ethereum</option>
+                  <option value='arbitrum-mainnet'>Arbitrum</option>
+                  <option value='solana-mainnet'>Solana</option>
                 </select>
               </label>
             )}
@@ -220,8 +220,8 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
             <details className='pay-advanced'>
               <summary>{t('pay.advanced')}</summary>
               <div className='pay-grid'>
-                <Info label='Network' value='Arc Testnet' />
-                <Info label='Tx Hash' value={invoice.txHash || '-'} mono link={invoice.txHash ? ARC_TESTNET_EXPLORER_TX + invoice.txHash : ''} />
+                <Info label='Network' value='Arc Mainnet' />
+                <Info label='Tx Hash' value={invoice.txHash || '-'} mono link={invoice.txHash ? ARC_MAINNET_EXPLORER_TX + invoice.txHash : ''} />
                 <Info label='Payer Address' value={invoice.payerAddress || '-'} mono />
                 <Info label='Created At' value={new Date(invoice.createdAt).toLocaleString()} />
               </div>
@@ -234,7 +234,7 @@ export function PayCheckout({ address, onConnect, onRefresh }: Props) {
                   <div>
                     <strong>{item.type}</strong>
                     <p>{item.message}</p>
-                    {item.txHash && <a href={ARC_TESTNET_EXPLORER_TX + item.txHash} target='_blank' rel='noreferrer'>{item.txHash.slice(0, 12)}...{item.txHash.slice(-8)}</a>}
+                    {item.txHash && <a href={ARC_MAINNET_EXPLORER_TX + item.txHash} target='_blank' rel='noreferrer'>{item.txHash.slice(0, 12)}...{item.txHash.slice(-8)}</a>}
                   </div>
                   <span>{new Date(item.createdAt).toLocaleString()}</span>
                 </div>

@@ -68,7 +68,7 @@ export function ReceivePanel({ address, circleWallet }: Props) {
       const invoice = await createInvoice({
         amount,
         token: 'USDC',
-        network: 'arc-testnet',
+        network: 'arc-mainnet',
         merchantAddress,
         memo,
         expiresInMinutes: 15,
@@ -113,7 +113,7 @@ export function ReceivePanel({ address, circleWallet }: Props) {
               <h3>{t('receive.paymentPreview')}</h3>
               <div className='pay-grid'>
                 <Info label={t('receive.buyerPays')} value={`${amount} USDC`} />
-                <Info label={t('receive.merchantReceives')} value={`${amount} USDC on Arc Testnet`} />
+                <Info label={t('receive.merchantReceives')} value={`${amount} USDC on Arc Mainnet`} />
                 <Info label={t('receive.receiverWallet')} value={merchantAddress} mono />
                 <Info label='Memo' value={memo || '-'} />
               </div>

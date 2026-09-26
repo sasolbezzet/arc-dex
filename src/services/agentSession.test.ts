@@ -67,7 +67,7 @@ describe('multichain wallet activation invariants', () => {
     const error = new Error('JSON is not a valid request object', {
       cause: new Error('Details: Exceeded max daily native token of the policy.'),
     })
-    const message = formatCircleUserOperationError(error, 'arc-testnet')
+    const message = formatCircleUserOperationError(error, 'arc-mainnet')
     expect(message).toMatch(/Kuota Gas Station harian/i)
     expect(message).toMatch(/UserOperation ditolak sebelum masuk bundler/i)
     expect(message).toMatch(/Reset atau naikkan batas harian policy/i)

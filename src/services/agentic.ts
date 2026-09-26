@@ -17,7 +17,7 @@ import {
   type Hex,
   type Log,
 } from 'viem'
-import { ARC_TESTNET_EXPLORER_TX, ARC_TESTNET_RPC_URLS, switchToArcTestnet } from '../domain/arcNetwork'
+import { ARC_MAINNET_EXPLORER_TX, ARC_MAINNET_RPC_URLS, switchToArcMainnet } from '../domain/arcNetwork'
 
 type EthereumProvider = Parameters<typeof custom>[0]
 type ContractJob = readonly [bigint, string, string, string, string, bigint, bigint, number, string] & Partial<{
@@ -32,24 +32,28 @@ type ContractJob = readonly [bigint, string, string, string, string, bigint, big
   hook: string
 }>
 
+// ERC-8183 (Agentic Commerce) belum di-deploy di Arc mainnet: alamat lama
+// tidak punya kode on-chain, jadi setiap fungsi job di bawah digerbang
+// gagal-keras lewat assertAgenticCommerceDeployed().
 export const AGENTIC_COMMERCE_CONTRACT = '0x0747EEf0706327138c69792bF28Cd525089e4583' as Address
-export const IDENTITY_REGISTRY = '0x8004A818BFB912233c491871b3d84c89A494BD9e' as Address
+// Registry ERC-8004 mainnet (diverifikasi on-chain: name() = "AgentIdentity").
+export const IDENTITY_REGISTRY = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as Address
 export const ARC_USDC = '0x3600000000000000000000000000000000000000' as Address
 export const ARC_MEMO_CONTRACT = '0x5294E9927c3306DcBaDb03fe70b92e01cCede505' as Address
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address
 
-const arcTestnet = defineChain({
-  id: 5042002,
-  name: 'Arc Testnet',
+const arcMainnet = defineChain({
+  id: 5042,
+  name: 'Arc Mainnet',
   nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: { default: { http: ARC_TESTNET_RPC_URLS } },
-  blockExplorers: { default: { name: 'ArcScan', url: 'https://testnet.arcscan.app' } },
+  rpcUrls: { default: { http: ARC_MAINNET_RPC_URLS } },
+  blockExplorers: { default: { name: 'ArcScan', url: 'https://explorer.arc.io' } },
 })
 
 const publicClient = createPublicClient({
-  chain: arcTestnet,
-  transport: fallback(ARC_TESTNET_RPC_URLS.map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
+  chain: arcMainnet,
+  transport: fallback(ARC_MAINNET_RPC_URLS.map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
 })
 
 const agenticCommerceAbi = [
@@ -207,16 +211,16 @@ export type AgenticJob = {
 async function getWalletClient(account: string) {
   const ethereum = (window as Window & { ethereum?: EthereumProvider }).ethereum
   if (!ethereum) throw new Error('MetaMask tidak terdeteksi.')
-  await switchToArcTestnet()
+  await switchToArcMainnet()
   return createWalletClient({
     account: getAddress(account) as Address,
-    chain: arcTestnet,
+    chain: arcMainnet,
     transport: custom(ethereum),
   })
 }
 
 function explorer(hash: Hex) {
-  return `${ARC_TESTNET_EXPLORER_TX}${hash}`
+  return `${ARC_MAINNET_EXPLORER_TX}${hash}`
 }
 
 function parseJobId(logs: readonly Log[]) {
@@ -250,7 +254,20 @@ export function hashTextBytes32(text: string): Hex {
   return keccak256(toHex(text || 'arcox-agentic-deliverable'))
 }
 
+// ERC-8183 belum ter-deploy di Arc mainnet. Cek kode kontrak sekali lalu
+// gagal-tertutup dengan pesan jelas, bukan mengirim memo ke kontrak kosong.
+let agenticCommerceDeployed: boolean | null = null
+async function assertAgenticCommerceDeployed() {
+  if (agenticCommerceDeployed === true) return
+  const code = await publicClient.getCode({ address: AGENTIC_COMMERCE_CONTRACT })
+  agenticCommerceDeployed = Boolean(code && code !== '0x')
+  if (!agenticCommerceDeployed) {
+    throw new Error('ERC-8183 Agentic Jobs belum di-deploy di Arc mainnet. Kontrak tidak tersedia.')
+  }
+}
+
 async function writeAgenticMemo(account: string, agentId: string, functionName: 'createJob' | 'setBudget' | 'fund' | 'submit' | 'complete', args: readonly unknown[], referenceId: string, amount = '') {
+  await assertAgenticCommerceDeployed()
   if (!/^\d+$/.test(agentId)) throw new Error('Agent Identity required for Agent Jobs')
   const walletClient = await getWalletClient(account)
   const memoId = keccak256(toHex(`${agentId}::${referenceId}`))
@@ -330,6 +347,7 @@ export async function completeJob(account: string, agentId: string, jobId: strin
 }
 
 export async function readJob(jobId: string): Promise<AgenticJob> {
+  await assertAgenticCommerceDeployed()
   const job = await publicClient.readContract({
     address: AGENTIC_COMMERCE_CONTRACT,
     abi: agenticCommerceAbi,

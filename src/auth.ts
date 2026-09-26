@@ -11,9 +11,9 @@ const BACKEND_PREFERENCE_KEY = 'arc-dex-auth-backend-pref'
 const MAX_TOKEN_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 // ≥16 random bytes (128 bits) → cryptographically strong nonce.
 const NONCE_BYTES = 16
-// Arc Testnet chainId (decimal). Hex value is 0x4cef52.
-const ARC_TESTNET_CHAIN_ID = 5042002
-const ARC_TESTNET_CHAIN_ID_HEX = '0x4cef52'
+// Arc Mainnet chainId (decimal). Hex value is 0x13b2.
+const ARC_MAINNET_CHAIN_ID = 5042
+const ARC_MAINNET_CHAIN_ID_HEX = '0x13b2'
 // The backend verifies EIP-4361 SIWE. Owner authorization after passkey must
 // always be an explicit domain/chain/nonce-bound wallet signature. Do not let a
 // stale Vercel env flag or browser preference silently downgrade this flow.
@@ -66,7 +66,7 @@ function buildLegacyAuthMessage(address: string, issuedAt: string) {
     'Only sign this message on the official ARCOX DEX website.',
     `Address: ${address}`,
     `Issued At: ${issuedAt}`,
-    'Network: Arc Testnet',
+    'Network: Arc Mainnet',
   ].join('\n')
 }
 
@@ -74,26 +74,26 @@ async function getActiveChainId(provider: Eip1193Provider): Promise<number> {
   try {
     const chainIdHex = await provider.request({ method: 'eth_chainId' })
     const chainId = Number(chainIdHex)
-    return Number.isSafeInteger(chainId) && chainId > 0 ? chainId : ARC_TESTNET_CHAIN_ID
+    return Number.isSafeInteger(chainId) && chainId > 0 ? chainId : ARC_MAINNET_CHAIN_ID
   } catch {
-    return ARC_TESTNET_CHAIN_ID
+    return ARC_MAINNET_CHAIN_ID
   }
 }
 
-async function isArcTestnetActive(provider: Eip1193Provider) {
+async function isActive(provider: Eip1193Provider) {
   try {
     const chainId = await provider.request({ method: 'eth_chainId' })
-    return chainId === ARC_TESTNET_CHAIN_ID_HEX || Number(chainId) === ARC_TESTNET_CHAIN_ID
+    return chainId === ARC_MAINNET_CHAIN_ID_HEX || Number(chainId) === ARC_MAINNET_CHAIN_ID
   } catch {
     return false
   }
 }
 
-async function switchToArcTestnet(provider: Eip1193Provider) {
+async function switchTo(provider: Eip1193Provider) {
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
-      params: [{ chainId: ARC_TESTNET_CHAIN_ID_HEX }],
+      params: [{ chainId: ARC_MAINNET_CHAIN_ID_HEX }],
     })
     return true
   } catch (switchError: any) {
@@ -102,17 +102,17 @@ async function switchToArcTestnet(provider: Eip1193Provider) {
         await provider.request({
           method: 'wallet_addEthereumChain',
           params: [{
-            chainId: ARC_TESTNET_CHAIN_ID_HEX,
-            chainName: 'Arc Testnet',
+            chainId: ARC_MAINNET_CHAIN_ID_HEX,
+            chainName: 'Arc Mainnet',
             nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-            rpcUrls: ['https://rpc.testnet.arc.io', 'https://arc-testnet.drpc.org'],
-            blockExplorerUrls: ['https://testnet.arcscan.app'],
+            rpcUrls: ['https://rpc.mainnet.arc.io', 'https://rpc.mainnet.arc.io'],
+            blockExplorerUrls: ['https://explorer.arc.io'],
           }],
         })
         // Adding the chain does not automatically switch to it. Retry the switch.
         await provider.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: ARC_TESTNET_CHAIN_ID_HEX }],
+          params: [{ chainId: ARC_MAINNET_CHAIN_ID_HEX }],
         })
         return true
       } catch {
@@ -137,14 +137,14 @@ async function tryAuthenticateSiwe(provider: Eip1193Provider, address: string): 
   }
 }
 
-async function ensureArcTestnetAndAuthenticate(provider: Eip1193Provider, address: string): Promise<{ token: string; address?: string }> {
-  const onArcTestnet = await isArcTestnetActive(provider)
-  if (onArcTestnet) {
+async function ensureAndAuthenticate(provider: Eip1193Provider, address: string): Promise<{ token: string; address?: string }> {
+  const on = await isActive(provider)
+  if (on) {
     const result = await tryAuthenticateSiwe(provider, address)
     if (result) return result
   } else {
-    const switched = await switchToArcTestnet(provider)
-    if (switched && await isArcTestnetActive(provider)) {
+    const switched = await switchTo(provider)
+    if (switched && await isActive(provider)) {
       const result = await tryAuthenticateSiwe(provider, address)
       if (result) return result
     }
@@ -431,7 +431,7 @@ export async function ensureAuthSession(address: string, forceNew = false) {
   let result: { token: string; address?: string }
 
   if (SIWE_ENABLED && backendPrefersSiwe) {
-    result = await ensureArcTestnetAndAuthenticate(provider, checksumAddress)
+    result = await ensureAndAuthenticate(provider, checksumAddress)
   } else {
     result = await authenticate(provider, checksumAddress, 'legacy')
   }

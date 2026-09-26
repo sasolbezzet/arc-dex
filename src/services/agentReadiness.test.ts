@@ -13,12 +13,12 @@ describe('agent readiness contract', () => {
         ready: false,
         sessionActive: true,
         arcAuthorized: true,
-        destinations: { 'base-sepolia': false, 'arbitrum-sepolia': true },
+        destinations: { 'base-mainnet': false, 'arbitrum-mainnet': true },
         reason: 'destination_session_not_authorized',
       },
     }
     expect(readiness.mcp.connected).toBe(true)
     expect(readiness.execution.ready).toBe(false)
-    expect(readiness.execution.destinations['base-sepolia']).toBe(false)
+    expect(readiness.execution.destinations['base-mainnet']).toBe(false)
   })
 })

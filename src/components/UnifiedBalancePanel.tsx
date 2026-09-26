@@ -4,13 +4,13 @@ import { getTreasuryStatus } from '../payApi'
 import { completeUnifiedBalanceWithdrawWithAppKit, depositUnifiedBalanceWithAppKit, getConnectedSolanaAddress, getSolanaWalletDiagnostics, getUnifiedBalanceWithAppKit, initiateUnifiedBalanceWithdrawWithAppKit } from '../appKit'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 
-type UbChain = 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia' | 'Solana_Devnet'
+type UbChain = 'Arc' | 'Base' | 'Ethereum' | 'Arbitrum' | 'Solana'
 const UB_CHAINS: Array<{ id: UbChain; label: string }> = [
-  { id: 'Arc_Testnet', label: 'Arc Testnet' },
-  { id: 'Base_Sepolia', label: 'Base Sepolia' },
-  { id: 'Ethereum_Sepolia', label: 'Ethereum Sepolia' },
-  { id: 'Arbitrum_Sepolia', label: 'Arbitrum Sepolia' },
-  { id: 'Solana_Devnet', label: 'Solana Devnet' },
+  { id: 'Arc', label: 'Arc Mainnet' },
+  { id: 'Base', label: 'Base' },
+  { id: 'Ethereum', label: 'Ethereum' },
+  { id: 'Arbitrum', label: 'Arbitrum' },
+  { id: 'Solana', label: 'Solana' },
 ]
 
 export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null }) {
@@ -21,8 +21,8 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
   const [solanaDiagnostics, setSolanaDiagnostics] = useState<any>(null)
   const [depositAmount, setDepositAmount] = useState('1')
   const [withdrawAmount, setWithdrawAmount] = useState('1')
-  const [depositChain, setDepositChain] = useState<UbChain>('Arc_Testnet')
-  const [withdrawChain, setWithdrawChain] = useState<UbChain>('Arc_Testnet')
+  const [depositChain, setDepositChain] = useState<UbChain>('Arc')
+  const [withdrawChain, setWithdrawChain] = useState<UbChain>('Arc')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const { t } = useI18n()
@@ -91,13 +91,13 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
         <div className='glass sandbox-card'>
           <h3>{t('balance.add')}</h3>
           <p className='pay-muted'>{t('balance.addCopy')}</p>
-          {(depositChain === 'Solana_Devnet') && <div className='inline-warning'>{t('balance.solanaWarning')}</div>}
-          {(depositChain === 'Solana_Devnet') && (
+          {(depositChain === 'Solana') && <div className='inline-warning'>{t('balance.solanaWarning')}</div>}
+          {(depositChain === 'Solana') && (
             <button className='btn btn-secondary' disabled={busy === 'solanaDiagnostics'} onClick={() => run('solanaDiagnostics', checkSolanaReadiness)}>
               {busy === 'solanaDiagnostics' ? t('balance.solanaChecking') : t('balance.solanaReadiness')}
             </button>
           )}
-          {depositChain === 'Solana_Devnet' && solanaDiagnostics && <SolanaDiagnostics value={solanaDiagnostics} t={t} />}
+          {depositChain === 'Solana' && solanaDiagnostics && <SolanaDiagnostics value={solanaDiagnostics} t={t} />}
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>{t('balance.fromNetwork')}</span>
@@ -129,13 +129,13 @@ export function UnifiedBalancePanel({ eoaAddress }: { eoaAddress: string | null 
           <h3>{t('balance.withdraw')}</h3>
           <p className='pay-muted'>{t('balance.withdrawCopy')}</p>
           <div className='inline-warning'>{t('balance.walletApproval')}</div>
-          {(withdrawChain === 'Solana_Devnet') && <div className='inline-warning'>{t('balance.connectSolana')}</div>}
-          {(withdrawChain === 'Solana_Devnet') && (
+          {(withdrawChain === 'Solana') && <div className='inline-warning'>{t('balance.connectSolana')}</div>}
+          {(withdrawChain === 'Solana') && (
             <button className='btn btn-secondary' disabled={busy === 'solanaDiagnostics'} onClick={() => run('solanaDiagnostics', checkSolanaReadiness)}>
               {busy === 'solanaDiagnostics' ? t('balance.solanaChecking') : t('balance.solanaReadiness')}
             </button>
           )}
-          {withdrawChain === 'Solana_Devnet' && solanaDiagnostics && <SolanaDiagnostics value={solanaDiagnostics} t={t} />}
+          {withdrawChain === 'Solana' && solanaDiagnostics && <SolanaDiagnostics value={solanaDiagnostics} t={t} />}
           <div className='ub-form-row'>
             <div className='ub-picker-field'>
               <span>{t('balance.toNetwork')}</span>
@@ -204,8 +204,8 @@ function SolanaDiagnostics({ value, t }: { value: any; t: ReturnType<typeof useI
       <Info label={t('balance.solanaWallet')} value={value.walletAddress || '-'} mono />
       <Info label={t('balance.usdcAta')} value={value.ataAddress || '-'} mono />
       <Info label={t('balance.ataStatus')} value={value.ataExists ? t('common.ready') : t('common.missing')} />
-      <Info label={t('balance.devnetSol')} value={String(value.solBalance ?? '0')} />
-      <Info label={t('balance.devnetUsdc')} value={String(value.usdcBalance ?? '0')} />
+      <Info label={t('balance.mainnetSol')} value={String(value.solBalance ?? '0')} />
+      <Info label={t('balance.mainnetUsdc')} value={String(value.usdcBalance ?? '0')} />
     </div>
   )
 }

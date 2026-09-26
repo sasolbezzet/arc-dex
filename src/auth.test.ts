@@ -236,7 +236,7 @@ describe('auth utilities', () => {
 
   describe('buildSiweMessage', () => {
     it('produces a valid EIP-4361 message bound to the current domain', async () => {
-      const provider = { request: vi.fn().mockResolvedValue('0x4cef52') }
+      const provider = { request: vi.fn().mockResolvedValue('0x13b2') }
       const msg = await buildSiweMessage(
         OWNER,
         'aabbccdd',
@@ -249,7 +249,7 @@ describe('auth utilities', () => {
       expect(msg).toContain('Only sign this message on the official ARCOX DEX website.')
       expect(msg).toMatch(/URI: https?:\/\/localhost/)
       expect(msg).toMatch(/wants you to sign in with your Ethereum account:/)
-      expect(msg).toContain('Chain ID: 5042002')
+      expect(msg).toContain('Chain ID: 5042')
       expect(msg).toContain('Nonce: aabbccdd')
       expect(provider.request).toHaveBeenCalledWith({ method: 'eth_chainId' })
     })

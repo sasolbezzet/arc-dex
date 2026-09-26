@@ -110,12 +110,12 @@ describe('Plugin agent identity normalization', () => {
       connectedAt: null,
       lastActivity: null,
     }
-    const arc = mergeAgentBalance(initial, 'arc-testnet', { USDC: '1.25' }, 100)
-    const base = mergeAgentBalance(arc, 'base-sepolia', { USDC: '0.75' }, 200)
+    const arc = mergeAgentBalance(initial, 'arc-mainnet', { USDC: '1.25' }, 100)
+    const base = mergeAgentBalance(arc, 'base-mainnet', { USDC: '0.75' }, 200)
 
     expect(base.balances).toEqual({
-      'arc-testnet': { USDC: '1.25' },
-      'base-sepolia': { USDC: '0.75' },
+      'arc-mainnet': { USDC: '1.25' },
+      'base-mainnet': { USDC: '0.75' },
     })
     expect(base.balance).toEqual({ USDC: '0.75' })
   })
@@ -134,7 +134,7 @@ describe('Plugin agent identity normalization', () => {
       connectedAt: null,
       lastActivity: null,
     }
-    const result = mergeAgentBalance(initial, 'arc-testnet', { USDC: '0', EURC: '0' }, 300)
+    const result = mergeAgentBalance(initial, 'arc-mainnet', { USDC: '0', EURC: '0' }, 300)
 
     expect(result.balance).toEqual({ USDC: '0', EURC: '0' })
     expect(result.balanceUpdatedAt).toBe(300)

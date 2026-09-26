@@ -232,7 +232,7 @@ export const AGENT_KEYS = {
   grok: 'oauth:grok',
 } as const
 
-export const SUPPORTED_CHAINS = ['arc-testnet', 'base-sepolia', 'arbitrum-sepolia'] as const
+export const SUPPORTED_CHAINS = ['arc-mainnet', 'base-mainnet', 'arbitrum-mainnet'] as const
 export type SupportedChain = (typeof SUPPORTED_CHAINS)[number]
 
 export const MCP_URL = import.meta.env.VITE_MCP_URL || 'https://arcoxdex.vercel.app/mcp'

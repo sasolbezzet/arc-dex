@@ -1,10 +1,10 @@
 export type ChainKey =
-  | 'Arc_Testnet'
-  | 'Ethereum_Sepolia'
-  | 'Base_Sepolia'
-  | 'Arbitrum_Sepolia'
-  | 'HyperEVM_Testnet'
-  | 'Solana_Devnet'
+  | 'Arc'
+  | 'Ethereum'
+  | 'Base'
+  | 'Arbitrum'
+  | 'HyperEVM'
+  | 'Solana'
 
 export interface ChainCfg {
   id: ChainKey
@@ -25,108 +25,110 @@ export interface ChainCfg {
   }
 }
 
-export const MESSAGE_TRANSMITTER_V2 = '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275'
-export const TOKEN_MESSENGER_V2_EVM = '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA'
-export const IRIS = 'https://iris-api-sandbox.circle.com'
+// CCTP v2 mainnet: alamat deterministik yang sama di semua EVM yang didukung
+// (diverifikasi on-chain: kode 2175 byte + MessageTransmitterV2.localDomain()).
+export const MESSAGE_TRANSMITTER_V2 = '0x81D40F21F12A8F0E3252Bccb954D722d4c464B64'
+export const TOKEN_MESSENGER_V2_EVM = '0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d'
+export const IRIS = 'https://iris-api.circle.com'
 
 export const CHAINS: ChainCfg[] = [
   {
-    id: 'Arc_Testnet',
-    label: 'Arc Testnet',
-    chainId: '0x4cef52',
+    id: 'Arc',
+    label: 'Arc Mainnet',
+    chainId: '0x13b2',
     domain: 26,
     tokenMessenger: TOKEN_MESSENGER_V2_EVM,
     usdc: '0x3600000000000000000000000000000000000000',
-    explorer: 'https://testnet.arcscan.app',
+    explorer: 'https://explorer.arc.io',
     isEvm: true,
     isInstantFinality: true,
     addParams: {
-      chainId: '0x4cef52',
-      chainName: 'Arc Testnet',
+      chainId: '0x13b2',
+      chainName: 'Arc Mainnet',
       nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-      rpcUrls: ['https://rpc.testnet.arc.io', 'https://arc-testnet.drpc.org'],
-      blockExplorerUrls: ['https://testnet.arcscan.app'],
+      rpcUrls: ['https://rpc.mainnet.arc.io'],
+      blockExplorerUrls: ['https://explorer.arc.io'],
     },
   },
   {
-    id: 'Ethereum_Sepolia',
-    label: 'Ethereum Sepolia',
-    chainId: '0xaa36a7',
+    id: 'Ethereum',
+    label: 'Ethereum',
+    chainId: '0x1',
     domain: 0,
     tokenMessenger: TOKEN_MESSENGER_V2_EVM,
-    usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
-    explorer: 'https://sepolia.etherscan.io',
+    usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    explorer: 'https://etherscan.io',
     isEvm: true,
     isInstantFinality: false,
     addParams: {
-      chainId: '0xaa36a7',
-      chainName: 'Ethereum Sepolia',
-      nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
-      rpcUrls: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://rpc.sepolia.org'],
-      blockExplorerUrls: ['https://sepolia.etherscan.io'],
+      chainId: '0x1',
+      chainName: 'Ethereum',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://ethereum-rpc.publicnode.com'],
+      blockExplorerUrls: ['https://etherscan.io'],
     },
   },
   {
-    id: 'Base_Sepolia',
-    label: 'Base Sepolia',
-    chainId: '0x14a34',
+    id: 'Base',
+    label: 'Base',
+    chainId: '0x2105',
     domain: 6,
     tokenMessenger: TOKEN_MESSENGER_V2_EVM,
-    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    explorer: 'https://sepolia.basescan.org',
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    explorer: 'https://basescan.org',
     isEvm: true,
     isInstantFinality: false,
     addParams: {
-      chainId: '0x14a34',
-      chainName: 'Base Sepolia',
-      nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
-      rpcUrls: ['https://sepolia.base.org'],
-      blockExplorerUrls: ['https://sepolia.basescan.org'],
+      chainId: '0x2105',
+      chainName: 'Base',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://mainnet.base.org'],
+      blockExplorerUrls: ['https://basescan.org'],
     },
   },
   {
-    id: 'Arbitrum_Sepolia',
-    label: 'Arbitrum Sepolia',
-    chainId: '0x66eee',
+    id: 'Arbitrum',
+    label: 'Arbitrum',
+    chainId: '0xa4b1',
     domain: 3,
     tokenMessenger: TOKEN_MESSENGER_V2_EVM,
-    usdc: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
-    explorer: 'https://sepolia.arbiscan.io',
+    usdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    explorer: 'https://arbiscan.io',
     isEvm: true,
     isInstantFinality: false,
     addParams: {
-      chainId: '0x66eee',
-      chainName: 'Arbitrum Sepolia',
-      nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
-      rpcUrls: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],
-      blockExplorerUrls: ['https://sepolia.arbiscan.io'],
+      chainId: '0xa4b1',
+      chainName: 'Arbitrum One',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://arb1.arbitrum.io/rpc'],
+      blockExplorerUrls: ['https://arbiscan.io'],
     },
   },
   {
-    id: 'HyperEVM_Testnet',
-    label: 'HyperEVM Testnet',
-    chainId: '0x3e6',
+    id: 'HyperEVM',
+    label: 'HyperEVM',
+    chainId: '0x3e7',
     domain: 19,
     tokenMessenger: TOKEN_MESSENGER_V2_EVM,
-    usdc: '0x2B3370eE501B4a559b57D449569354196457D8Ab',
-    explorer: 'https://app.hyperliquid-testnet.xyz/explorer',
+    usdc: '0xb88339CB7199b77E23DB6E890353E22632Ba630f',
+    explorer: 'https://hyperevmscan.io',
     isEvm: true,
     isInstantFinality: false,
     addParams: {
-      chainId: '0x3e6',
-      chainName: 'HyperEVM Testnet',
+      chainId: '0x3e7',
+      chainName: 'HyperEVM',
       nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
-      rpcUrls: ['https://rpc.hyperliquid-testnet.xyz/evm'],
-      blockExplorerUrls: ['https://app.hyperliquid-testnet.xyz/explorer'],
+      rpcUrls: ['https://rpc.hyperliquid.xyz/evm'],
+      blockExplorerUrls: ['https://hyperevmscan.io'],
     },
   },
   {
-    id: 'Solana_Devnet',
-    label: 'Solana Devnet',
+    id: 'Solana',
+    label: 'Solana',
     chainId: null,
     domain: 5,
     tokenMessenger: null,
-    usdc: null,
+    usdc: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     explorer: 'https://explorer.solana.com',
     isEvm: false,
     isInstantFinality: false,

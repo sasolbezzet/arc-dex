@@ -53,7 +53,7 @@ export function cardConfigPublic() {
     brand: 'Visa Test',
     network: 'visa',
     asset: 'USDC',
-    chain: 'arc-testnet',
+    chain: 'arc-mainnet',
     simulated: true,
   }
 }

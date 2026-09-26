@@ -126,7 +126,7 @@ export function SendPanel({ address, circleWallet, balances, eoaBalances, onRefr
         </div>
       </div>
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Testnet</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Mainnet</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.from')}</span><span style={{color:source==='circle'?'#818cf8':'#f59e0b',fontFamily:'monospace',fontSize:11}}>{source==='circle'?circleWallet?.address.slice(0,8):address?.slice(0,8)}...{source==='circle'?circleWallet?.address.slice(-6):address?.slice(-4)}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('send.estimateFee')}</span><span style={{color:'#10b981'}}>{feeLoading ? t('send.calculating') : feeQuote ? `${feeQuote.fee} ${feeQuote.token}` : '-'}</span></div>
         {source === 'circle' && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.fee')} (platform)</span><span style={{color:'#f59e0b'}}>{feeQuote?.platformFee ? `${feeQuote.platformFee.amount} ${feeQuote.platformFee.token}` : '-'}</span></div>}

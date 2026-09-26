@@ -1,20 +1,20 @@
 // walletConnect.ts — WalletConnect v2 EIP-1193 provider bridge
-// Required chain = mainnet+sepolia (dikenal semua wallet).
-// Arc Testnet = optional, di-add/switch setelah connect.
+// Required chain = mainnet+mainnet (dikenal semua wallet).
+// Arc Mainnet = optional, di-add/switch setelah connect.
 
 import { EthereumProvider } from '@walletconnect/ethereum-provider'
 import { clearWalletProvider } from '../walletProvider'
 
 const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || ''
 
-const ARC_CHAIN_ID = 5042002
-const ARC_HEX = '0x4cef52' // 5042002 hex (0x4CFD32 was WRONG = 5045554)
+const ARC_CHAIN_ID = 5042
+const ARC_HEX = '0x13b2' // 5042 hex (0x4CFD32 was WRONG = 5045554)
 const ARC_CHAIN_PARAMS = {
   chainId: ARC_HEX,
-  chainName: 'Arc Testnet',
+  chainName: 'Arc Mainnet',
   nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: ['https://rpc.testnet.arc.io', 'https://arc-testnet.drpc.org'],
-  blockExplorerUrls: ['https://testnet.arcscan.app'],
+  rpcUrls: ['https://rpc.mainnet.arc.io', 'https://rpc.mainnet.arc.io'],
+  blockExplorerUrls: ['https://explorer.arc.io'],
 }
 
 let wcProvider: any = null
@@ -97,23 +97,22 @@ export async function getWalletConnectProvider(): Promise<any | null> {
     try {
       const provider = await EthereumProvider.init({
       projectId: WC_PROJECT_ID,
-      // Sepolia as required — dikenal semua wallet testnet, jadi default chain
+      // Mainnet as required — dikenal semua wallet mainnet, jadi default chain
       // tidak mismatch. Mainnet + Arc = optional.
-      chains: [11155111],
+      chains: [1],
       optionalChains: [1, ARC_CHAIN_ID],
       // IMPORTANT: eth_sign intentionally excluded — modern wallets auto-reject
       // session proposals containing eth_sign (phishing risk).
       methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData', 'eth_signTypedData_v4', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'],
       events: ['accountsChanged', 'chainChanged'],
       rpcMap: {
-        1: 'https://eth.llamarpc.com',
-        11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
-        [ARC_CHAIN_ID]: 'https://rpc.testnet.arc.io',
+        1: 'https://ethereum-rpc.publicnode.com',
+        [ARC_CHAIN_ID]: 'https://rpc.mainnet.arc.io',
       },
       showQrModal: true,
       metadata: {
         name: 'ARCOX DEX',
-        description: 'Arc Testnet DEX + AI Agent',
+        description: 'Arc Mainnet DEX + AI Agent',
         url: 'https://arcoxdex.vercel.app',
         icons: ['https://arcoxdex.vercel.app/favicon.svg'],
         // Lets a mobile wallet return to the approval page after signing.
@@ -317,7 +316,7 @@ export async function resumeWalletConnect(): Promise<boolean> {
   return relayOpenPromise
 }
 
-// Setelah connect: tambah + pindah ke Arc Testnet (best effort, non-blocking)
+// Setelah connect: tambah + pindah ke Arc Mainnet (best effort, non-blocking)
 async function ensureArcChain(provider: any): Promise<void> {
   try {
     const session = provider.session

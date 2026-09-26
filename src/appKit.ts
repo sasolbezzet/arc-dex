@@ -1,4 +1,4 @@
-// App Kit SDK helpers — integrasi bridge Arc ↔ Solana (Devnet).
+// App Kit SDK helpers — integrasi bridge Arc ↔ Solana (Mainnet).
 // Dokumentasi: https://docs.arc.io/app-kit/bridge
 // Mode "Browser wallet": MetaMask (EVM) + Solflare/Phantom (Solana).
 //
@@ -9,7 +9,7 @@
 //              (Circle Orbit Forwarder relay attestation ke on-chain)
 
 import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
-import { ArbitrumSepolia, ArcTestnet, BaseSepolia, EthereumSepolia, SolanaDevnet, resolveChainIdentifier } from '@circle-fin/bridge-kit'
+import { Arbitrum, Base, Ethereum, Solana, resolveChainIdentifier } from '@circle-fin/bridge-kit'
 import { ViemAdapter } from '@circle-fin/adapter-viem-v2'
 import { SolanaKitAdapter } from '@circle-fin/adapter-solana-kit'
 import { address as solanaAddress, compileTransaction, createSolanaRpc, getBase58Decoder, getBase64EncodedWireTransaction } from '@solana/kit'
@@ -17,7 +17,7 @@ import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import { createPublicClient, createWalletClient, custom, defineChain, fallback, http } from 'viem'
 import { solanaFeePayerSignature, wrapSolflare, wrapPhantom } from './solflareWrapper'
-import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_RPC_URLS, switchToArcTestnet } from './domain/arcNetwork'
+import { ARC_MAINNET_ADD_PARAMS, ARC_MAINNET_CHAIN_ID, ARC_MAINNET_RPC_URLS, switchToArcMainnet } from './domain/arcNetwork'
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
 import { findConnectedWalletProvider, getWalletProvider, normalizeWalletProvider } from './walletProvider'
@@ -31,15 +31,15 @@ declare global {
   }
 }
 
-const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com'
-// USDC Devnet mint di Solana
-const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+const SOLANA_MAINNET_RPC = 'https://api.mainnet-beta.solana.com'
+// USDC mint di Solana
+const USDC_MAINNET_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
 type SolanaSimulationDiagnostic = { err: unknown; logs: string[] }
 let lastSolanaSimulationDiagnostic: SolanaSimulationDiagnostic | null = null
 
 function createDiagnosticSolanaRpc() {
-  const rpc: any = createSolanaRpc(SOLANA_DEVNET_RPC)
+  const rpc: any = createSolanaRpc(SOLANA_MAINNET_RPC)
   return new Proxy(rpc, {
     get(target, property, receiver) {
       if (property !== 'simulateTransaction') return Reflect.get(target, property, receiver)
@@ -115,10 +115,23 @@ export function detectSolanaKind(): 'solflare' | 'phantom' | null {
 
 // Circle AppKit v1.8.1 hard-codes Arc's rate-limited public endpoint.
 const ARC_RPC_PROXY = new URL('/api/rpc/arc', window.location.origin).href
-const ARC_TESTNET_APPKIT = { ...ArcTestnet, rpcEndpoints: [ARC_RPC_PROXY] } as unknown as typeof ArcTestnet
+
+// Circle App Kit/Bridge Kit 1.11.x belum mengekspor Arc mainnet (hanya
+// ArcTestnet), jadi chain Arc didefinisikan lokal (id 5042) dan setiap jalur SDK
+// yang benar-benar menyasar Arc mainnet digerbang gagal-keras dengan pesan
+// jelas, bukan diam-diam memakai Arc Testnet.
+const ARC_MAINNET_APPKIT = defineChain({
+  id: 5042,
+  name: 'Arc Mainnet',
+  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
+  rpcUrls: { default: { http: [ARC_RPC_PROXY] } },
+})
+
+const ARC_MAINNET_SDK_UNSUPPORTED = 'Circle App Kit/Bridge Kit belum mendukung Arc mainnet (baru Arc Testnet). Gunakan jalur CCTP/Fee Router ARCOX untuk Arc mainnet.'
 
 function unifiedBalanceChain(chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
-  return chain === 'Arc_Testnet' ? ARC_TESTNET_APPKIT : chain
+  if (chain === 'Arc') throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
+  return chain
 }
 
 // ── AppKit singleton ─────────────────────────────────────────────
@@ -141,7 +154,7 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
   const originalFetch = window.fetch
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url
-    if (!url.startsWith('https://gateway-api-testnet.circle.com/')) {
+    if (!url.startsWith('https://gateway-api.circle.com/')) {
       return originalFetch.call(window, input, init)
     }
     const target = new URL(url)
@@ -169,7 +182,7 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
     const cause = error instanceof Error ? error.cause : undefined
     console.error('[gateway-proxy] operation failed:', message, cause ? String(cause) : '')
     if (/Maximum retry attempts|Service temporarily unavailable|Failed to fetch|Gateway API error|NetworkError|timeout|aborted/i.test(message)) {
-      throw new Error('Deposit/withdrawal berhasil on-chain, tetapi Circle Gateway testnet belum mengkonfirmasi transfer. Unified Balance Anda akan ter-update dalam beberapa menit. Jika tidak update, coba refresh halaman dan cek Unified Balance.', { cause: error })
+      throw new Error('Deposit/withdrawal berhasil on-chain, tetapi Circle Gateway mainnet belum mengkonfirmasi transfer. Unified Balance Anda akan ter-update dalam beberapa menit. Jika tidak update, coba refresh halaman dan cek Unified Balance.', { cause: error })
     }
     throw error
   } finally {
@@ -178,18 +191,18 @@ async function withGatewayProxy<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export type AppKitChain =
-  | 'Arc_Testnet'
-  | 'Ethereum_Sepolia'
-  | 'Base_Sepolia'
-  | 'Arbitrum_Sepolia'
-  | 'Solana_Devnet'
+  | 'Arc'
+  | 'Ethereum'
+  | 'Base'
+  | 'Arbitrum'
+  | 'Solana'
 
 // ── EVM adapter ─────────────────────────────────────────────────
 export async function buildEvmAdapter() {
   const provider = await findConnectedWalletProvider()
   if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
   const normalizedProvider = normalizeWalletProvider(provider)
-  const capabilities = { addressContext: 'user-controlled' as const, supportedChains: [ARC_TESTNET_APPKIT, BaseSepolia, EthereumSepolia, ArbitrumSepolia] }
+  const capabilities = { addressContext: 'user-controlled' as const, supportedChains: [ARC_MAINNET_APPKIT, Base, Ethereum, Arbitrum] as any[] }
   return new ViemAdapter({
     getWalletClient: async ({ chain }: any) => {
       const safeChain = normalizeViemChain(chain)
@@ -209,7 +222,7 @@ export async function buildEvmAdapter() {
       const viemChain = defineChain({
         id: chainId,
         name: String(chain?.name || chain?.chain || `Chain ${chainId}`),
-        nativeCurrency: chainId === Number(ARC_TESTNET_CHAIN_ID)
+        nativeCurrency: chainId === Number(ARC_MAINNET_CHAIN_ID)
           ? { name: 'USDC', symbol: 'USDC', decimals: 18 }
           : { name: 'Ether', symbol: 'ETH', decimals: 18 },
         rpcUrls: { default: { http: rpcUrls } },
@@ -227,11 +240,11 @@ function normalizeViemChain(chain: any) {
   if (!Number.isSafeInteger(chainId) || chainId <= 0) {
     const name = String(chain?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
     chainId = ({
-      arctestnet: 5042002,
-      basesepolia: 84532,
-      ethereumsepolia: 11155111,
-      sepolia: 11155111,
-      arbitrumsepolia: 421614,
+      arcmainnet: 5042,
+      basemainnet: 8453,
+      ethereummainnet: 1,
+      mainnet: 1,
+      arbitrummainnet: 42161,
     } as Record<string, number>)[name]
   }
   if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new Error(`Circle returned an invalid EVM chain ID for ${String(chain?.name || 'unknown chain')}.`)
@@ -240,10 +253,10 @@ function normalizeViemChain(chain: any) {
 
 function publicRpcUrls(chainId: number): string[] {
   const urls: Record<number, string[]> = {
-    5042002: [ARC_RPC_PROXY, ...ARC_TESTNET_RPC_URLS],
-    11155111: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://rpc.sepolia.org'],
-    84532: ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com'],
-    421614: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],
+    5042: [ARC_RPC_PROXY, ...ARC_MAINNET_RPC_URLS],
+    1: ['https://ethereum-rpc.publicnode.com', 'https://ethereum-rpc.publicnode.com'],
+    8453: ['https://mainnet.base.org', 'https://mainnet.base.org'],
+    42161: ['https://arb1.arbitrum.io/rpc', 'https://arb1.arbitrum.io/rpc'],
   }
   return urls[Number(chainId)] || [ARC_RPC_PROXY]
 }
@@ -294,7 +307,7 @@ export async function buildSolanaAdapter() {
     getSigner: async () => signer,
   }, {
     addressContext: 'user-controlled',
-    supportedChains: [SolanaDevnet],
+    supportedChains: [Solana],
   } as any)
   installBrowserWalletTransactionExecutor(adapter, provider)
   return adapter
@@ -401,7 +414,7 @@ export function getConnectedSolanaPubkey(): string | null {
 }
 
 // ── Balance checking ─────────────────────────────────────────────
-const _solanaRpc = createSolanaRpc(SOLANA_DEVNET_RPC)
+const _solanaRpc = createSolanaRpc(SOLANA_MAINNET_RPC)
 
 /** Cek saldo SOL (dalam SOL, bukan lamports) */
 export async function getSolBalance(pubkey: string): Promise<number> {
@@ -413,14 +426,14 @@ export async function getSolBalance(pubkey: string): Promise<number> {
   }
 }
 
-/** Cek saldo USDC Devnet di associated token account (ATA) */
+/** Cek saldo USDC di associated token account (ATA) */
 export async function getUsdcBalance(pubkey: string): Promise<number> {
   return (await getSolanaWalletDiagnostics(pubkey)).usdcBalance
 }
 
 export async function getSolanaWalletDiagnostics(pubkey: string) {
   const owner = new PublicKey(pubkey)
-  const mint = new PublicKey(USDC_DEVNET_MINT)
+  const mint = new PublicKey(USDC_MAINNET_MINT)
   const ata = getAssociatedTokenAddressSync(mint, owner).toBase58()
   try {
     const [solBalance, tokenBalance] = await Promise.all([
@@ -433,11 +446,11 @@ export async function getSolanaWalletDiagnostics(pubkey: string) {
       ataExists: Boolean(tokenBalance?.value),
       solBalance,
       usdcBalance: Number(tokenBalance?.value?.uiAmountString || '0'),
-      mintAddress: USDC_DEVNET_MINT,
-      network: 'Solana Devnet',
+      mintAddress: USDC_MAINNET_MINT,
+      network: 'Solana',
     }
   } catch {
-    return { walletAddress: pubkey, ataAddress: ata, ataExists: false, solBalance: 0, usdcBalance: 0, mintAddress: USDC_DEVNET_MINT, network: 'Solana Devnet' }
+    return { walletAddress: pubkey, ataAddress: ata, ataExists: false, solBalance: 0, usdcBalance: 0, mintAddress: USDC_MAINNET_MINT, network: 'Solana' }
   }
 }
 
@@ -452,8 +465,8 @@ export interface BridgeArgs {
 
 export async function bridgeWithAppKit(args: BridgeArgs): Promise<unknown> {
   const kit = getKit()
-  const fromIsSolana = args.from === 'Solana_Devnet'
-  const toIsSolana   = args.to   === 'Solana_Devnet'
+  const fromIsSolana = args.from === 'Solana'
+  const toIsSolana   = args.to   === 'Solana'
 
   if (fromIsSolana && toIsSolana) {
     throw new Error('Bridge Solana ke Solana tidak didukung.')
@@ -491,14 +504,17 @@ export async function swapEoaWithAppKit(args: {
   customFeeBps?: number
   feeRecipient?: string
 }): Promise<any> {
-  await switchToArcTestnet()
+  await switchToArcMainnet()
+  // Router AMM ARCOX belum di-deploy di Arc mainnet dan App Kit belum punya
+  // Arc mainnet, jadi swap lewat SDK digerbang gagal-keras.
+  throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
   const accounts = await getWalletProvider()?.request({ method: 'eth_requestAccounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
-  const from = { adapter, chain: SwapChain.Arc_Testnet }
+  const from = { adapter, chain: (SwapChain as any).Arc }
   const config = swapConfig(args)
   if (isEurcToCirBtc(args.tokenIn, args.tokenOut)) {
     const first = await kit.swap({
@@ -543,14 +559,17 @@ export async function estimateEoaSwapWithAppKit(args: {
   customFeeBps?: number
   feeRecipient?: string
 }): Promise<any> {
-  await switchToArcTestnet()
+  await switchToArcMainnet()
+  // Router AMM ARCOX belum di-deploy di Arc mainnet dan App Kit belum punya
+  // Arc mainnet, jadi swap lewat SDK digerbang gagal-keras.
+  throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
   const accounts = await getWalletProvider()?.request({ method: 'eth_accounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
-  const from = { adapter, chain: SwapChain.Arc_Testnet }
+  const from = { adapter, chain: (SwapChain as any).Arc }
   const config = swapConfig(args)
   if (isEurcToCirBtc(args.tokenIn, args.tokenOut)) {
     const first = await kit.estimateSwap({
@@ -623,10 +642,10 @@ export async function getUnifiedBalanceWithAppKit() {
   return data
 }
 
-export type UnifiedBalanceSourceChain = 'auto' | 'Arc_Testnet' | 'Base_Sepolia' | 'Ethereum_Sepolia' | 'Arbitrum_Sepolia' | 'Solana_Devnet'
-type UnifiedBalanceEvmChain = Exclude<UnifiedBalanceSourceChain, 'auto' | 'Solana_Devnet'>
-export const UNIFIED_BALANCE_EVM_CHAINS: UnifiedBalanceEvmChain[] = ['Arc_Testnet', 'Base_Sepolia', 'Ethereum_Sepolia', 'Arbitrum_Sepolia']
-export const UNIFIED_BALANCE_CHAINS: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = [...UNIFIED_BALANCE_EVM_CHAINS, 'Solana_Devnet']
+export type UnifiedBalanceSourceChain = 'auto' | 'Arc' | 'Base' | 'Ethereum' | 'Arbitrum' | 'Solana'
+type UnifiedBalanceEvmChain = Exclude<UnifiedBalanceSourceChain, 'auto' | 'Solana'>
+export const UNIFIED_BALANCE_EVM_CHAINS: UnifiedBalanceEvmChain[] = ['Arc', 'Base', 'Ethereum', 'Arbitrum']
+export const UNIFIED_BALANCE_CHAINS: Exclude<UnifiedBalanceSourceChain, 'auto'>[] = [...UNIFIED_BALANCE_EVM_CHAINS, 'Solana']
 
 function unifiedBalanceAllocations(amount: string, sourceChain: UnifiedBalanceSourceChain = 'auto', balance: any) {
   const requested = usdcUnits(amount)
@@ -646,15 +665,16 @@ function unifiedBalanceAllocations(amount: string, sourceChain: UnifiedBalanceSo
 
 async function unifiedBalanceSources(allocations: Array<{ amount: string; chain: Exclude<UnifiedBalanceSourceChain, 'auto'> }>, evmAdapter: any) {
   const sources: any[] = []
-  const evmAllocations = allocations.filter(item => item.chain !== 'Solana_Devnet')
-  const solanaAllocations = allocations.filter(item => item.chain === 'Solana_Devnet')
+  const evmAllocations = allocations.filter(item => item.chain !== 'Solana')
+  const solanaAllocations = allocations.filter(item => item.chain === 'Solana')
   if (evmAllocations.length) sources.push({ adapter: evmAdapter, allocations: evmAllocations })
   if (solanaAllocations.length) sources.push({ adapter: await buildSolanaUnifiedSpendAdapter(), allocations: solanaAllocations })
   return sources
 }
 
 async function ensureUnifiedEvmChain(_adapter: any, chain: UnifiedBalanceEvmChain) {
-  const resolved = resolveChainIdentifier(chain)
+  if (chain === 'Arc') throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
+  const resolved = resolveChainIdentifier(chain as any)
   if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
   const config = findChain(chain)?.addParams
   const rawProvider = getWalletProvider()
@@ -688,12 +708,12 @@ async function getConnectedEvmAddress() {
 export async function getConnectedSolanaAddress(connect = false) {
   const detected = autoDetectSolanaProvider()
   if (!detected) {
-    if (connect) throw new Error('Connect Solflare on Solana Devnet first.')
+    if (connect) throw new Error('Connect Solflare on Solana first.')
     return ''
   }
   if (connect && !detected.raw.isConnected) await detected.raw.connect()
   const address = detected.raw.publicKey?.toString?.() || ''
-  if (!address && connect) throw new Error('Connect Solflare on Solana Devnet first.')
+  if (!address && connect) throw new Error('Connect Solflare on Solana first.')
   return address
 }
 
@@ -702,7 +722,7 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  if (args.chain === 'Solana_Devnet') {
+  if (args.chain === 'Solana') {
     await assertSolanaWalletReady(args.amount, true)
     const adapter = await buildSolanaAdapter()
     try {
@@ -717,14 +737,15 @@ export async function depositUnifiedBalanceWithAppKit(args: {
   }
   const adapter = await buildEvmAdapter()
   await ensureUnifiedEvmChain(adapter, args.chain)
-  // Arc Testnet USDC does not support EIP-3009 (receiveWithAuthorization) or EIP-2612 (permit).
+  // Arc Mainnet USDC does not support EIP-3009 (receiveWithAuthorization) or EIP-2612 (permit).
   // Use 'approve' strategy (approve + deposit) instead of default 'authorize'.
-  const isArc = args.chain === 'Arc_Testnet'
+  const isArc = args.chain === 'Arc'
 
   if (isArc) {
-    // Arc Testnet: Circle SDK deposit() hangs after approve due to RPC rate limit.
+    // Arc Mainnet: Circle SDK deposit() hangs after approve due to RPC rate limit.
     // Bypass SDK entirely: manually approve + deposit via MetaMask.
-    const GATEWAY_WALLET = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9'
+    // Gateway Wallet mainnet (diverifikasi on-chain, 163 byte).
+    const GATEWAY_WALLET = '0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE'
     const USDC = '0x3600000000000000000000000000000000000000'
     const amountWei = BigInt(Math.round(parseFloat(args.amount) * 1_000_000))
     const provider = (window as any).ethereum
@@ -773,7 +794,7 @@ export async function depositUnifiedBalanceWithAppKit(args: {
       params: [{ from, to: GATEWAY_WALLET, data: depositData }],
     })
     console.log('[arc-deposit] Deposit tx:', txHash)
-    return { txHash, chain: 'Arc_Testnet' } as any
+    return { txHash, chain: 'Arc' } as any
   }
 
   return await withGatewayProxy(() => kit.unifiedBalance.deposit({
@@ -788,12 +809,12 @@ export async function initiateUnifiedBalanceWithdrawWithAppKit(args: {
   chain: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false, true)
-  const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
+  if (args.chain === 'Solana') await assertSolanaWalletReady('0', false, true)
+  const recipientAddress = args.chain === 'Solana' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
   try {
     return await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: args.chain, recipientAddress })
   } catch (error) {
-    if (args.chain === 'Solana_Devnet') throw normalizeSolanaTransactionError(error, 'withdrawal estimate')
+    if (args.chain === 'Solana') throw normalizeSolanaTransactionError(error, 'withdrawal estimate')
     throw error
   }
 }
@@ -804,11 +825,11 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
   retryConfig?: { attestation: string; signature: string }
 }) {
   const kit = getKit()
-  if (args.chain === 'Solana_Devnet') await assertSolanaWalletReady('0', false, true)
-  const recipientAddress = args.chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
+  if (args.chain === 'Solana') await assertSolanaWalletReady('0', false, true)
+  const recipientAddress = args.chain === 'Solana' ? await getConnectedSolanaAddress(true) : await getConnectedEvmAddress()
   try {
     if (args.retryConfig) {
-      const destinationAdapter = args.chain === 'Solana_Devnet' ? await buildSolanaAdapter() : await buildEvmAdapter()
+      const destinationAdapter = args.chain === 'Solana' ? await buildSolanaAdapter() : await buildEvmAdapter()
       return await withGatewayProxy(() => kit.unifiedBalance.spend({
         to: { adapter: destinationAdapter, chain: args.chain, recipientAddress },
         amount: args.amount,
@@ -832,7 +853,7 @@ export async function completeUnifiedBalanceWithdrawWithAppKit(args: {
       totalDebit: formatUsdcUnits(usdcUnits(plan.spendAmount) + feeUnits),
     }
   } catch (error) {
-    if (args.chain === 'Solana_Devnet') throw normalizeSolanaTransactionError(error, 'withdrawal')
+    if (args.chain === 'Solana') throw normalizeSolanaTransactionError(error, 'withdrawal')
     throw error
   }
 }
@@ -843,7 +864,7 @@ export async function estimateUnifiedBalanceSpendWithAppKit(args: {
   sourceChain?: UnifiedBalanceSourceChain
 }) {
   const kit = getKit()
-  return prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
+  return prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: 'Arc', recipientAddress: args.recipient, sourceChain: args.sourceChain })
 }
 
 export async function spendUnifiedBalanceWithAppKit(args: {
@@ -852,10 +873,10 @@ export async function spendUnifiedBalanceWithAppKit(args: {
   sourceChain?: UnifiedBalanceSourceChain
 }) {
   const kit = getKit()
-  const plan = await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: 'Arc_Testnet', recipientAddress: args.recipient, sourceChain: args.sourceChain })
+  const plan = await prepareUnifiedBalanceSpend({ kit, receiveAmount: args.amount, destinationChain: 'Arc', recipientAddress: args.recipient, sourceChain: args.sourceChain })
   const result = await spendUnifiedBalanceWithRetry(kit, {
     from: plan.sources,
-    to: { adapter: plan.destinationAdapter, chain: 'Arc_Testnet', recipientAddress: args.recipient },
+    to: { adapter: plan.destinationAdapter, chain: 'Arc', recipientAddress: args.recipient },
     amount: plan.spendAmount,
     token: 'USDC',
   })
@@ -874,8 +895,8 @@ export async function addUnifiedBalanceDelegateWithAppKit(args: {
   chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  const chain = args.chain || 'Arc_Testnet'
-  if (chain === 'Solana_Devnet') {
+  const chain = args.chain || 'Arc'
+  if (chain === 'Solana') {
     await assertSolanaWalletReady('0', false)
     const adapter = await buildSolanaAdapter()
     try {
@@ -897,8 +918,8 @@ export async function removeUnifiedBalanceDelegateWithAppKit(args: {
   chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  const chain = args.chain || 'Arc_Testnet'
-  if (chain === 'Solana_Devnet') {
+  const chain = args.chain || 'Arc'
+  if (chain === 'Solana') {
     await assertSolanaWalletReady('0', false)
     const adapter = await buildSolanaAdapter()
     try {
@@ -920,8 +941,8 @@ export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
   chain?: Exclude<UnifiedBalanceSourceChain, 'auto'>
 }) {
   const kit = getKit()
-  const chain = args.chain || 'Arc_Testnet'
-  if (chain === 'Solana_Devnet') {
+  const chain = args.chain || 'Arc'
+  if (chain === 'Solana') {
     const adapter = await buildSolanaAdapter()
     return await withGatewayProxy(() => kit.unifiedBalance.getDelegateStatus({ from: { adapter, chain }, delegateAddress: args.delegateAddress } as any))
   }
@@ -933,7 +954,7 @@ export async function getUnifiedBalanceDelegateStatusWithAppKit(args: {
   } as any))
 }
 
-export { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, switchToArcTestnet }
+export { ARC_MAINNET_ADD_PARAMS, ARC_MAINNET_CHAIN_ID, switchToArcMainnet }
 
 export function confirmedUnifiedBalanceChains(balance: any) {
   return UNIFIED_BALANCE_CHAINS.filter(chain => Number(confirmedBalanceForChain(balance, chain)) > 0 || Number(pendingBalanceForChain(balance, chain)) > 0)
@@ -953,7 +974,7 @@ async function prepareUnifiedBalanceSpend(args: {
     if (!evmAdapter) evmAdapter = await buildEvmAdapter()
     return evmAdapter
   }
-  const destinationAdapter = args.destinationChain === 'Solana_Devnet' ? await buildSolanaAdapter() : await getEvmAdapter()
+  const destinationAdapter = args.destinationChain === 'Solana' ? await buildSolanaAdapter() : await getEvmAdapter()
   const balance = await getUnifiedBalanceWithAppKit()
   const requestedChains = args.sourceChain && args.sourceChain !== 'auto'
     ? [args.sourceChain]
@@ -964,8 +985,8 @@ async function prepareUnifiedBalanceSpend(args: {
     if (available < receiveUnits) continue
     const allocations = [{ chain, amount: spendAmount }]
     try {
-      const sourceAdapter = chain === 'Solana_Devnet' ? await buildSolanaUnifiedSpendAdapter() : await getEvmAdapter()
-      if (chain !== 'Solana_Devnet') await ensureUnifiedEvmChain(sourceAdapter, chain)
+      const sourceAdapter = chain === 'Solana' ? await buildSolanaUnifiedSpendAdapter() : await getEvmAdapter()
+      if (chain !== 'Solana') await ensureUnifiedEvmChain(sourceAdapter, chain)
       const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
         from: { adapter: sourceAdapter, allocations },
         to: { adapter: destinationAdapter, chain: args.destinationChain, recipientAddress: args.recipientAddress },
@@ -991,7 +1012,7 @@ async function prepareUnifiedBalanceSpend(args: {
     const allocations = unifiedBalanceAllocations(spendAmount, args.sourceChain, balance)
     const sources = await unifiedBalanceSources(
       allocations,
-      allocations.some(item => item.chain !== 'Solana_Devnet') ? await getEvmAdapter() : null,
+      allocations.some(item => item.chain !== 'Solana') ? await getEvmAdapter() : null,
     )
     const estimate = await withGatewayProxy(() => args.kit.unifiedBalance.estimateSpend({
       from: sources,
@@ -1022,7 +1043,7 @@ async function prepareUnifiedBalanceSpend(args: {
 
 function sourcePriority(chain: Exclude<UnifiedBalanceSourceChain, 'auto'>, destinationChain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
   if (chain === destinationChain) return 0
-  return ({ Base_Sepolia: 1, Arbitrum_Sepolia: 2, Arc_Testnet: 3, Ethereum_Sepolia: 4, Solana_Devnet: 5 })[chain]
+  return ({ Base: 1, Arbitrum: 2, Arc: 3, Ethereum: 4, Solana: 5 })[chain]
 }
 
 async function spendUnifiedBalanceWithRetry(kit: AppKit, params: any) {
@@ -1034,7 +1055,7 @@ async function spendUnifiedBalanceWithRetry(kit: AppKit, params: any) {
     const signature = trace?.signature
     if (!isHexPayload(attestation) || !isHexPayload(signature)) throw error
     try {
-      if (params.to?.chain !== 'Solana_Devnet') await refreshUnifiedEvmRpc(params.to?.chain)
+      if (params.to?.chain !== 'Solana') await refreshUnifiedEvmRpc(params.to?.chain)
       return await withGatewayProxy(() => kit.unifiedBalance.spend({
         to: params.to,
         amount: params.amount,
@@ -1066,7 +1087,7 @@ function isHexPayload(value: unknown) {
 
 async function buildSolanaUnifiedSpendAdapter() {
   const detected = autoDetectSolanaProvider()
-  if (!detected || detected.kind !== 'solflare') throw new Error('Solflare on Solana Devnet is required to spend deposited Solana USDC.')
+  if (!detected || detected.kind !== 'solflare') throw new Error('Solflare on Solana is required to spend deposited Solana USDC.')
   return buildSolanaAdapter()
 }
 
@@ -1074,15 +1095,15 @@ async function assertSolanaWalletReady(amount: string, requireUsdc: boolean, req
   const walletAddress = await getConnectedSolanaAddress(true)
   const diagnostics = await getSolanaWalletDiagnostics(walletAddress)
   if (diagnostics.solBalance < 0.005) {
-    throw new Error(`Solana Devnet needs at least 0.005 SOL for transaction fees. Available: ${diagnostics.solBalance.toFixed(6)} SOL. Wallet: ${walletAddress}.`)
+    throw new Error(`Solana needs at least 0.005 SOL for transaction fees. Available: ${diagnostics.solBalance.toFixed(6)} SOL. Wallet: ${walletAddress}.`)
   }
   if (requireAta && !diagnostics.ataExists) {
-    throw new Error(`Solana Devnet USDC associated token account is missing. ATA: ${diagnostics.ataAddress}. Receive Devnet USDC in this wallet once, then retry.`)
+    throw new Error(`Solana USDC associated token account is missing. ATA: ${diagnostics.ataAddress}. Receive Mainnet USDC in this wallet once, then retry.`)
   }
   if (requireUsdc) {
     const requested = Number(formatUsdcUnits(usdcUnits(amount)))
     if (diagnostics.usdcBalance < requested) {
-      throw new Error(`Insufficient Solana Devnet USDC in ATA ${diagnostics.ataAddress}. Required: ${requested} USDC; available: ${diagnostics.usdcBalance} USDC.`)
+      throw new Error(`Insufficient Solana USDC in ATA ${diagnostics.ataAddress}. Required: ${requested} USDC; available: ${diagnostics.usdcBalance} USDC.`)
     }
   }
 }
@@ -1103,7 +1124,7 @@ function normalizeSolanaTransactionError(error: unknown, operation: string): Err
   const sdkDetail = message.match(/(?:^|\n)(Error:\s*[^\n]+)/i)?.[1] || ''
   const capturedError = lastSolanaSimulationDiagnostic?.err == null ? '' : safeDiagnosticJson(lastSolanaSimulationDiagnostic.err)
   const reason = detail || context.errorDetails || context.err || capturedError || sdkDetail || 'the Solana program rejected the simulated transaction without RPC logs'
-  const normalized = new Error(`Solana ${operation} simulation failed: ${reason}. Verify Devnet SOL, Devnet USDC, and the selected wallet account before retrying.`, { cause: error }) as Error & { retryConfig?: any }
+  const normalized = new Error(`Solana ${operation} simulation failed: ${reason}. Verify Mainnet SOL, Mainnet USDC, and the selected wallet account before retrying.`, { cause: error }) as Error & { retryConfig?: any }
   if (original?.retryConfig) normalized.retryConfig = original.retryConfig
   return normalized
 }

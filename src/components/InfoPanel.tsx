@@ -8,8 +8,8 @@ import { ChainLogo, TokenLogo } from './CompactPickers'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 import { rpcUint } from '../utils/rpcQuantity'
 import { acquireMintLock, releaseMintLock } from '../services/autoMintWorker'
-const EXPLORER = 'https://testnet.arcscan.app'
-const SOLANA_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+const EXPLORER = 'https://explorer.arc.io'
+const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const INITIAL_FEE_MULTIPLIER = 3n
 const MAX_FEE_MULTIPLIER = 4n
 const RECEIVE_MESSAGE_ABI = [{
@@ -35,7 +35,7 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   const [copiedReceipt, setCopiedReceipt] = useState(false)
   const color = rec.status === 'success' ? '#10b981' : rec.status === 'error' ? '#f87171' : '#f59e0b'
   const icon = rec.status === 'success' ? '✓' : rec.status === 'error' ? '✗' : '⏳'
-  const canRetry = Boolean((rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana_Devnet' && rec.status !== 'success')
+  const canRetry = Boolean((rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana' && rec.status !== 'success')
   const short = (value?: string) => value ? `${value.slice(0, 10)}...${value.slice(-6)}` : '-'
   const action = rec.action || 'bridge'
   const evmRequest = async (request: { method: string; params?: unknown[] | object }) => {
@@ -250,7 +250,7 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
       setSolanaAddress(addr)
       const { Connection, PublicKey } = await import('@solana/web3.js')
       const { getAssociatedTokenAddress } = await import('@solana/spl-token')
-      const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
+      const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed')
       const ata = await getAssociatedTokenAddress(new PublicKey(SOLANA_USDC_MINT), new PublicKey(addr))
       try {
         const bal = await conn.getTokenAccountBalance(ata)
@@ -273,10 +273,10 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
     { sym:'USDC', name:'USD Coin', circleBal:balances.USDC||'0', eoaBal:eoaBalances.USDC||'0', dec:4 },
     { sym:'EURC', name:'Euro Coin', circleBal:balances.EURC||'0', eoaBal:eoaBalances.EURC||'0', dec:4 },
     { sym:'USYC', name:'US Yield Coin', circleBal:balances.USYC||'0', eoaBal:eoaBalances.USYC||'0', dec:6 },
-    { sym:'cirBTC', name:'Circle Wrapped BTC', circleBal:balances.cirBTC||'0', eoaBal:eoaBalances.cirBTC||'0', dec:8 },
+    // cirBTC belum ada di Arc mainnet, jadi tidak ditampilkan di panel saldo.
   ]
   const pending = history.filter(rec => rec.status !== 'success')
-  const retryable = history.filter(rec => (rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana_Devnet' && rec.status !== 'success')
+  const retryable = history.filter(rec => (rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana' && rec.status !== 'success')
   const filteredHistory = history.filter(rec => {
     if (historyFilter === 'all') return true
     if (historyFilter === 'pending') return rec.status !== 'success'
@@ -311,7 +311,7 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
         </div>
       )}
       <div className='glass' style={{borderRadius:12,padding:14}}>
-        <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🟣 Solana Devnet</div>
+        <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🟣 Solana</div>
         {solanaAddress ? (
           <>
             <div style={{color:'#a78bfa',fontFamily:'monospace',fontSize:11,wordBreak:'break-all',background:'rgba(167,139,250,0.1)',padding:'8px',borderRadius:8,marginBottom:8}}>{solanaAddress}</div>
@@ -372,8 +372,8 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
         ):filteredHistory.slice(0,30).map(rec=><HistoryRow key={rec.id} rec={rec} />)}
       </div>
       <div className='glass' style={{borderRadius:12,padding:14}}>
-        <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🌐 Arc Testnet</div>
-        {[['Chain ID','5042002'],['Finality','⚡ Sub-second'],['Gas token','USDC'],['RPC','Private backend proxy']].map(([k,v])=>(
+        <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🌐 Arc Mainnet</div>
+        {[['Chain ID','5042'],['Finality','⚡ Sub-second'],['Gas token','USDC'],['RPC','Private backend proxy']].map(([k,v])=>(
           <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:4}}><span style={{color:'#64748b'}}>{k === 'Chain ID' ? t('info.chainId') : k === 'Finality' ? t('info.finality') : k === 'Gas token' ? t('info.gasToken') : k === 'RPC' ? t('info.rpc') : k}</span><span style={{color:v.startsWith('⚡')?'#10b981':'#e2e8f0',fontSize:12}}>{v}</span></div>
         ))}
       </div>

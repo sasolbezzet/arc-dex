@@ -1,11 +1,11 @@
 import { safePost } from '../api'
-import { ARC_TESTNET_ADD_PARAMS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_EXPLORER_TX } from '../domain/arcNetwork'
+import { ARC_MAINNET_ADD_PARAMS, ARC_MAINNET_CHAIN_ID, ARC_MAINNET_EXPLORER_TX } from '../domain/arcNetwork'
 import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbiParameters, parseSignature, parseUnits } from 'viem'
 import { findConnectedWalletProvider, normalizeWalletProvider, type Eip1193Provider } from '../walletProvider'
 import { isEmptyContractCode, isEmptyRpcData, requiredPositiveUint, rpcUint } from '../utils/rpcQuantity'
 
 const API = ''
-const ARC_CHAIN_ID = 5042002
+const ARC_CHAIN_ID = 5042
 const ADAPTER_EXECUTE_ABI = [{
   type: 'function',
   name: 'execute',
@@ -87,8 +87,10 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   if ((prepared?.source === 'arcox-amm-router' || prepared?.source === 'arcox-amm-router-2leg') && prepared?.ammRouter) {
     const tokenMap: Record<string, { address: `0x${string}`; decimals: number }> = {
       USDC: { address: '0x3600000000000000000000000000000000000000', decimals: 6 },
-      EURC: { address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a', decimals: 6 },
-      cirBTC: { address: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', decimals: 8 },
+      EURC: { address: '0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1', decimals: 6 },
+      // cirBTC belum ada di Arc mainnet — sengaja tidak dipetakan supaya swap
+      // cirBTC gagal dengan pesan jelas, bukan memanggil alamat kosong.
+
     }
     // Single-leg AMM swap (USDC↔cirBTC). The deployed router's swapWithFee
     // double-pulls from the caller, so execute against its registered pool.
@@ -115,7 +117,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
         tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn,
         grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
         txHash: swapTx, transactionHash: swapTx,
-        explorerUrl: `${ARC_TESTNET_EXPLORER_TX}${swapTx}`,
+        explorerUrl: `${ARC_MAINNET_EXPLORER_TX}${swapTx}`,
         approveTx, feeTx, platformFee: prepared.platformFee,
         raw: { ...prepared, approveTx, feeTx, swapTx },
       }
@@ -183,7 +185,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
       tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn,
       grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
       txHash: lastTx, transactionHash: lastTx,
-      explorerUrl: lastTx ? `${ARC_TESTNET_EXPLORER_TX}${lastTx}` : '',
+      explorerUrl: lastTx ? `${ARC_MAINNET_EXPLORER_TX}${lastTx}` : '',
       platformFee: prepared.platformFee,
       raw: { ...prepared, steps },
     }
@@ -230,7 +232,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
     amountOut: prepared.amountOut || '',
     txHash,
     transactionHash: txHash,
-    explorerUrl: txHash ? `${ARC_TESTNET_EXPLORER_TX}${txHash}` : '',
+    explorerUrl: txHash ? `${ARC_MAINNET_EXPLORER_TX}${txHash}` : '',
     raw: { ...prepared, steps },
     platformFee: prepared.platformFee,
   }
@@ -483,14 +485,14 @@ async function waitForReceipt(ethereum: Eip1193Provider, hash: string) {
 
 async function ensureArcChain(ethereum: Eip1193Provider) {
   const current = String(await ethereum.request({ method: 'eth_chainId' })).toLowerCase()
-  if (current !== ARC_TESTNET_CHAIN_ID) {
+  if (current !== ARC_MAINNET_CHAIN_ID) {
     try {
-      await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_TESTNET_CHAIN_ID }] })
+      await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_MAINNET_CHAIN_ID }] })
     } catch (error: any) {
       if (error?.code !== 4902 && error?.code !== -32603) throw error
-      await ethereum.request({ method: 'wallet_addEthereumChain', params: [ARC_TESTNET_ADD_PARAMS] })
+      await ethereum.request({ method: 'wallet_addEthereumChain', params: [ARC_MAINNET_ADD_PARAMS] })
     }
   }
   const active = String(await ethereum.request({ method: 'eth_chainId' })).toLowerCase()
-  if (active !== ARC_TESTNET_CHAIN_ID) throw new Error(`Wallet chain ${active} is not Arc Testnet ${ARC_TESTNET_CHAIN_ID}.`)
+  if (active !== ARC_MAINNET_CHAIN_ID) throw new Error(`Wallet chain ${active} is not Arc Mainnet ${ARC_MAINNET_CHAIN_ID}.`)
 }

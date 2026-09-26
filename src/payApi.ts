@@ -16,7 +16,7 @@ export type ArcoxInvoice = {
   merchantAddress: string
   amount: string
   token: 'USDC'
-  network: 'arc-testnet'
+  network: 'arc-mainnet'
   memo?: string
   status: InvoiceStatus
   paymentUrl: string

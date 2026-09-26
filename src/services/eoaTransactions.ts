@@ -1,5 +1,5 @@
 import { encodeFunctionData, erc20Abi, parseUnits } from 'viem'
-import { ARC_TESTNET_EXPLORER_TX, switchToArcTestnet } from '../domain/arcNetwork'
+import { ARC_MAINNET_EXPLORER_TX, switchToArcMainnet } from '../domain/arcNetwork'
 import { getArcToken } from '../domain/tokens'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 import { rpcUint } from '../utils/rpcQuantity'
@@ -20,7 +20,7 @@ export async function sendTokenFromEoa(args: {
   const token = getArcToken(args.token)
   if (!token) throw new Error('Token tidak didukung: ' + args.token)
 
-  await switchToArcTestnet()
+  await switchToArcMainnet()
   const value = parseUnits(args.amount, token.decimals)
   const data = encodeFunctionData({
     abi: erc20Abi,
@@ -35,7 +35,7 @@ export async function sendTokenFromEoa(args: {
     name: 'transfer',
     state: 'success',
     txHash,
-    explorerUrl: ARC_TESTNET_EXPLORER_TX + txHash,
+    explorerUrl: ARC_MAINNET_EXPLORER_TX + txHash,
   }
 }
 
@@ -49,7 +49,7 @@ export async function estimateSendTokenFromEoa(args: {
   const token = getArcToken(args.token)
   if (!token) throw new Error('Token tidak didukung: ' + args.token)
 
-  await switchToArcTestnet()
+  await switchToArcMainnet()
   const value = parseUnits(args.amount, token.decimals)
   const data = encodeFunctionData({
     abi: erc20Abi,
@@ -84,7 +84,7 @@ export async function approveTokenSpenderFromEoa(args: {
   const token = getArcToken(args.token)
   if (!token) throw new Error('Token tidak didukung: ' + args.token)
 
-  await switchToArcTestnet()
+  await switchToArcMainnet()
   const value = parseUnits(args.amount, token.decimals)
   const data = encodeFunctionData({
     abi: erc20Abi,
@@ -99,7 +99,7 @@ export async function approveTokenSpenderFromEoa(args: {
     name: 'approve',
     state: 'success',
     txHash,
-    explorerUrl: ARC_TESTNET_EXPLORER_TX + txHash,
+    explorerUrl: ARC_MAINNET_EXPLORER_TX + txHash,
   }
 }
 

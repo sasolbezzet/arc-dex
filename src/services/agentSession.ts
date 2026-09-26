@@ -17,7 +17,7 @@ import type { ChainAuthStatus } from '../types/agent'
  *   3. authorize and verify the same deterministic MSCA on Base/Arbitrum.
  *
  * Agent Wallet creation is fail-closed: the function does not return a usable
- * activation until Arc, Base Sepolia, and Arbitrum Sepolia are all deployed
+ * activation until Arc, Base, and Arbitrum are all deployed
  * and authorized. A destination-chain failure is therefore an error, never a
  * token-issuance warning.
  */
@@ -159,7 +159,7 @@ export async function readSessionStatus(vaultToken: string, agentKey = ''): Prom
  * alone is never trusted.
  */
 async function authorizeDelegateOnChain(
-  chainKey: 'base-sepolia' | 'arbitrum-sepolia',
+  chainKey: 'base-mainnet' | 'arbitrum-mainnet',
   walletAddress: string,
   delegateAddress: string,
   vaultToken: string,
@@ -260,7 +260,7 @@ async function destinationAuthorizationMissing(
   // Always read both destination chains. Registration and login share this
   // check so an already-complete wallet is not asked to submit duplicate
   // addOwners operations, while an incomplete wallet remains fail-closed.
-  const statuses = await Promise.all(['base-sepolia', 'arbitrum-sepolia'].map(async chainKey => {
+  const statuses = await Promise.all(['base-mainnet', 'arbitrum-mainnet'].map(async chainKey => {
     const response = await fetch(`${API}/api/session/destination-status?chainKey=${chainKey}&walletAddress=${encodeURIComponent(walletAddress)}`, {
       headers: { Authorization: `Bearer ${vaultToken}` },
       signal: AbortSignal.timeout(20_000),
@@ -281,9 +281,9 @@ async function authorizeDestinationChains(
   vaultToken: string,
   agentKey: string,
 ): Promise<{ chainAuthorizationStatus: Record<string, ChainAuthStatus>; warnings: string[] }> {
-  const chainAuthorizationStatus: Record<string, ChainAuthStatus> = { 'arc-testnet': 'authorized' }
+  const chainAuthorizationStatus: Record<string, ChainAuthStatus> = { 'arc-mainnet': 'authorized' }
   const warnings: string[] = []
-  for (const chainKey of ['base-sepolia', 'arbitrum-sepolia'] as const) {
+  for (const chainKey of ['base-mainnet', 'arbitrum-mainnet'] as const) {
     try {
       // `registerDelegateOwner` submits the single passkey UserOperation for
       // this chain. For a deterministic Circle MSCA that first addOwners op
@@ -351,7 +351,7 @@ export async function activateAgentSession(
       && await destinationAuthorizationMissing(walletAddress, vaultToken)
     const { chainAuthorizationStatus, warnings } = authorizeDestinations
       ? await authorizeDestinationChains(walletAddress, existing.delegateAddress, vaultToken, agentKey)
-      : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
+      : { chainAuthorizationStatus: { 'arc-mainnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
     const bindingActivated = await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
       address: options.eoaAddress,
       token: options.ownerSessionToken,
@@ -387,7 +387,7 @@ export async function activateAgentSession(
       && await destinationAuthorizationMissing(walletAddress, vaultToken)
       const { chainAuthorizationStatus, warnings } = authorizeDestinations
         ? await authorizeDestinationChains(walletAddress, reconciled.delegateAddress, vaultToken, agentKey)
-        : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
+        : { chainAuthorizationStatus: { 'arc-mainnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
       const bindingActivated = await activateBindingAfterSession(vaultToken, walletAddress, agentKey, {
         address: options.eoaAddress,
         token: options.ownerSessionToken,
@@ -455,7 +455,7 @@ export async function activateAgentSession(
   ) && await destinationAuthorizationMissing(walletAddress, vaultToken)
   const { chainAuthorizationStatus, warnings } = authorizeDestinations
     ? await authorizeDestinationChains(walletAddress, result.delegateAddress, vaultToken, agentKey)
-    : { chainAuthorizationStatus: { 'arc-testnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
+    : { chainAuthorizationStatus: { 'arc-mainnet': 'authorized' } as Record<string, ChainAuthStatus>, warnings: [] as string[] }
 
   // The session key exists now, but the agent still needs its durable binding
   // row before any agent tool may use this wallet. `activate-binding` creates

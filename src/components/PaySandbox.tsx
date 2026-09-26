@@ -61,7 +61,7 @@ export function PaySandbox() {
   const createPayment = () => run('create', async () => createX402Invoice({ ...form, amount: form.amount || undefined }))
   const checkStatus = () => invoiceId && run('status', async () => getX402InvoiceStatus(invoiceId))
   const estimateUnified = () => invoiceId && run('unified', async () => estimateX402UnifiedBalance(invoiceId, {
-    route: 'Circle Gateway Unified Balance -> Arc Testnet USDC',
+    route: 'Circle Gateway Unified Balance -> Arc Mainnet USDC',
     delegateStatus: 'estimate_required_in_wallet',
   }))
   const loadTreasury = () => run('treasury', async () => {
@@ -81,7 +81,7 @@ export function PaySandbox() {
         <div className='docs-kicker'>ARCOX Pay</div>
         <h2>{t('pay.sandboxTitle')}</h2>
         <p>Internal ARCOX invoice flow for paid Intel API access. Pay exact Arc USDC with an on-chain memo, or estimate a Unified Balance spend to the same Arc treasury recipient.</p>
-        <div className='inline-warning'>Real testnet only. No NowPayments, no fake unlock, and no manual txHash fallback.</div>
+        <div className='inline-warning'>Real mainnet only. No NowPayments, no fake unlock, and no manual txHash fallback.</div>
       </section>
 
       {error && <div className='inline-error'>{error}</div>}
@@ -99,7 +99,7 @@ export function PaySandbox() {
           <h3>{t('ui.payment')}</h3>
           <div className='flow-steps'>
             <FlowStep title='User Wallet' value='Arc USDC or Unified Balance' extra='Signs the payment' />
-            <FlowStep title='ARCOX Treasury' value={invoice?.recipient || 'Set X402_RECIPIENT_ADDRESS'} extra='Arc Testnet USDC receiver' />
+            <FlowStep title='ARCOX Treasury' value={invoice?.recipient || 'Set X402_RECIPIENT_ADDRESS'} extra='Arc Mainnet USDC receiver' />
             <FlowStep title='Reconciliation' value='Arc memo / ERC20 Transfer / Gateway webhook' extra='Marks invoice paid only after settlement' />
             <FlowStep title='ARCOX Intel' value={invoice?.resource || form.resource} extra='Unlocked only after invoice is paid' />
           </div>

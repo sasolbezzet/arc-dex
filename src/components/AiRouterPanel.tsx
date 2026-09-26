@@ -78,13 +78,13 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
         const result = await refreshAiRouterAutoPayReadiness(address)
         if (!result?.autoPay) return
         let refreshedAutoPay = result.autoPay
-        const solanaEntry = (refreshedAutoPay.delegateChains || []).find((item: any) => item.chain === 'Solana_Devnet' && item.status === 'pending')
+        const solanaEntry = (refreshedAutoPay.delegateChains || []).find((item: any) => item.chain === 'Solana' && item.status === 'pending')
         const solanaOwnerAddress = String(refreshedAutoPay.solanaOwnerAddress || '')
         const solanaDelegateAddress = solanaDelegateForPolling
         if (solanaEntry && solanaOwnerAddress && solanaDelegateAddress && await getConnectedSolanaAddress(false) === solanaOwnerAddress) {
-          const solanaStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' }))
+          const solanaStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana' }))
           if (solanaStatus === 'ready') {
-            const delegateChains = refreshedAutoPay.delegateChains.map((item: any) => item.chain === 'Solana_Devnet' ? { ...item, status: 'ready' } : item)
+            const delegateChains = refreshedAutoPay.delegateChains.map((item: any) => item.chain === 'Solana' ? { ...item, status: 'ready' } : item)
             const saved = await setAiRouterAutoPay({
               ownerAddress: address,
               solanaOwnerAddress,
@@ -129,14 +129,14 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     setBusy('autoPaySetup')
     const delegateChains: Array<{ chain: string; status: string }> = []
     const failures: string[] = []
-    const solanaOwnerAddress = sourceChains.includes('Solana_Devnet') ? await getConnectedSolanaAddress(true) : String(autoPay?.solanaOwnerAddress || '')
+    const solanaOwnerAddress = sourceChains.includes('Solana') ? await getConnectedSolanaAddress(true) : String(autoPay?.solanaOwnerAddress || '')
     const previousChains = new Map((autoPay?.delegateChains || delegate?.chains || []).map((item: any) => [item.chain, item.status]))
     for (const chain of sourceChains) {
       try {
-        const chainDelegate = chain === 'Solana_Devnet' ? solanaDelegateAddress : delegateAddress
-        const chainOwner = chain === 'Solana_Devnet' ? solanaOwnerAddress : address
+        const chainDelegate = chain === 'Solana' ? solanaDelegateAddress : delegateAddress
+        const chainOwner = chain === 'Solana' ? solanaOwnerAddress : address
         if (!chainDelegate) throw new Error('Solana Auto Pay signer is not configured')
-        const isSelf = chain === 'Solana_Devnet' ? chainDelegate === chainOwner : sameAddress(chainDelegate, chainOwner)
+        const isSelf = chain === 'Solana' ? chainDelegate === chainOwner : sameAddress(chainDelegate, chainOwner)
         let chainStatus: any = isSelf
           ? 'ready'
           : await resolveAutoPayStatus(chainOwner, chainDelegate, chain, previousChains.get(chain))
@@ -144,7 +144,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
           await addUnifiedBalanceDelegateWithAppKit({ delegateAddress: chainDelegate, chain })
           chainStatus = 'pending'
           try {
-            if (chain === 'Solana_Devnet') {
+            if (chain === 'Solana') {
               chainStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: chainDelegate, chain }))
             } else {
             const refreshed = await getAiRouterDelegateStatus({ ownerAddress: address, delegateAddress, chain })
@@ -213,8 +213,8 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
       const chains = UNIFIED_BALANCE_CHAINS.filter(chain => ['ready', 'pending'].includes(configured.get(chain) || ''))
       for (const chain of chains) {
         try {
-          const chainDelegate = chain === 'Solana_Devnet' ? solanaDelegateAddress : delegateAddress
-          const chainOwner = chain === 'Solana_Devnet' ? await getConnectedSolanaAddress(true) : address
+          const chainDelegate = chain === 'Solana' ? solanaDelegateAddress : delegateAddress
+          const chainOwner = chain === 'Solana' ? await getConnectedSolanaAddress(true) : address
           if (!chainDelegate) throw new Error('Solana Auto Pay signer is not configured')
           const chainStatus = await resolveAutoPayStatus(chainOwner, chainDelegate, chain, configured.get(chain))
           if (chainStatus !== 'none') await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress: chainDelegate, chain })
@@ -249,17 +249,17 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
     try {
       const solanaOwnerAddress = await getConnectedSolanaAddress(true)
       const currentChains = autoPay?.delegateChains || delegate?.chains || []
-      const previous = currentChains.find((item: any) => item.chain === 'Solana_Devnet')?.status
-      let chainStatus = await resolveAutoPayStatus(solanaOwnerAddress, solanaDelegateAddress, 'Solana_Devnet', previous)
+      const previous = currentChains.find((item: any) => item.chain === 'Solana')?.status
+      let chainStatus = await resolveAutoPayStatus(solanaOwnerAddress, solanaDelegateAddress, 'Solana', previous)
       if (enabled && chainStatus === 'not_configured') {
-        await addUnifiedBalanceDelegateWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' })
-        chainStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' }))
+        await addUnifiedBalanceDelegateWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana' })
+        chainStatus = normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana' }))
       }
       if (!enabled && chainStatus !== 'not_configured') {
-        await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana_Devnet' })
+        await removeUnifiedBalanceDelegateWithAppKit({ delegateAddress: solanaDelegateAddress, chain: 'Solana' })
         chainStatus = 'not_configured'
       }
-      const delegateChains = mergeDelegateChain(currentChains, 'Solana_Devnet', normalizeAutoPayStatus(chainStatus))
+      const delegateChains = mergeDelegateChain(currentChains, 'Solana', normalizeAutoPayStatus(chainStatus))
       const activeChains = delegateChains.filter(item => ['ready', 'pending'].includes(normalizeAutoPayStatus(item.status)))
       const delegateStatus = activeChains.some(item => normalizeAutoPayStatus(item.status) === 'ready') ? 'ready' : activeChains.length ? 'pending' : 'not_configured'
       const saved = await setAiRouterAutoPay({
@@ -295,7 +295,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
   const autoPayStatus = delegate?.status || autoPay?.delegateStatus || autoPay?.status || 'not ready'
   const autoPayReady = autoPay?.enabled && autoPayStatus === 'ready'
   const autoPayLabel = autoPayReady ? 'Ready - siap digunakan' : formatAutoPayStatus(autoPayStatus)
-  const solanaAutoPayStatus = normalizeAutoPayStatus((autoPay?.delegateChains || delegate?.chains || []).find((item: any) => item.chain === 'Solana_Devnet')?.status)
+  const solanaAutoPayStatus = normalizeAutoPayStatus((autoPay?.delegateChains || delegate?.chains || []).find((item: any) => item.chain === 'Solana')?.status)
   const solanaAutoPayReady = solanaAutoPayStatus === 'ready'
   const readyChainCount = (autoPay?.delegateChains || delegate?.chains || []).filter((item: any) => item.status === 'ready').length
   const fundedChainCount = unifiedBalance ? confirmedUnifiedBalanceChains(unifiedBalance).length : 0
@@ -371,7 +371,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
             </button>
           </div>
           <div className='pay-grid'>
-            <Info label='Solana Devnet Auto Pay' value={formatAutoPayStatus(solanaAutoPayStatus)} />
+            <Info label='Solana Auto Pay' value={formatAutoPayStatus(solanaAutoPayStatus)} />
             <Info label='Solana Delegate' value={autoPaySolanaAddress(status) || 'Not configured'} />
           </div>
           <div className='button-row wrap'>
@@ -428,7 +428,7 @@ export function AiRouterPanel({ address, activeAgentIdentity }: { address: strin
               <div>
                 <strong>{item.cost} USDC</strong>
                 {item.txHash ? (
-                  <a className='tx-link' href={`https://testnet.arcscan.app/tx/${item.txHash}`} target='_blank' rel='noreferrer'>
+                  <a className='tx-link' href={`https://explorer.arc.io/tx/${item.txHash}`} target='_blank' rel='noreferrer'>
                     {shortHash(item.txHash)}
                   </a>
                 ) : (
@@ -566,7 +566,7 @@ function mergeDelegateChain(chains: any[], chain: string, status: string) {
 }
 
 async function resolveAutoPayStatus(ownerAddress: string, delegateAddress: string, chain: any, previousStatus?: any) {
-  if (chain === 'Solana_Devnet') {
+  if (chain === 'Solana') {
     try {
       return normalizeAutoPayStatus(await getUnifiedBalanceDelegateStatusWithAppKit({ delegateAddress, chain }))
     } catch (error) {

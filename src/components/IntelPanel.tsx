@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { switchToArcTestnet } from '../domain/arcNetwork'
+import { switchToArcMainnet } from '../domain/arcNetwork'
 import { ARC_TOKENS } from '../domain/tokens'
 import { estimateDelegatedUnifiedBalance, estimateX402UnifiedBalance, markX402UnifiedBalanceSpendSubmitted, spendDelegatedUnifiedBalance } from '../payApi'
 import { estimateUnifiedBalanceSpendWithAppKit, spendUnifiedBalanceWithAppKit } from '../appKit'
@@ -109,11 +109,11 @@ const SERVICE_BY_ID = Object.fromEntries(SERVICES.map(item => [item.id, item])) 
 const TIME_WINDOWS = ['1h', '24h', '7d', '30d']
 const UB_SOURCES = [
   { id: 'auto', label: 'Auto' },
-  { id: 'Arc_Testnet', label: 'Arc' },
-  { id: 'Base_Sepolia', label: 'Base' },
-  { id: 'Ethereum_Sepolia', label: 'ETH' },
-  { id: 'Arbitrum_Sepolia', label: 'ARB' },
-  { id: 'Solana_Devnet', label: 'SOL' },
+  { id: 'Arc', label: 'Arc' },
+  { id: 'Base', label: 'Base' },
+  { id: 'Ethereum', label: 'ETH' },
+  { id: 'Arbitrum', label: 'ARB' },
+  { id: 'Solana', label: 'SOL' },
 ]
 
 export function IntelPanel({ address, activeAgentIdentity }: { address: string; activeAgentIdentity: AgentIdentity | null }) {
@@ -214,7 +214,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     setPaying(true)
     setError('')
     try {
-      await switchToArcTestnet()
+      await switchToArcMainnet()
       const provider = await findConnectedWalletProvider()
       if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
       const ethereum = normalizeWalletProvider(provider)
@@ -278,7 +278,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
       })
       setUnifiedEstimate(sdkEstimate)
       const result = await estimateX402UnifiedBalance(requirement.invoiceId, {
-        route: 'Circle Gateway Unified Balance -> Arc Testnet USDC',
+        route: 'Circle Gateway Unified Balance -> Arc Mainnet USDC',
         fees: (sdkEstimate as any)?.fees || [],
         sourceChain: unifiedSourceChain,
         delegateStatus: 'estimate_ready',
@@ -289,7 +289,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
         setError(e instanceof Error ? e.message : 'Unified Balance estimate failed.')
       } else {
         try {
-          const result = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain })
+          const result = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc', sourceChain: unifiedSourceChain })
           setUnifiedEstimate({ ...result.estimate, delegated: true })
           setRequirement(result.invoice || requirement)
         } catch (fallbackError) {
@@ -308,12 +308,12 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
     try {
       if ((unifiedEstimate as any)?.delegated) {
         if (!(unifiedEstimate as any)?.maxTotalDebit) {
-          const estimate = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain })
+          const estimate = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc', sourceChain: unifiedSourceChain })
           setUnifiedEstimate({ ...estimate.estimate, delegated: true })
           setRequirement(estimate.invoice || requirement)
           return
         }
-        const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.maxTotalDebit || (unifiedEstimate as any)?.totalDebit })
+        const result = await spendDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc', sourceChain: unifiedSourceChain, maxTotalDebit: (unifiedEstimate as any)?.maxTotalDebit || (unifiedEstimate as any)?.totalDebit })
         const txHash = result.spend?.txHash || ''
         setPaymentTx(txHash)
         setWalletPaymentSubmitted(true)
@@ -345,7 +345,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
         setError(e instanceof Error ? e.message : 'Unified Balance spend failed.')
       } else {
         try {
-          const result = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc_Testnet', sourceChain: unifiedSourceChain })
+          const result = await estimateDelegatedUnifiedBalance({ purpose: 'x402', invoiceId: requirement.invoiceId, amount: String(requirement.amount || requirement.uniqueAmount), destinationChain: 'Arc', sourceChain: unifiedSourceChain })
           setUnifiedEstimate({ ...result.estimate, delegated: true })
           setRequirement(result.invoice || requirement)
         } catch (fallbackError) {
@@ -442,7 +442,7 @@ export function IntelPanel({ address, activeAgentIdentity }: { address: string; 
           {selected.needsValue !== false && <Field label={selected.inputLabel || t('intel.input')} value={value} onChange={setValue} placeholder={selected.placeholder || selected.inputLabel || ''} />}
           <div className='pay-grid'>
             <Info label={t('intel.price')} value={`${selected.price} USDC`} />
-            <Info label={t('intel.payWith')} value='USDC on Arc Testnet' />
+            <Info label={t('intel.payWith')} value='USDC on Arc Mainnet' />
             <Info label={t('intel.category')} value={selected.group} />
           </div>
           <button className='btn btn-primary' onClick={() => analyze()} disabled={loading}>{loading ? t('intel.analyzing') : t('intel.analyze')}</button>
@@ -571,8 +571,7 @@ function AdminStats({ stats, health, circuits }: { stats: any; health: any; circ
       )}
       <div className='pay-grid'>
         <Info label='Treasury Balance' value={health ? `${health.totalUsdc ?? '-'} USDC` : '-'} />
-        <Info label='Treasury Min' value={health ? `${health.minUsdc ?? '-'} USDC` : '-'} />
-        <Info label='Treasury Status' value={health ? (health.healthy ? 'Healthy' : health.known === false ? 'Unknown (fail-open)' : 'LOW') : '-'} />
+        <Info label='Treasury Status' value={health ? (health.known === false ? 'Unknown (fail-open)' : 'OK — tanpa gate saldo') : '-'} />
         <Info label='Degraded Services' value={String(degradedCount)} />
       </div>
       {health?.byChain && (
@@ -666,7 +665,7 @@ function IntelResult({ result, requirement, selected }: { result: any; requireme
               <div className='intel-field intel-field--wide'>
                 <span className='intel-field-label'>{t('intel.paymentTransaction')}</span>
                 {payment.txHash ? (
-                  <a className='intel-field-value mono intel-tx-link' href={`https://testnet.arcscan.app/tx/${payment.txHash}`} target='_blank' rel='noreferrer'>{payment.txHash}</a>
+                  <a className='intel-field-value mono intel-tx-link' href={`https://explorer.arc.io/tx/${payment.txHash}`} target='_blank' rel='noreferrer'>{payment.txHash}</a>
                 ) : <strong className='intel-field-value'>{t('intel.notReported')}</strong>}
               </div>
             </div>

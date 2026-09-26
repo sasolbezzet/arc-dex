@@ -7,7 +7,7 @@ import { useI18n } from '../i18n'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
 import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } from 'viem'
 import { describeBridgeRoute, type BridgeRegistryToken } from '../domain/bridgeRouteRegistry'
-import { ARC_TESTNET_RPC_URLS } from '../domain/arcNetwork'
+import { ARC_MAINNET_RPC_URLS } from '../domain/arcNetwork'
 import { quoteEoaSwap, swapFromEoa } from '../services/swapService'
 import { getTreasuryStatus } from '../payApi'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
@@ -31,45 +31,47 @@ async function safePostTimed(path: string, body: object, timeoutMs = ATTESTATION
 }
 
 const EVM_CHAINS = [
-  { id: 'Arc_Testnet', label: 'Arc Testnet', chainId: '0x4cef52', addParams: { chainId:'0x4cef52', chainName:'Arc Testnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:ARC_TESTNET_RPC_URLS, blockExplorerUrls:['https://testnet.arcscan.app'] } },
-  { id: 'Ethereum_Sepolia', label: 'Ethereum Sepolia', chainId: '0xaa36a7', addParams: null },
-  { id: 'Base_Sepolia', label: 'Base Sepolia', chainId: '0x14a34', addParams: null },
-  { id: 'Arbitrum_Sepolia', label: 'Arbitrum Sepolia', chainId: '0x66eee', addParams: null },
-  { id: 'HyperEVM_Testnet', label: 'HyperEVM Testnet', chainId: '0x3e6', addParams: { chainId:'0x3e6', chainName:'HyperEVM Testnet', nativeCurrency:{name:'HYPE',symbol:'HYPE',decimals:18}, rpcUrls:['https://rpc.hyperliquid-testnet.xyz/evm'], blockExplorerUrls:['https://app.hyperliquid-testnet.xyz/explorer'] } },
+  { id: 'Arc', label: 'Arc Mainnet', chainId: '0x13b2', addParams: { chainId:'0x13b2', chainName:'Arc Mainnet', nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:ARC_MAINNET_RPC_URLS, blockExplorerUrls:['https://explorer.arc.io'] } },
+  { id: 'Ethereum', label: 'Ethereum', chainId: '0x1', addParams: { chainId:'0x1', chainName:'Ethereum', nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18}, rpcUrls:['https://ethereum-rpc.publicnode.com'], blockExplorerUrls:['https://etherscan.io'] } },
+  { id: 'Base', label: 'Base', chainId: '0x2105', addParams: { chainId:'0x2105', chainName:'Base', nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18}, rpcUrls:['https://mainnet.base.org'], blockExplorerUrls:['https://basescan.org'] } },
+  { id: 'Arbitrum', label: 'Arbitrum', chainId: '0xa4b1', addParams: { chainId:'0xa4b1', chainName:'Arbitrum One', nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18}, rpcUrls:['https://arb1.arbitrum.io/rpc'], blockExplorerUrls:['https://arbiscan.io'] } },
+  { id: 'HyperEVM', label: 'HyperEVM', chainId: '0x3e7', addParams: { chainId:'0x3e7', chainName:'HyperEVM', nativeCurrency:{name:'HYPE',symbol:'HYPE',decimals:18}, rpcUrls:['https://rpc.hyperliquid.xyz/evm'], blockExplorerUrls:['https://hyperevmscan.io'] } },
 ]
-const SOLANA_CHAIN = { id: 'Solana_Devnet', label: 'Solana Devnet (Solana)' }
+const SOLANA_CHAIN = { id: 'Solana', label: 'Solana' }
 const ALL_DST_CHAINS = [...EVM_CHAINS, SOLANA_CHAIN]
 const NATIVE_TO_ARC: Record<string,{ token:string; symbol:string; label:string; note:string; unavailableReason?:string }> = {
-  Ethereum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Ethereum native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.' },
-  Base_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Base native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.' },
-  Arbitrum_Sepolia: { token:'ETH_NATIVE', symbol:'ETH', label:'Arbitrum native ETH', note:'ETH is the gas token on Arbitrum Sepolia.', unavailableReason:'Waiting for a verified router/liquid WETH-USDC route on Arbitrum Sepolia.' },
-  HyperEVM_Testnet: { token:'HYPE_NATIVE', symbol:'HYPE', label:'HyperEVM native HYPE', note:'HYPE is the gas token on HyperEVM Testnet.', unavailableReason:'Native HYPE route is not enabled until a wrapped-HYPE router and CCTP-compatible USDC pool are verified.' },
-  Solana_Devnet: { token:'SOL_NATIVE', symbol:'SOL', label:'Solana native SOL', note:'SOL is the gas token on Solana Devnet.', unavailableReason:'SOL-native swap-and-bridge needs a Solana route/program; current Solana bridge supports USDC only.' },
+  Ethereum: { token:'ETH_NATIVE', symbol:'ETH', label:'Ethereum native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.', unavailableReason:'Router swap native ETH → USDC belum di-deploy di mainnet.' },
+  Base: { token:'ETH_NATIVE', symbol:'ETH', label:'Base native ETH', note:'ETH swaps to USDC, burns via CCTP, then mints on Arc.', unavailableReason:'Router swap native ETH → USDC belum di-deploy di mainnet.' },
+  Arbitrum: { token:'ETH_NATIVE', symbol:'ETH', label:'Arbitrum native ETH', note:'ETH is the gas token on Arbitrum.', unavailableReason:'Waiting for a verified router/liquid WETH-USDC route on Arbitrum.' },
+  HyperEVM: { token:'HYPE_NATIVE', symbol:'HYPE', label:'HyperEVM native HYPE', note:'HYPE is the gas token on HyperEVM.', unavailableReason:'Native HYPE route is not enabled until a wrapped-HYPE router and CCTP-compatible USDC pool are verified.' },
+  Solana: { token:'SOL_NATIVE', symbol:'SOL', label:'Solana native SOL', note:'SOL is the gas token on Solana.', unavailableReason:'SOL-native swap-and-bridge needs a Solana route/program; current Solana bridge supports USDC only.' },
 }
 
 // CCTP source config — token addresses per chain
-// cirBTC hanya ada di Arc Testnet + Ethereum Sepolia (Circle docs)
+// cirBTC belum ada di mainnet, jadi tidak ada entri cirbtc di sini (route
+// cirBTC otomatis gagal-tertutup dengan pesan jelas).
 const CCTP_SRC: Record<string,{tokenMessenger:string;usdc:string;cirbtc?:string;domain:number}> = {
-  Arc_Testnet: { tokenMessenger:'0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', usdc:'0x3600000000000000000000000000000000000000', cirbtc:'0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', domain:26 },
-  Ethereum_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', cirbtc:'0x3a3fe695F684Bf9b9e43CF43C2b895Ea5e392bB3', domain:0 },
-  Base_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x036CbD53842c5426634e7929541eC2318f3dCF7e', domain:6 },
-  Arbitrum_Sepolia: { tokenMessenger:'0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa', usdc:'0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', domain:3 },
-  HyperEVM_Testnet: { tokenMessenger:'0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', usdc:'0x2B3370eE501B4a559b57D449569354196457D8Ab', domain:19 },
+  Arc: { tokenMessenger:'0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d', usdc:'0x3600000000000000000000000000000000000000', domain:26 },
+  Ethereum: { tokenMessenger:'0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d', usdc:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', domain:0 },
+  Base: { tokenMessenger:'0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d', usdc:'0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', domain:6 },
+  Arbitrum: { tokenMessenger:'0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d', usdc:'0xaf88d065e77c8cC2239327C5EDb3A432268e5831', domain:3 },
+  HyperEVM: { tokenMessenger:'0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d', usdc:'0xb88339CB7199b77E23DB6E890353E22632Ba630f', domain:19 },
 }
-const DST_DOMAIN: Record<string,number> = { Arc_Testnet:26, Ethereum_Sepolia:0, Base_Sepolia:6, Arbitrum_Sepolia:3, HyperEVM_Testnet:19, Solana_Devnet:5 }
+const DST_DOMAIN: Record<string,number> = { Arc:26, Ethereum:0, Base:6, Arbitrum:3, HyperEVM:19, Solana:5 }
+// Fee Router mainnet ARCOX yang benar-benar ter-deploy & terverifikasi
+// (kode 4653 byte di tiap chain). Ethereum mainnet belum punya Fee Router,
+// jadi route fee-router dari/ke Ethereum gagal-tertutup.
 const ARCOX_ROUTER: Record<string,string> = {
-  Arc_Testnet: '0xDf800310443BEB589CEf91A09854203Ea36e43a7',
-  Ethereum_Sepolia: '0x53aB114FeE64b177B8D6066056DfD03Ea38D0ef1',
-  Base_Sepolia: '0x9425cC5b3C8B9e0FCb35beBdE737B4365A614Acc',
-  Arbitrum_Sepolia: '0x5dCAA895dDc7350cF0f9eb69E69536a4548b0cA7',
+  Arc: '0x9Fd14A94bDbEFf73EDB22853cc77416B65E2A0c0',
+  Base: '0xD858f073FA09834b1d64C165afC2757F1DF2f019',
+  Arbitrum: '0xaF15a9fFdDB21A42Aa6175B8130aE69ce41C78F9',
 }
-const NATIVE_SWAP_BRIDGE_ROUTER: Record<string,string> = {
-  Ethereum_Sepolia: '0x8fE3d887cD7D08D5A45bEaa57D061FFf9192EB59',
-  Base_Sepolia: '0x3c5beFa0c208F0732D2c357f26EB897E727da498',
-}
+// Router swap-native mainnet belum di-deploy di chain mana pun (alamat lama
+// tidak punya kode on-chain), jadi jalur native ETH/HYPE gagal-tertutup.
+const NATIVE_SWAP_BRIDGE_ROUTER: Record<string,string> = {}
 const NATIVE_QUOTE_RPC: Record<string,string> = {
-  Ethereum_Sepolia: 'https://ethereum-sepolia-rpc.publicnode.com',
-  Base_Sepolia: 'https://sepolia.base.org',
+  Ethereum: 'https://ethereum-rpc.publicnode.com',
+  Base: 'https://mainnet.base.org',
 }
 const ARCOX_ROUTER_ABI = [{
   type: 'function',
@@ -108,7 +110,7 @@ const NATIVE_SWAP_BRIDGE_ROUTER_ABI = [{
 
 // Solana CCTP burn config
 const SOLANA_CCTP = {
-  usdcMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+  usdcMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
   tokenMessengerProgram: 'CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe',
   messageTransmitterProgram: 'CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC',
   domain: 5,
@@ -117,7 +119,9 @@ const SOLANA_MINT_CLIENT_VERSION = 'cctp-v2-solana-mint-20260601-09'
 const CCTP_FAST_FINALITY_THRESHOLD = 1000n
 const INITIAL_FEE_MULTIPLIER = 3n
 const MAX_FEE_MULTIPLIER = 4n
-const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 30)
+// Fee Router mainnet di-deploy dengan feeBps 500 (5%), jadi default frontend
+// disamakan dengan on-chain; VITE_ARCOX_ROUTER_FEE_BPS tetap bisa menimpanya.
+const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 500)
 
 async function runtimeTreasury(kind: 'evm' | 'solana') {
   const status = await getTreasuryStatus()
@@ -129,11 +133,11 @@ async function runtimeTreasury(kind: 'evm' | 'solana') {
 
 function enc256(n: bigint) { return n.toString(16).padStart(64,'0') }
 function encAddr(a: string) { return a.slice(2).toLowerCase().padStart(64,'0') }
-const explorerFor = (chain: string, tx: string) => chain === 'Arc_Testnet' ? `https://testnet.arcscan.app/tx/${tx}` :
-  chain === 'Base_Sepolia' ? `https://sepolia.basescan.org/tx/${tx}` :
-  chain === 'Arbitrum_Sepolia' ? `https://sepolia.arbiscan.io/tx/${tx}` :
-  chain === 'HyperEVM_Testnet' ? `https://app.hyperliquid-testnet.xyz/explorer/tx/${tx}` :
-  `https://sepolia.etherscan.io/tx/${tx}`
+const explorerFor = (chain: string, tx: string) => chain === 'Arc' ? `https://explorer.arc.io/tx/${tx}` :
+  chain === 'Base' ? `https://basescan.org/tx/${tx}` :
+  chain === 'Arbitrum' ? `https://arbiscan.io/tx/${tx}` :
+  chain === 'HyperEVM' ? `https://hyperevmscan.io/tx/${tx}` :
+  `https://etherscan.io/tx/${tx}`
 
 type BridgeStep = { name:string; state:'pending'|'success'|'error'; txHash?:string; explorerUrl?:string }
 type Status = { type:'success'|'error'|'info'|'warning'; msg:string; steps?:BridgeStep[] }
@@ -151,9 +155,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   void circleWallet;
 
 
-  const [fromChain, setFromChain] = useState('Arc_Testnet')
+  const [fromChain, setFromChain] = useState('Arc')
 
-  const [toChain, setToChain] = useState('Ethereum_Sepolia')
+  const [toChain, setToChain] = useState('Ethereum')
   const [source, setSource] = useState<'circle'|'eoa'>('circle')
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
@@ -174,10 +178,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     sourceToken: (token === 'EURC' || token === 'cirBTC' ? token : 'USDC') as BridgeRegistryToken,
     receiveToken,
   })
-  const nativeBridgeToken = toChain === 'Arc_Testnet' ? NATIVE_TO_ARC[fromChain] : null
+  const nativeBridgeToken = toChain === 'Arc' ? NATIVE_TO_ARC[fromChain] : null
   const isNativeBridgeToken = Boolean(nativeBridgeToken && token === nativeBridgeToken.token)
-  const nativeBridgeExecutable = Boolean(isNativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc_Testnet')
-  const nativeRouteLive = Boolean(nativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc_Testnet')
+  const nativeBridgeExecutable = Boolean(isNativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc')
+  const nativeRouteLive = Boolean(nativeBridgeToken && NATIVE_SWAP_BRIDGE_ROUTER[fromChain] && toChain === 'Arc')
   const displayToken = isNativeBridgeToken ? nativeBridgeToken!.symbol : token
   const tokenDec = TOKEN_DECIMALS[token]||6
   const evmRequest = async (request: { method: string; params?: unknown[] | object }) => {
@@ -204,9 +208,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const circleB = parseFloat(balances[token]||'0')
   const eoaB = parseFloat(eoaBalances[token]||'0')
   const totalB = circleB + eoaB
-  const isToSolana = toChain === 'Solana_Devnet'
-  const isFromSolana = fromChain === 'Solana_Devnet'
-  const sourceBalance = isNativeBridgeToken ? 0 : source === 'circle' && fromChain === 'Arc_Testnet' ? circleB : isFromSolana ? parseFloat(solanaUsdcBal || '0') : eoaB
+  const isToSolana = toChain === 'Solana'
+  const isFromSolana = fromChain === 'Solana'
+  const sourceBalance = isNativeBridgeToken ? 0 : source === 'circle' && fromChain === 'Arc' ? circleB : isFromSolana ? parseFloat(solanaUsdcBal || '0') : eoaB
   // The router and Stablecoin Service collect their fee from the submitted
   // amount. CCTP maxFee is encoded as 10 USDC base units (0.000010 USDC), so
   // no extra token transfer is added to the source debit.
@@ -251,7 +255,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     try {
       const { Connection, PublicKey } = await import('@solana/web3.js')
       const { getAssociatedTokenAddress } = await import('@solana/spl-token')
-      const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
+      const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed')
       const mint = new PublicKey(SOLANA_CCTP.usdcMint)
       const owner = new PublicKey(addr)
       const ata = await getAssociatedTokenAddress(mint, owner)
@@ -267,13 +271,13 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     if (token==='cirBTC' && (isFromSolana||isToSolana||!CCTP_SRC[fromChain]?.cirbtc||!CCTP_SRC[toChain]?.cirbtc)) {
       setToken('USDC')
     }
-    if (token.endsWith('_NATIVE') && !(toChain === 'Arc_Testnet' && NATIVE_TO_ARC[fromChain]?.token === token)) {
+    if (token.endsWith('_NATIVE') && !(toChain === 'Arc' && NATIVE_TO_ARC[fromChain]?.token === token)) {
       setToken('USDC')
     }
   }, [fromChain, toChain, isFromSolana, isToSolana, token])
 
   useEffect(() => {
-    if (fromChain !== 'Arc_Testnet' && source === 'circle') setSource('eoa')
+    if (fromChain !== 'Arc' && source === 'circle') setSource('eoa')
   }, [fromChain, source])
 
   useEffect(() => {
@@ -294,8 +298,8 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const validEvm = new Set(EVM_CHAINS.map(c => c.id))
     const from = p.get('bridgeFrom')
     const to = p.get('bridgeTo')
-    if (from && (validEvm.has(from) || from === 'Solana_Devnet')) setFromChain(from)
-    if (to && (validEvm.has(to) || to === 'Solana_Devnet')) setToChain(to)
+    if (from && (validEvm.has(from) || from === 'Solana')) setFromChain(from)
+    if (to && (validEvm.has(to) || to === 'Solana')) setToChain(to)
     const amt = p.get('bridgeAmount')
     if (amt && Number(amt) > 0) setAmount(amt)
     const tk = p.get('bridgeToken')
@@ -352,7 +356,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     const { burnTx, historyId, localSteps, sourceChain, destinationChain } = params
     const attestationStep = localSteps[localSteps.length - 1]
     const startedAt = Date.now()
-    const pollDelay = sourceChain === 'Arc_Testnet' ? 1000 : 3000
+    const pollDelay = sourceChain === 'Arc' ? 1000 : 3000
     const fastPolls = Math.max(1, Math.ceil(AUTO_MINT_HANDOFF_MS / pollDelay))
     let attData: any = null
 
@@ -420,7 +424,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   }) => {
     const { burnTx, historyId, localSteps, sourceChain, destinationChain, amountLabel, tokenLabel } = params
     localSteps.push({ name:'attestation', state:'pending' })
-    const attEst = sourceChain === 'Arc_Testnet' ? '~30 detik' : '~30 detik - 3 menit'
+    const attEst = sourceChain === 'Arc' ? '~30 detik' : '~30 detik - 3 menit'
     setStatus({ type:'info', msg:`✓ Dana sudah dikirim!\n⏳ Menunggu konfirmasi (${attEst})...`, steps:[...localSteps] })
     setStep('Menunggu konfirmasi jaringan...')
 
@@ -465,7 +469,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
     localSteps[localSteps.length-1].state='success'
     const explorerUrl = explorerFor(destinationChain, mintTx)
     localSteps[localSteps.length-1].explorerUrl = explorerUrl
-    txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl:explorerUrl, note:'Bridge completed on Arc Testnet.' })
+    txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl:explorerUrl, note:'Bridge completed on Arc Mainnet.' })
     setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amountLabel} ${tokenLabel} → ${destinationChain}`, steps:[...localSteps] })
   }
 
@@ -570,17 +574,17 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       source: 'web-ui',
       walletSource: 'eoa',
       from: fromChain,
-      to: 'Arc_Testnet',
+      to: 'Arc',
       amount,
       token: displayToken,
       status: 'pending',
       burnTx,
       burnExplorerUrl: explorerFor(fromChain, burnTx),
       srcDomain: CCTP_SRC[fromChain]?.domain,
-      dstDomain: DST_DOMAIN.Arc_Testnet,
+      dstDomain: DST_DOMAIN.Arc,
       note: `Native ${displayToken} swapped to USDC through ARCOX native router. Estimated receive ${estimatedReceive} USDC. Mint pending.`,
     })
-    await completeEvmMintAfterBurn({ burnTx, historyId, localSteps, sourceChain: fromChain, destinationChain: 'Arc_Testnet', amountLabel: estimatedReceive, tokenLabel: 'USDC' })
+    await completeEvmMintAfterBurn({ burnTx, historyId, localSteps, sourceChain: fromChain, destinationChain: 'Arc', amountLabel: estimatedReceive, tokenLabel: 'USDC' })
     setAmount('')
     setTimeout(onRefresh,3000); setTimeout(onRefresh,10000)
   }
@@ -605,10 +609,10 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
       throw new Error(`ArcoxRouter belum tersedia untuk source ${fromChain}; bridge USDC direct ditolak agar platform fee tidak terlewati.`)
     }
 
-    if (source === 'circle' && fromChain !== 'Arc_Testnet') {
-      throw new Error('Circle Wallet hanya tersedia untuk source Arc Testnet.')
+    if (source === 'circle' && fromChain !== 'Arc') {
+      throw new Error('Circle Wallet hanya tersedia untuk source Arc Mainnet.')
     }
-    if (source === 'eoa' && fromChain === 'Arc_Testnet' && eoaB < amtNum) {
+    if (source === 'eoa' && fromChain === 'Arc' && eoaB < amtNum) {
       throw new Error(`Saldo ${token} EOA tidak cukup. Pilih Circle Wallet atau isi saldo MetaMask.`)
     }
     // Circle balance data can lag the Circle Wallet API. Do not block the
@@ -617,7 +621,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
 
     // Circle Wallet is executed entirely by the backend Circle adapter.
     // Never transfer to MetaMask and then enter the EOA switch/signing path.
-    if (source === 'circle' && fromChain === 'Arc_Testnet') {
+    if (source === 'circle' && fromChain === 'Arc') {
       setStep('Circle Wallet: bridge...')
       setStatus({ type:'info', msg:`⏳ Circle Wallet: bridge ${amount} ${token} ke ${toChain}...`, steps:[...localSteps] })
       const d = await safePost(API, '/api/bridge', { metamaskAddress:address, amount, token, fromChain, toChain, source:'circle' })
@@ -658,15 +662,15 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
 
     if (!srcInfo) throw new Error('Source chain tidak didukung')
     const dstDomain = DST_DOMAIN[toChain]
-    if (fromChain !== 'Arc_Testnet') {
+    if (fromChain !== 'Arc') {
       const gasBal = await evmNativeBalance(address)
       if (gasBal === 0n) {
-        throw new Error(`Saldo gas ${fromInfo?.label || fromChain} kosong. Isi ETH testnet di ${fromInfo?.label || fromChain} untuk membayar gas.`)
+        throw new Error(`Saldo gas ${fromInfo?.label || fromChain} kosong. Isi ETH mainnet di ${fromInfo?.label || fromChain} untuk membayar gas.`)
       }
     }
     if (token !== 'USDC') {
-      if (fromChain !== 'Arc_Testnet') {
-        throw new Error('Swap sebelum bridge hanya tersedia di Arc Testnet. Untuk chain ini, bridge USDC langsung.')
+      if (fromChain !== 'Arc') {
+        throw new Error('Swap sebelum bridge hanya tersedia di Arc Mainnet. Untuk chain ini, bridge USDC langsung.')
       }
       if (receiveToken !== 'USDC') {
         throw new Error('Route non-USDC ke non-USDC belum dieksekusi otomatis. Gunakan receive token USDC dulu.')
@@ -795,13 +799,13 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
 
     // Attestation + Mint
     localSteps.push({ name:'attestation', state:'pending' })
-    const attEst = fromChain === 'Arc_Testnet' ? '~30 detik' : '~30 detik - 3 menit'
+    const attEst = fromChain === 'Arc' ? '~30 detik' : '~30 detik - 3 menit'
     setStatus({ type:'info', msg:`✓ Dana sudah dikirim!\n⏳ Menunggu konfirmasi (${attEst})...`, steps:[...localSteps] })
     setStep('Menunggu konfirmasi jaringan...')
 
     if (isToSolana) {
       // Mint di Solana → frontend Solflare yang sign
-      const mintData = await safePost(API, '/api/mint-cctp-solana', {burnTxHash:burnTx,toAddress:sw!.address,fromChain,toChain:'Solana_Devnet',amount:bridgeAmount})
+      const mintData = await safePost(API, '/api/mint-cctp-solana', {burnTxHash:burnTx,toAddress:sw!.address,fromChain,toChain:'Solana',amount:bridgeAmount})
       if (mintData.error) throw new Error(mintData.error)
 
       if (mintData.requiresSolanaSign) {
@@ -811,9 +815,9 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
         setStatus({ type:'info', msg:'⏳ Solflare akan popup untuk sign mint di Solana...', steps:[...localSteps] })
         try {
           const solTxHash = await signSolanaReceiveMessage(mintData.attestation, mintData.message, sw!.address, sw!.provider)
-          localSteps.push({ name:'mint', state:'success', txHash:solTxHash, explorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet` })
-          if (historyId) txHistory.update(historyId, { status:'success', mintTx:solTxHash, mintExplorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=devnet`, note:'Bridge completed on Solana destination.' })
-          setStatus({ type:'success', msg:`✓ Bridge berhasil! ${bridgeAmount} ${bridgeTokenLabel} → Solana Devnet`, steps:[...localSteps] })
+          localSteps.push({ name:'mint', state:'success', txHash:solTxHash, explorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=mainnet` })
+          if (historyId) txHistory.update(historyId, { status:'success', mintTx:solTxHash, mintExplorerUrl:`https://explorer.solana.com/tx/${solTxHash}?cluster=mainnet`, note:'Bridge completed on Solana destination.' })
+          setStatus({ type:'success', msg:`✓ Bridge berhasil! ${bridgeAmount} ${bridgeTokenLabel} → Solana`, steps:[...localSteps] })
           fetchSolanaUsdcBalance(sw!.address, sw!.provider)
           setTimeout(() => fetchSolanaUsdcBalance(sw!.address, sw!.provider), 3000)
         } catch(e:any) {
@@ -821,16 +825,16 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
           if (historyId) txHistory.update(historyId, { status:'error', error:e.message || 'Mint Solana gagal' })
           setStatus({
             type:'warning',
-            msg:`✗ Penerimaan GAGAL di Solana Devnet\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (${bridgeTokenLabel} sudah di-burn):\n${burnTx.slice(0,40)}...\n\n${bridgeTokenLabel} Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
+            msg:`✗ Penerimaan GAGAL di Solana\nstate=error | mint=error\nAlasan: ${e.message?.slice(0,150)}\nBurn tx (${bridgeTokenLabel} sudah di-burn):\n${burnTx.slice(0,40)}...\n\n${bridgeTokenLabel} Anda di-burn tapi belum di-mint. Hubungi support atau retry mint manual.`,
             steps:[...localSteps]
           })
           throw new Error(e.message || 'Mint Solana gagal')
         }
       } else {
         // Backend sudah handle mint (requiresSolanaSign=false)
-        localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash || burnTx, explorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=devnet` })
-        if (historyId) txHistory.update(historyId, { status:'success', mintTx:mintData.txHash || burnTx, mintExplorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=devnet`, note:'Bridge completed on Solana destination.' })
-        setStatus({ type:'success', msg:`✓ Bridge berhasil! ${bridgeAmount} ${bridgeTokenLabel} → Solana Devnet`, steps:[...localSteps] })
+        localSteps.push({ name:'mint', state:'success', txHash:mintData.txHash || burnTx, explorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=mainnet` })
+        if (historyId) txHistory.update(historyId, { status:'success', mintTx:mintData.txHash || burnTx, mintExplorerUrl:`https://explorer.solana.com/tx/${mintData.txHash||burnTx}?cluster=mainnet`, note:'Bridge completed on Solana destination.' })
+        setStatus({ type:'success', msg:`✓ Bridge berhasil! ${bridgeAmount} ${bridgeTokenLabel} → Solana`, steps:[...localSteps] })
       }
     } else {
       // EVM→EVM Mint via MetaMask: backend hanya polling attestation, frontend sign tx
@@ -921,22 +925,22 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
       // Burn USDC di Solana via Solflare
       const burnTxHash = await burnSolanaUsdc(amount, address, sw.provider, sw.address)
       const historyId = `bridge-${Date.now()}-${burnTxHash.slice(-6)}`
-      localSteps.push({ name:'burn', state:'success', txHash:burnTxHash, explorerUrl:`https://explorer.solana.com/tx/${burnTxHash}?cluster=devnet` })
+      localSteps.push({ name:'burn', state:'success', txHash:burnTxHash, explorerUrl:`https://explorer.solana.com/tx/${burnTxHash}?cluster=mainnet` })
       txHistory.add({
         id: historyId,
         ts: Date.now(),
         action: 'bridge',
         source: 'web-ui',
         walletSource: 'solana',
-        from: 'Solana_Devnet',
-        to: 'Arc_Testnet',
+        from: 'Solana',
+        to: 'Arc',
         amount,
         token,
         status: 'pending',
         burnTx: burnTxHash,
-        burnExplorerUrl: `https://explorer.solana.com/tx/${burnTxHash}?cluster=devnet`,
+        burnExplorerUrl: `https://explorer.solana.com/tx/${burnTxHash}?cluster=mainnet`,
         srcDomain: SOLANA_CCTP.domain,
-        dstDomain: DST_DOMAIN.Arc_Testnet,
+        dstDomain: DST_DOMAIN.Arc,
         note: 'Solana burn complete. Arc mint pending.',
       })
       setStatus({ type:'info', msg:`✓ Dana sudah dikirim di Solana!\n⏳ Menunggu konfirmasi jaringan (~20 detik)...`, steps:[...localSteps] })
@@ -949,8 +953,8 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
       for (let i = 0; i < maxPolls; i++) {
         attData = await safePost(API, '/api/get-attestation', {
           txHash: burnTxHash,
-          fromChain: 'Solana_Devnet',
-          toChain: 'Arc_Testnet',
+          fromChain: 'Solana',
+          toChain: 'Arc',
           once: true,
         })
         if (attData.success) break
@@ -965,7 +969,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
       }
       localSteps[localSteps.length-1].state='success'
 
-      const arcInfo = EVM_CHAINS.find(c=>c.id==='Arc_Testnet')
+      const arcInfo = EVM_CHAINS.find(c=>c.id==='Arc')
       if (arcInfo) await switchEvmChain(arcInfo)
       const recvMsg = attData.message
       const recvAtt = attData.attestation
@@ -987,17 +991,17 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
         attLenHex + attPadded
 
       localSteps.push({ name:'mint', state:'pending' })
-      setStep('MetaMask: Terima USDC di Arc Testnet...')
-      setStatus({ type:'info', msg:'✓ Konfirmasi siap!\n⏳ MetaMask popup: Terima USDC di Arc Testnet...', steps:[...localSteps] })
+      setStep('MetaMask: Terima USDC di Arc Mainnet...')
+      setStatus({ type:'info', msg:'✓ Konfirmasi siap!\n⏳ MetaMask popup: Terima USDC di Arc Mainnet...', steps:[...localSteps] })
       const mintTx = await sendEvmTxBuffered({ from:address, to:attData.messageTransmitter, data:callData })
       localSteps[localSteps.length-1].txHash = mintTx
-      setStatus({ type:'info', msg:'⏳ Menunggu penerimaan di Arc Testnet...', steps:[...localSteps] })
+      setStatus({ type:'info', msg:'⏳ Menunggu penerimaan di Arc Mainnet...', steps:[...localSteps] })
       await waitEvmTx(mintTx)
       localSteps[localSteps.length-1].state='success'
-      const mintExplorerUrl = explorerFor('Arc_Testnet', mintTx)
+      const mintExplorerUrl = explorerFor('Arc', mintTx)
       localSteps[localSteps.length-1].explorerUrl = mintExplorerUrl
-      txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl, note:'Bridge completed on Arc Testnet via MetaMask.' })
-      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} Solana → Arc Testnet`, steps:[...localSteps] })
+      txHistory.update(historyId, { status:'success', mintTx, mintExplorerUrl, note:'Bridge completed on Arc Mainnet via MetaMask.' })
+      setStatus({ type:'success', msg:`✓ Bridge berhasil! ${amount} ${token} Solana → Arc Mainnet`, steps:[...localSteps] })
       setAmount('')
       fetchSolanaUsdcBalance(sw.address, sw.provider)
       setTimeout(onRefresh,3000)
@@ -1097,7 +1101,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
     const provider = providerParam ?? solanaWallet?.provider
     if (!provider) throw new Error('Solana wallet tidak terhubung')
     if (!provider.isConnected) await provider.connect()
-    const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
+    const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed')
     const ownerAddr = ownerAddress ?? solanaWallet?.address
     if (!ownerAddr) throw new Error('Solana address tidak diketahui')
     const owner = new PublicKey(ownerAddr)
@@ -1197,7 +1201,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
     if (!provider) throw new Error('Solana wallet tidak terhubung')
     try { if (!provider.isConnected) await provider.connect() } catch {}
 
-    const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
+    const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed')
     const payerKey = new PublicKey(toAddress)
     const mint = new PublicKey(SOLANA_CCTP.usdcMint)
     const recipientAta = await getAssociatedTokenAddress(mint, payerKey)
@@ -1447,7 +1451,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       {/* Source selector */}
-      {!isFromSolana && fromChain === 'Arc_Testnet' && (
+      {!isFromSolana && fromChain === 'Arc' && (
         <div>
           <label style={{color:'#64748b',fontSize:13,display:'block',marginBottom:6}}>{t('bridge.from')}</label>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
@@ -1568,7 +1572,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
           </div>
         )}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.protocol')}</span><span>{isNativeBridgeToken ? nativeBridgeExecutable ? 'Native swap + CCTP v2' : 'Native route preview' : `CCTP v2 ${isToSolana||isFromSolana?'Fast Transfer':''}`}</span></div>
-        {!isFromSolana && fromChain==='Arc_Testnet'&&<div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.fundingSource')}</span><span>{source==='circle'?'Circle → EOA → Bridge':'EOA MetaMask'}</span></div>}
+        {!isFromSolana && fromChain==='Arc'&&<div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.fundingSource')}</span><span>{source==='circle'?'Circle → EOA → Bridge':'EOA MetaMask'}</span></div>}
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.totalDebit')}</span><span>{isNativeBridgeToken ? '-' : totalDebit} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.customFee')}</span><span>{isNativeBridgeToken ? '-' : customFee} {displayToken}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.cctpFee')}</span><span>{isNativeBridgeToken ? '-' : cctpFee} {displayToken}</span></div>
@@ -1577,7 +1581,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.gatewayForwarding')}</span><span style={{color:gatewayForwardingEnabled?'#10b981':'#64748b'}}>{gatewayForwardingEnabled ? `${forwardingFee} ${displayToken}` : t('bridge.belumnyaAktif')}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.estimatedReceive')}</span><span style={{color:isNativeBridgeToken&&!nativeBridgeExecutable?'#64748b':'#10b981'}}>{isNativeBridgeToken ? nativeBridgeExecutable ? nativeQuote ? `~${nativeQuote.estimatedReceive}` : nativeQuoteLoading ? t('bridge.calculating') : t('bridge.enterAmount') : 'Route unavailable' : est} {isNativeBridgeToken&&nativeBridgeExecutable?'USDC':displayToken}</span></div>
         {isNativeBridgeToken && nativeQuote && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.poolFee')}</span><span>{nativeQuote.poolFee}</span></div>}
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.settlement')}</span><span>{fromChain==='Arc_Testnet'?'~30 detik':'~30 detik - 3 menit'}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.settlement')}</span><span>{fromChain==='Arc'?'~30 detik':'~30 detik - 3 menit'}</span></div>
         {!isFromSolana && !isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.metaMaskPopup')}</span><span style={{color:'#10b981'}}>{t('bridge.popup3x')}</span></div>}
         {!isFromSolana && isToSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.metaMaskPopup')}</span><span>{t('bridge.popup2xSolflare')}</span></div>}
         {isFromSolana && <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('bridge.solflarePopup')}</span><span>{t('bridge.popup1xBurn')}</span></div>}
@@ -1607,7 +1611,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
         {loading ? step||`⏳ ${t('common.processing')}` : isNativeBridgeToken ? nativeBridgeExecutable ? amount ? `Bridge ${amount} ${displayToken} to Arc` : `Bridge ${displayToken} to Arc` : 'Route unavailable' : amount ? `Bridge ${amount} ${token} to ${receiveToken}` : `Bridge ${token}`}
       </button>
       <div style={{fontSize:11,color:'#64748b',textAlign:'center'}}>
-        {source==='circle' && fromChain==='Arc_Testnet' ? t('bridge.flowCircle') :
+        {source==='circle' && fromChain==='Arc' ? t('bridge.flowCircle') :
          isToSolana ? t('bridge.flowToSolana') :
          isFromSolana ? t('bridge.flowFromSolana') :
          t('bridge.flowEvm')}

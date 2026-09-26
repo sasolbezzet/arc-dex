@@ -173,7 +173,7 @@ export default function App() {
     try {
       // Use backend /api/balance endpoint which has allSettled + retry logic.
       // This avoids viem's Promise.all sending 5 concurrent eth_call requests
-      // that trip Arc Testnet RPC rate limits (-32011 "request limit reached").
+      // that trip Arc Mainnet RPC rate limits (-32011 "request limit reached").
       const r = await fetch(`${API}/api/balance/${addr}`, { cache: 'no-store' })
       const data = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(data?.error || `Balance request failed (${r.status})`)
@@ -417,7 +417,7 @@ export default function App() {
         <div className={`mobile-drawer ${drawerOpen ? 'open' : ''}`}>
           <button type='button' className='drawer-backdrop' aria-label={t('common.closeMenu')} onClick={() => setDrawerOpen(false)} />
           <aside className='drawer-panel glass'>
-            <div className='side-brand'><ArcoxLogo /><div><strong>ARCOX</strong><span>Arc Testnet</span></div></div>
+            <div className='side-brand'><ArcoxLogo /><div><strong>ARCOX</strong><span>Arc Mainnet</span></div></div>
             <nav>
               {NAV.map(item => (
                 <button key={item.id} type='button' className={page === item.id ? 'active' : ''} onClick={() => navigate(item.id)}>
@@ -442,7 +442,7 @@ export default function App() {
               )}
               <ArcoxLogo />
               <span className='brand-title'>{pageTitle}</span>
-              <span className={`env-pill ${apiStatus}`} title={`API ${apiStatus}`}>{t('app.testnet')}</span>
+              <span className={`env-pill ${apiStatus}`} title={`API ${apiStatus}`}>{t('app.mainnet')}</span>
             </div>
             <div className='header-actions'>
               <div className={`language-menu ${languageOpen ? 'open' : ''}`}>

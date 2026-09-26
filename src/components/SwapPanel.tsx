@@ -13,9 +13,9 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
   // cannot submit arbitrary pool calls through its Stablecoin Service adapter.
   const [source, setSource] = useState<'circle'|'eoa'>('eoa')
   const [tokenIn, setTokenIn] = useState('USDC')
-  // Circle's Stablecoin Service routing is flaky on Arc Testnet for USDC↔EURC.
+  // Circle's Stablecoin Service routing is flaky on Arc Mainnet for USDC↔EURC.
   // The on-chain AMM router (USDC↔cirBTC) is the reliable default route.
-  const [tokenOut, setTokenOut] = useState('cirBTC')
+  const [tokenOut, setTokenOut] = useState('EURC')
   const [amountIn, setAmountIn] = useState('')
   const [quote, setQuote] = useState<{amountOut:string;fee:string;rate:number;platformFee?:{amount:string;token:string;swapAmountIn:string;bps:number}}|null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
@@ -34,7 +34,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       if (d.available === false) {
         setQuote(null)
         const hint = tokenIn === 'USDC' && tokenOut === 'EURC'
-          ? ` ${t('swap.routeUnavailableHint', { fallback: 'Coba USDC ↔ cirBTC (route AMM on-chain).' })}`
+          ? ` ${t('swap.routeUnavailableHint', { fallback: 'Coba USDC ↔ EURC.' })}`
           : ''
         setStatus({ type:'warning', msg:(d.error || t('swap.routeUnavailable')) + hint })
         setQuoteLoading(false)
@@ -84,8 +84,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       } else {
         if (!circleWallet) return
         const d = await swapFromCircleWallet({metamaskAddress:address,tokenIn,tokenOut,amountIn})
-        if (d.available === false) {
-          setStatus({ type:'warning', msg:(d.error || t('swap.routeUnavailable')) + (tokenIn === 'USDC' && tokenOut === 'cirBTC' ? ' Pilih Personal Wallet untuk route AMM on-chain.' : '') })
+        if (d.available === false) {            setStatus({ type:'warning', msg:(d.error || t('swap.routeUnavailable')) + (tokenIn === 'USDC' && tokenOut === 'EURC' ? ' Pilih Personal Wallet untuk route on-chain.' : '') })
           return
         }
         const feeText = d.result?.platformFee?.amount ? ` • fee ${d.result.platformFee.amount} ${d.result.platformFee.token}` : ''
@@ -153,7 +152,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
         </div>
       </div>
       <div className='glass' style={{padding:10,borderRadius:10,fontSize:12,display:'flex',flexDirection:'column',gap:3}}>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Testnet</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.network')}</span><span>Arc Mainnet</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('swap.platformFee')}</span><span>{quote?.platformFee ? `${quote.platformFee.amount} ${quote.platformFee.token}` : '-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('swap.swapInput')}</span><span>{quote?.platformFee ? `${quote.platformFee.swapAmountIn} ${tokenIn}` : '-'}</span></div>
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.fee')}</span><span>{quote?quote.fee+' USDC':'-'}</span></div>
