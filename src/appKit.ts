@@ -21,6 +21,7 @@ import { ARC_MAINNET_ADD_PARAMS, ARC_MAINNET_CHAIN_ID, ARC_MAINNET_RPC_URLS, swi
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
 import { findConnectedWalletProvider, getWalletProvider, normalizeWalletProvider } from './walletProvider'
+import { unifiedBalanceShortfallError, type UnifiedBalanceShortfall } from './services/unifiedBalanceErrors'
 
 declare global {
   interface Window {
@@ -975,6 +976,10 @@ async function prepareUnifiedBalanceSpend(args: {
     ? [args.sourceChain]
     : [...UNIFIED_BALANCE_CHAINS].sort((left, right) => sourcePriority(left, args.destinationChain) - sourcePriority(right, args.destinationChain))
   let lastError: unknown = null
+  // Saldo yang cukup untuk jumlahnya tapi tidak untuk fee Gateway harus tetap
+  // dilaporkan dengan angka: pesan mentah SDK ("Insufficient USDC balance on
+  // Arc. Available: 0.02 USDC, required: 0.0235 USDC") tidak menjelaskan fee.
+  let feeShortfall: UnifiedBalanceShortfall | null = null
   for (const chain of requestedChains) {
     const available = usdcUnits(confirmedBalanceForChain(balance, chain))
     if (available < receiveUnits) continue
@@ -989,7 +994,12 @@ async function prepareUnifiedBalanceSpend(args: {
         token: 'USDC',
       } as any))
       const feeUnits = totalFeeUnits(estimate?.fees)
-      if (available < receiveUnits + feeUnits) continue
+      if (available < receiveUnits + feeUnits) {
+        if (!feeShortfall || available > feeShortfall.available) {
+          feeShortfall = { chain, available, requested: receiveUnits, fee: feeUnits }
+        }
+        continue
+      }
       return {
         ...estimate,
         requestedReceiveAmount: spendAmount,
@@ -1020,7 +1030,14 @@ async function prepareUnifiedBalanceSpend(args: {
     const available = UNIFIED_BALANCE_CHAINS
       .filter(chain => selected.has(chain))
       .reduce((total, chain) => total + usdcUnits(confirmedBalanceForChain(balance, chain)), 0n)
-    if (available < receiveUnits + feeUnits) throw new Error('Unified Balance cannot cover amount and Gateway fee.')
+    if (available < receiveUnits + feeUnits) {
+      throw unifiedBalanceShortfallError({
+        chain: allocations.map(item => item.chain).join(' + '),
+        available,
+        requested: receiveUnits,
+        fee: feeUnits,
+      })
+    }
     return {
       ...estimate,
       requestedReceiveAmount: spendAmount,
@@ -1031,6 +1048,9 @@ async function prepareUnifiedBalanceSpend(args: {
       destinationAdapter,
     }
   } catch (error) {
+    // Fee Gateway sudah diketahui dari percobaan pertama, jadi pakai pesan yang
+    // menyebut fee alih-alih pesan mentah SDK.
+    if (feeShortfall) throw unifiedBalanceShortfallError(feeShortfall)
     if (lastError instanceof Error) throw lastError
     throw error
   }
