@@ -116,10 +116,10 @@ export function detectSolanaKind(): 'solflare' | 'phantom' | null {
 // Circle AppKit v1.8.1 hard-codes Arc's rate-limited public endpoint.
 const ARC_RPC_PROXY = new URL('/api/rpc/arc', window.location.origin).href
 
-// Circle App Kit/Bridge Kit 1.11.x belum mengekspor Arc mainnet (hanya
-// ArcTestnet), jadi chain Arc didefinisikan lokal (id 5042) dan setiap jalur SDK
-// yang benar-benar menyasar Arc mainnet digerbang gagal-keras dengan pesan
-// jelas, bukan diam-diam memakai Arc Testnet.
+// Circle App Kit/Bridge Kit sejak 1.15.x mengekspor Arc mainnet (`Arc`, judul
+// "Arc Mainnet") sesuai docs.arc.io/app-kit, jadi jalur SDK memakai chain Arc
+// resmi. Chain lokal di bawah tetap dipakai untuk adapter/wallet switch agar
+// RPC browser selalu lewat proxy kita.
 const ARC_MAINNET_APPKIT = defineChain({
   id: 5042,
   name: 'Arc Mainnet',
@@ -127,10 +127,12 @@ const ARC_MAINNET_APPKIT = defineChain({
   rpcUrls: { default: { http: [ARC_RPC_PROXY] } },
 })
 
-const ARC_MAINNET_SDK_UNSUPPORTED = 'Circle App Kit/Bridge Kit belum mendukung Arc mainnet (baru Arc Testnet). Gunakan jalur CCTP/Fee Router ARCOX untuk Arc mainnet.'
+// Gateway/Unified Balance mainnet mendukung Arc sama seperti Base/Ethereum/
+// Arbitrum (domain Arc 26, diverifikasi lewat GET https://gateway-api.circle.com/v1/info).
+const UNIFIED_BALANCE_SOURCE_CHAINS = ['Arc', 'Base', 'Ethereum', 'Arbitrum', 'Solana'] as const
 
 function unifiedBalanceChain(chain: Exclude<UnifiedBalanceSourceChain, 'auto'>) {
-  if (chain === 'Arc') throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
+  if (!(UNIFIED_BALANCE_SOURCE_CHAINS as readonly string[]).includes(chain)) throw new Error(`Unified Balance tidak mendukung ${chain}.`)
   return chain
 }
 
@@ -505,16 +507,13 @@ export async function swapEoaWithAppKit(args: {
   feeRecipient?: string
 }): Promise<any> {
   await switchToArcMainnet()
-  // Router AMM ARCOX belum di-deploy di Arc mainnet dan App Kit belum punya
-  // Arc mainnet, jadi swap lewat SDK digerbang gagal-keras.
-  throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
   const accounts = await getWalletProvider()?.request({ method: 'eth_requestAccounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
-  const from = { adapter, chain: (SwapChain as any).Arc }
+  const from = { adapter, chain: SwapChain.Arc }
   const config = swapConfig(args)
   if (isEurcToCirBtc(args.tokenIn, args.tokenOut)) {
     const first = await kit.swap({
@@ -560,16 +559,13 @@ export async function estimateEoaSwapWithAppKit(args: {
   feeRecipient?: string
 }): Promise<any> {
   await switchToArcMainnet()
-  // Router AMM ARCOX belum di-deploy di Arc mainnet dan App Kit belum punya
-  // Arc mainnet, jadi swap lewat SDK digerbang gagal-keras.
-  throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
   const kit = getKit()
   const adapter = await buildEvmAdapter()
   if (!args.kitKey) throw new Error('Kit key belum tersedia dari API.')
   const accounts = await getWalletProvider()?.request({ method: 'eth_accounts' })
   const address = accounts?.[0]
   if (!address) throw new Error('Wallet EOA belum terhubung.')
-  const from = { adapter, chain: (SwapChain as any).Arc }
+  const from = { adapter, chain: SwapChain.Arc }
   const config = swapConfig(args)
   if (isEurcToCirBtc(args.tokenIn, args.tokenOut)) {
     const first = await kit.estimateSwap({
@@ -673,7 +669,6 @@ async function unifiedBalanceSources(allocations: Array<{ amount: string; chain:
 }
 
 async function ensureUnifiedEvmChain(_adapter: any, chain: UnifiedBalanceEvmChain) {
-  if (chain === 'Arc') throw new Error(ARC_MAINNET_SDK_UNSUPPORTED)
   const resolved = resolveChainIdentifier(chain as any)
   if (resolved.type !== 'evm') throw new Error(`${resolved.name} bukan chain EVM.`)
   const config = findChain(chain)?.addParams
