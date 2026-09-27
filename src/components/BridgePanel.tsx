@@ -4,6 +4,7 @@ import { safePost } from '../api'
 import { txHistory } from '../txHistory'
 import { CompactChainPicker, CompactTokenPicker } from './CompactPickers'
 import { useI18n } from '../i18n'
+import { flowErrorText } from '../services/flowErrors'
 import { wrapPhantom, wrapSolflare } from '../solflareWrapper'
 import { decodeFunctionResult, encodeFunctionData, formatUnits, parseUnits } from 'viem'
 import { describeBridgeRoute, type BridgeRegistryToken } from '../domain/bridgeRouteRegistry'
@@ -1012,7 +1013,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
         const rec = txHistory.list().find(r => r.burnTx === lastBurn)
         if (rec) txHistory.update(rec.id, { status:'error', error:e?.message || 'Bridge Solana gagal' })
       }
-      setStatus({ type:'error', msg:e?.message||'Bridge Solana gagal', steps:[...localSteps] })
+      setStatus({ type:'error', msg: flowErrorText(t, e, 'bridge'), steps:[...localSteps] })
     }
   }
 
@@ -1436,7 +1437,7 @@ ${bridgeFailure ? `${bridgeFailure}\n` : ''}Hash ${circleTx.slice(0,12)}... disi
       if (isFromSolana) await bridgeFromSolana(_solWallet)
       else await bridgeEvm(_solWallet)
     } catch(e:any) {
-      setStatus(prev => ({ type:'error', msg:e?.message||'Bridge gagal', steps: prev?.steps }))
+      setStatus(prev => ({ type:'error', msg: flowErrorText(t, e, 'bridge'), steps: prev?.steps }))
     }
     setLoading(false); setStep('')
     setTimeout(onRefresh, 2000) // selalu refresh balance setelah bridge

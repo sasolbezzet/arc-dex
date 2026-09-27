@@ -3,6 +3,7 @@ import { CompactTokenPicker } from './CompactPickers'
 import { SWAP_TOKENS } from '../domain/tokens'
 import { quoteCircleSwap, quoteEoaSwap, swapFromCircleWallet, swapFromEoa } from '../services/swapService'
 import { useI18n } from '../i18n'
+import { flowErrorText } from '../services/flowErrors'
 import { txHistory } from '../txHistory'
 
 type Status = { type:'success'|'error'|'warning'; msg:string; link?:string }
@@ -45,10 +46,9 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
         setQuote(d)
       }
     } catch(e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error('fetchQuote error:', msg)
+      console.error('fetchQuote error:', e instanceof Error ? e.message : e)
       setQuote(null)
-      setStatus({ type:'warning', msg })
+      setStatus({ type:'warning', msg: flowErrorText(t, e, 'swap') })
     }
     setQuoteLoading(false)
   }
@@ -107,7 +107,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       }
       setAmountIn(''); setQuote(null)
       setTimeout(onRefresh,3000); setTimeout(onRefresh,8000)
-    } catch(e:any) { setStatus({ type:'error', msg:e?.message||'Swap gagal' }) }
+    } catch(e:any) { setStatus({ type:'error', msg: flowErrorText(t, e, 'swap') }) }
     setLoading(false)
   }
   const activeBalances = source === 'circle' ? balances : eoaBalances
@@ -161,7 +161,7 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
         <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#64748b'}}>{t('common.wallet')}</span><span style={{color:source==='circle'?'#818cf8':'#f59e0b',fontFamily:'monospace',fontSize:11}}>{walletAddr?.slice(0,8)}...{walletAddr?.slice(-6)}</span></div>
       </div>
       {quoteLoading && <div style={{padding:10,borderRadius:10,fontSize:12,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>{t('swap.estimateLoading')}</div>}
-      {status && <div style={{padding:10,borderRadius:10,fontSize:13,background:status.type==='success'?'rgba(16,185,129,0.1)':status.type==='warning'?'rgba(245,158,11,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':status.type==='warning'?'#f59e0b':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':status.type==='warning'?'1px solid rgba(245,158,11,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&<div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}</div>}
+      {status && <div style={{padding:10,borderRadius:10,fontSize:13,whiteSpace:'pre-line',background:status.type==='success'?'rgba(16,185,129,0.1)':status.type==='warning'?'rgba(245,158,11,0.1)':'rgba(239,68,68,0.1)',color:status.type==='success'?'#10b981':status.type==='warning'?'#f59e0b':'#f87171',border:status.type==='success'?'1px solid rgba(16,185,129,0.3)':status.type==='warning'?'1px solid rgba(245,158,11,0.3)':'1px solid rgba(239,68,68,0.3)'}}>{status.msg}{status.link&&<div style={{marginTop:4}}><a href={status.link} target='_blank' rel='noreferrer' style={{color:'#818cf8',fontSize:11}}>Explorer →</a></div>}</div>}
       {!address ? <div style={{padding:10,borderRadius:10,fontSize:13,background:'rgba(99,102,241,0.1)',color:'#818cf8',border:'1px solid rgba(99,102,241,0.3)',textAlign:'center'}}>{t('swap.connectWalletHint')}</div>
       : <button onClick={handleSwap} disabled={swapDisabled} className='btn btn-primary'>{swapLabel}</button>}
     </div>
