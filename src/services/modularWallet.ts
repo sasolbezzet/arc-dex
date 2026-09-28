@@ -19,6 +19,7 @@ import {
 } from '@circle-fin/modular-wallets-core'
 import { createPublicClient, defineChain, encodeFunctionData } from 'viem'
 import { isSuccessfulUserOpReceipt } from './mscaPolicy'
+import { mscaFeeFloor } from './mscaFees'
 import { proofWasInvalidatedByPolicy } from './sessionProofPolicy'
 import { createBundlerClient, toWebAuthnAccount, sendUserOperation, waitForUserOperationReceipt } from 'viem/account-abstraction'
 import { parsePublicKey } from 'webauthn-p256'
@@ -588,11 +589,14 @@ export function normalizeArbitrumUserOperationFees(maxFeePerGas: bigint, maxPrio
 }
 
 async function circleGasFees(chainKey: string): Promise<{ maxPriorityFeePerGas?: bigint; maxFeePerGas?: bigint }> {
-  // Circle's default viem fee can fall below the bundler's minimum on Arc.
-  // Query Circle's recommendation for every MSCA creation chain so a quiet
-  // network does not produce an underpriced precheck, while retaining a safe
-  // 1 gwei floor for Arc and other providers that require it.
-  const safeFloor = { maxPriorityFeePerGas: 1_000_000_000n, maxFeePerGas: 2_000_000_000n }
+  // Circle's default viem fee can fall below Arc mainnet's bundler minimum, so
+  // Arc keeps a 1 gwei floor. Base and Arbitrum do NOT have that requirement:
+  // their real gas price is ~0.02 gwei, and applying the Arc floor there inflated
+  // the fee 50-400x, which Circle's Gas Station paymaster rejects with
+  // `Exceeded max spend USD per transaction of the policy` — the exact error that
+  // blocked MSCA deployment on the destination chains. Destination chains now
+  // use Circle's own recommendation with only a minimal non-zero floor.
+  const safeFloor = mscaFeeFloor(chainKey)
   try {
     const config = chainConfig(chainKey)
     const client = createPublicClient({ chain: config.chain, transport: modularTransport(chainKey) as any })
