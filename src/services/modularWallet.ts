@@ -3,9 +3,15 @@
 //
 // Flow:
 //   1. registerPasskey()/loginPasskey() → browser WebAuthn → one backend Circle verification
-//   2. createSmartAccount() → toCircleSmartAccount → MSCA address
-//   3. setupSessionKey() → generate delegate EOA → createAddressMapping → POST /api/session/setup
+//   2. createSmartAccount() → toCircleSmartAccount → MSCA address (counterfactual, not on-chain yet)
+//   3. setupSessionKey() → deploySmartAccount (UserOp #1) → reserve delegate → addOwners (UserOp #2) → POST /api/session/setup
 //   4. Agent uses source=session to execute tx via MSCA
+//
+// The MSCA has code on-chain only after its first UserOperation. Circle's
+// mainnet bundler rejects a UserOperation aimed at a counterfactual address
+// with `-32600 Cannot find target wallet in the system`, so deployment must be
+// its own UserOperation that succeeds BEFORE addOwners is submitted. This is
+// why the deploy step is never merged with the authorize step on mainnet.
 
 import {
   toModularTransport,
@@ -840,12 +846,19 @@ export async function deploySmartAccount(agentKey = DEFAULT_AGENT_KEY): Promise<
 
   // Deployment is the first UserOperation. It requires an intentional passkey
   // approval and must happen in the browser, where the WebAuthn credential lives.
-  // NOTE: addOwners must be a SEPARATE UserOp after deployment (registerDelegateOwner).
-  // Calling addOwners in the same UserOp as deploy causes "execution reverted"
-  // because the MSCA storage isn't fully initialized yet.
+  // NOTE: addOwners must always be a SEPARATE, later UserOp (registerDelegateOwner).
+  // Circle's mainnet bundler cannot resolve a counterfactual MSCA, so an
+  // addOwners op that carries the deploy initCode is rejected before it is ever
+  // simulated. Deploy has to land first.
+  // Arc mainnet rejects a UserOperation whose maxPriorityFeePerGas is 0 with
+  // `precheck failed: maxPriorityFeePerGas is 0 but must be at least 1000000000`.
+  // Circle's default viem fee is 0 on a quiet network, so query Circle's own
+  // recommendation and apply the 1 gwei floor exactly like the other chains.
+  const fees = await circleGasFees('arc-mainnet')
   const userOpHash = await sendUserOperation(bundlerClient as any, {
     calls: [{ to: smartAccount.address as `0x${string}`, value: 0n, data: '0x' as `0x${string}` }],
     paymaster: true,
+    ...fees,
   })
   const previousDeployment = loadState(agentKey).deploymentStatus?.['arc-mainnet']
   saveDeploymentStatus('arc-mainnet', { ...(previousDeployment || {}), status: 'failed', userOpHash, updatedAt: Date.now() }, agentKey)
@@ -1028,10 +1041,13 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
   const state = loadState(agentKey)
   if (!state.walletAddress) throw new Error('MSCA wallet belum dibuat. Register passkey dulu.')
 
-  // No separate deployment UserOp is required: the addOwners authorization
-  // below is the first UserOp and carries the factory initCode, which deploys
-  // the deterministic MSCA and adds the delegate owner in a single operation.
-  // (Verified live on Arc, Base, and Arbitrum.)
+  // The deployment UserOp is NOT optional on mainnet. A counterfactual MSCA
+  // (no code yet) is rejected by Circle's bundler with `Cannot find target
+  // wallet in the system`, so addOwners can only ever be the SECOND
+  // UserOperation. `deploySmartAccount` is idempotent and returns immediately
+  // once `isDeployed()` is true, so an already-deployed wallet costs no extra
+  // Gas Station quota. The call itself happens below, immediately before the
+  // addOwners authorization, so a re-used active session never triggers it.
 
   // Reserve the automation signer on the backend. The private key never enters
   // the browser; only its public address is returned for passkey authorization.
@@ -1122,7 +1138,15 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
     }
   }
 
-  // The passkey authorizes exactly this reserved address.
+  // Step 3 — deploy the deterministic MSCA on-chain (UserOp #1) and wait for
+  // its receipt. Until this succeeds the address has no bytecode and Circle's
+  // bundler refuses every UserOperation that targets it, so this must complete
+  // before the addOwners authorization below (UserOp #2). Idempotent: an
+  // already-deployed wallet returns without a new UserOperation.
+  await deploySmartAccount(agentKey)
+
+  // Step 4 — the passkey authorizes exactly this reserved address. This is the
+  // second UserOperation (addOwners), which is only valid once the MSCA exists.
   const authorization = await registerDelegateOwner(delegateAddress, 'arc-mainnet', vaultToken, agentKey)
   if (!authorization.success || !authorization.userOpHash) throw new Error('Automation signer authorization did not return a UserOperation hash')
 
@@ -1143,8 +1167,8 @@ export async function setupSessionKey(vaultToken: string, ownerAddress?: string,
     throw new Error(`${data.error || 'Session setup gagal'}${detail ? ` (${detail})` : ''}`)
   }
 
-  // Step 4: Update local state. The single addOwners UserOp already deployed
-  // the MSCA (first UserOp carries initCode), so the wallet is on-chain now.
+  // Step 5: Update local state. The deploy UserOp above already put the MSCA
+  // on-chain and the addOwners UserOp authorized the delegate.
   saveState({ ...state, delegateAddress, sessionActive: true, deployed: true }, agentKey)
 
   return {
@@ -1198,11 +1222,15 @@ export function clearMscaState(agentKey?: string) {
 }
 
 // ── Register delegate EOA as on-chain owner ──
-// ONE-TIME: passkey signs a single addOwners UserOperation that both deploys
-// the deterministic MSCA (first UserOp carries the factory initCode) and adds
-// the delegate as owner. After that the backend can sign transactions with the
-// delegate EOA automatically. Verified live on Arc, Base, and Arbitrum
-// Mainnet: one UserOp = deploy + authorize.
+// Passkey signs ONE addOwners UserOperation that adds the delegate as owner.
+// After that the backend can sign transactions with the delegate EOA
+// automatically.
+//
+// Precondition, enforced here: the MSCA must already have bytecode on this
+// chain. `addOwners` can never be the first UserOperation on mainnet — Circle's
+// bundler answers a counterfactual address with `-32600 Cannot find target
+// wallet in the system`. The deploy UserOp is therefore submitted first (also
+// inside this function, idempotently) and only then is addOwners sent.
 export async function registerDelegateOwner(delegateAddress: string, chainKey = 'arc-mainnet', vaultToken = '', agentKey = DEFAULT_AGENT_KEY): Promise<{ success: boolean; userOpHash?: string }> {
   const state = loadState(agentKey)
   if (!state.walletAddress || !state.credential) throw new Error('Login Passkey diperlukan.')
@@ -1246,6 +1274,15 @@ export async function registerDelegateOwner(delegateAddress: string, chainKey = 
   // with InvalidValidationFunctionId during simulation. Create it first
   // (off-chain API call, idempotent).
   await ensureWebAuthnOwnerMapping(chainKey, agentKey)
+
+  // Hard invariant: never submit addOwners against a counterfactual MSCA.
+  // `deploySmartAccountOnChain` is idempotent (it returns as soon as
+  // `isDeployed()` is true), so this only spends one UserOperation when the
+  // wallet genuinely has no code on this chain — the case Circle's bundler
+  // rejects. Keeping the guard here means every caller (setupSessionKey on
+  // Arc, destination-chain authorization on Base/Arbitrum) inherits the exact
+  // deploy-then-authorize order without duplicating it.
+  await deploySmartAccountOnChain(chainKey, agentKey)
 
   const callData = encodeFunctionData({ abi: ADD_OWNERS_ABI, functionName: 'addOwners', args: [[delegateAddress as `0x${string}`], [1n], [], [], 0n] })
   const fees = await circleGasFees(chainKey)

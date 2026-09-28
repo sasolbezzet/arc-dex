@@ -12,8 +12,8 @@ import type { ChainAuthStatus } from '../types/agent'
  * component. This is the ONE place that knows the activation order:
  *
  *   1. reuse an already-active session for this exact wallet (idempotent), else
- *   2. reserve a delegate + addOwners on Arc (deploy + authorize in one UserOp)
- *      and register it with the backend, then
+ *   2. deploy the MSCA on Arc (UserOp #1) + reserve a delegate and addOwners
+ *      (UserOp #2) and register it with the backend, then
  *   3. authorize and verify the same deterministic MSCA on Base/Arbitrum.
  *
  * Agent Wallet creation is fail-closed: the function does not return a usable
@@ -285,11 +285,11 @@ async function authorizeDestinationChains(
   const warnings: string[] = []
   for (const chainKey of ['base-mainnet', 'arbitrum-mainnet'] as const) {
     try {
-      // `registerDelegateOwner` submits the single passkey UserOperation for
-      // this chain. For a deterministic Circle MSCA that first addOwners op
-      // carries the factory initCode, so it performs deploy + delegate
-      // authorization together. Do not call deploySmartAccountOnChain first:
-      // that would create a second UserOperation and make retries ambiguous.
+      // `registerDelegateOwner` owns the ordering for this chain: it deploys
+      // the deterministic MSCA first (idempotent) and only then submits the
+      // addOwners UserOperation. Circle's bundler rejects an addOwners op
+      // aimed at a counterfactual address ("Cannot find target wallet in the
+      // system"), so deploy-then-authorize is the only valid sequence.
       await authorizeDelegateOnChain(chainKey, walletAddress, delegateAddress, vaultToken, agentKey)
       chainAuthorizationStatus[chainKey] = 'authorized'
     } catch (error) {
