@@ -21,6 +21,7 @@ type NotificationEvent = {
   status: string | null
   processed: boolean
   matched: boolean
+  simulated: boolean
   createdAt: string | null
   reference: {
     txHash: string | null
@@ -45,6 +46,18 @@ type ChallengeStatus = SubjectStatus & { challengeId: string; type: string | nul
 type RampStatus = SubjectStatus & { sessionId: string; kycStatus: string | null }
 type Failure = { eventType: string; family: string; status: string | null; subjectId: string | null; createdAt: string | null }
 
+// Alert tersimpan di vault: terikat owner, tahan restart, bisa di-acknowledge.
+type WebhookAlert = {
+  id: string
+  family: string
+  subjectId: string | null
+  eventType: string
+  status: string | null
+  count: number
+  ts: number
+  simulated: boolean
+}
+
 type InboxState = { challenges?: ChallengeStatus[]; rampSessions?: RampStatus[]; failures?: Failure[] }
 
 type InboxResponse = {
@@ -52,6 +65,7 @@ type InboxResponse = {
   total?: number
   families?: Record<string, number>
   state?: InboxState
+  alerts?: WebhookAlert[]
   events?: NotificationEvent[]
   error?: string
 }
@@ -108,6 +122,7 @@ export function WebhookInboxPanel() {
   const [events, setEvents] = useState<NotificationEvent[]>([])
   const [families, setFamilies] = useState<Record<string, number>>({})
   const [state, setState] = useState<InboxState>({})
+  const [alerts, setAlerts] = useState<WebhookAlert[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -117,6 +132,7 @@ export function WebhookInboxPanel() {
     if (!token) {
       setEvents([])
       setState({})
+      setAlerts([])
       setLoaded(false)
       setError('')
       return
@@ -135,6 +151,7 @@ export function WebhookInboxPanel() {
       setEvents(data.events || [])
       setFamilies(data.families || {})
       setState(data.state || {})
+      setAlerts(data.alerts || [])
       setLoaded(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal memuat inbox webhook')
@@ -144,6 +161,15 @@ export function WebhookInboxPanel() {
   }, [])
 
   useEffect(() => { load(family) }, [family, load])
+
+  const acknowledge = useCallback(async (id: string) => {
+    const token = authToken()
+    if (!token) return
+    try {
+      await fetch(`/api/webhooks/alerts/${encodeURIComponent(id)}/ack`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    } catch { /* biarkan refresh berikutnya yang memperbaiki tampilan */ }
+    load(family)
+  }, [family, load])
 
   const failures = state.failures || []
   const challenges = state.challenges || []
@@ -167,6 +193,28 @@ export function WebhookInboxPanel() {
         <div style={{ color: '#64748b', fontSize: 12, textAlign: 'center', padding: '12px 0' }}>Hubungkan wallet untuk melihat inbox webhook.</div>
       ) : (
         <>
+          {alerts.length > 0 && (
+            <div style={{ background: 'rgba(248,113,113,0.16)', border: '1px solid rgba(248,113,113,0.45)', borderRadius: 10, padding: '8px 10px', marginBottom: 10 }}>
+              <div style={{ color: '#f87171', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>⚠ {alerts.length} alert wallet perlu tindakan</div>
+              {alerts.map(alert => (
+                <div key={alert.id} style={{ borderTop: '1px solid rgba(248,113,113,0.25)', paddingTop: 4, marginTop: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                    <span style={{ color: '#fecaca', fontSize: 12, wordBreak: 'break-all' }}>{alert.eventType}</span>
+                    <button
+                      onClick={() => acknowledge(alert.id)}
+                      style={{ fontSize: 10, background: 'rgba(248,113,113,0.2)', color: '#fecaca', border: '1px solid rgba(248,113,113,0.5)', padding: '2px 8px', borderRadius: 6, cursor: 'pointer' }}
+                    >
+                      Acknowledge
+                    </button>
+                  </div>
+                  <div style={{ color: '#fca5a5', fontSize: 11 }}>
+                    {alert.status || 'gagal'} · {alert.family}{alert.count > 1 ? ` · ${alert.count}×` : ''}{alert.simulated ? ' · simulated' : ''} · {fmtTime(new Date(alert.ts).toISOString())}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {failures.length > 0 && (
             <div style={{ background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: 10, padding: '8px 10px', marginBottom: 10 }}>
               <div style={{ color: '#f87171', fontSize: 12, fontWeight: 700 }}>⚠ {failures.length} event gagal</div>
@@ -207,7 +255,9 @@ export function WebhookInboxPanel() {
               {events.map(event => (
                 <div key={event.id || event.notificationId} style={{ borderTop: '1px solid #1e1e2e', paddingTop: 6, fontSize: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <span style={{ color: '#e2e8f0', fontWeight: 600, wordBreak: 'break-all' }}>{event.eventType || 'unknown'}</span>
+                    <span style={{ color: '#e2e8f0', fontWeight: 600, wordBreak: 'break-all' }}>
+                      {event.eventType || 'unknown'}{event.simulated && <span style={{ color: '#f59e0b', fontWeight: 400 }}> · simulasi</span>}
+                    </span>
                     <span style={{ color: statusColor(event.status), fontWeight: 700 }}>{event.status || (event.processed ? 'processed' : 'received')}</span>
                   </div>
                   <div style={{ color: '#64748b', fontSize: 11, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
