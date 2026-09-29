@@ -468,7 +468,12 @@ export default function App() {
                   </div>
                 </ViewportPopover>
               </div>
-              <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} onConnected={() => { if (currentPageFromLocation() !== 'plugin') navigate('plugin') }} />
+              {/* REGRESSION GUARD: menghubungkan wallet tidak boleh memindahkan
+                  halaman. Commit 5e68fdda mengalihkan setiap koneksi sukses ke
+                  dashboard Plugin, sehingga kunjungan pertama mendarat di
+                  /plugin, bukan Home. Alur OAuth MCP tidak bergantung pada itu:
+                  agent sudah membuka /plugin?auth=mcp&… langsung. */}
+              <WalletButton address={address} onConnect={handleConnect} onDisconnect={handleDisconnect} />
             </div>
           </div>
         </header>

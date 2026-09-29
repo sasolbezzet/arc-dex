@@ -5,7 +5,7 @@ import { connectWalletConnect, restoreWalletConnect, disconnectWalletConnect, ge
 
 declare global { interface Window { ethereum?: any } }
 
-interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void; onConnected?:()=>void }
+interface Props { address: string|null; onConnect:(a:string)=>void|Promise<void>; onDisconnect:()=>void }
 
 /**
  * A passive WalletConnect restore is useful on the trading pages, but it must
@@ -24,7 +24,7 @@ export function shouldRestoreWalletConnect(
   return !isPluginPage && !isOAuthFlow
 }
 
-export function WalletButton({ address, onConnect, onDisconnect, onConnected }: Props) {
+export function WalletButton({ address, onConnect, onDisconnect }: Props) {
   const { t } = useI18n()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -85,8 +85,9 @@ export function WalletButton({ address, onConnect, onDisconnect, onConnected }: 
     try {
       const accounts = await provider.request({ method: 'eth_requestAccounts' })
       setWalletProvider(provider)
+      // Halaman tetap di tempat pengguna menekan Connect. Pindah halaman setelah
+      // koneksi membuat kunjungan pertama mendarat di Plugin, bukan Home.
       await onConnect(accounts[0])
-      onConnected?.()
     } catch(e:any) { setError(e?.message || t('wallet.connectFailed')) }
     setLoading(false)
   }
@@ -111,10 +112,8 @@ export function WalletButton({ address, onConnect, onDisconnect, onConnected }: 
           setMobileSignHint(true)
           await onConnect(addr)
           setMobileSignHint(false)
-          onConnected?.()
         } else {
           await onConnect(addr)
-          onConnected?.()
         }
       }
     } catch(e:any) {
