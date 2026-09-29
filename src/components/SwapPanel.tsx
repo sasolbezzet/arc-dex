@@ -107,7 +107,13 @@ export function SwapPanel({ address, circleWallet, balances, eoaBalances, onRefr
       }
       setAmountIn(''); setQuote(null)
       setTimeout(onRefresh,3000); setTimeout(onRefresh,8000)
-    } catch(e:any) { setStatus({ type:'error', msg: flowErrorText(t, e, 'swap') }) }
+    } catch(e:any) {
+      // Jalur swap EOA berjalan di browser, jadi kegagalan wallet (popup kedua
+      // yang tidak muncul, RPC wallet yang menggantung, revert yang tidak
+      // terbaca) hanya bisa ditelusuri lewat objek error aslinya.
+      console.error(`swap ${source} ${tokenIn}→${tokenOut} gagal:`, e)
+      setStatus({ type:'error', msg: flowErrorText(t, e, 'swap') })
+    }
     setLoading(false)
   }
   const activeBalances = source === 'circle' ? balances : eoaBalances
