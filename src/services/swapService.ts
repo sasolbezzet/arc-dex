@@ -3,6 +3,7 @@ import { ARC_MAINNET_ADD_PARAMS, ARC_MAINNET_CHAIN_ID, ARC_MAINNET_EXPLORER_TX }
 import { encodeAbiParameters, encodeFunctionData, erc20Abi, parseAbiParameters, parseSignature, parseUnits } from 'viem'
 import { findConnectedWalletProvider, normalizeWalletProvider, type Eip1193Provider } from '../walletProvider'
 import { isEmptyContractCode, isEmptyRpcData, requiredPositiveUint, rpcUint } from '../utils/rpcQuantity'
+import { revertReasonFromError, withWalletTimeout } from './txPreflight'
 
 const API = ''
 const ARC_CHAIN_ID = 5042
@@ -134,30 +135,8 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
     }
     for (const leg of prepared.legs || []) {
       if (leg.executionParams && leg.signature && prepared.adapterContract) {
-        // Stablecoin service leg: approve + execute adapter
-        const tokenInput = await buildTokenInput({
-          ethereum,
-          owner: from,
-          spender: prepared.adapterContract,
-          token: leg.tokenInAddress,
-          tokenSymbol: leg.tokenIn,
-          amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
-        })
-        if (tokenInput.approvalTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: tokenInput.approvalTx })
-        if (tokenInput.permitType === 1) steps.push({ name: `Permit ${leg.tokenIn}`, state: 'success' })
-        const executeData = encodeFunctionData({
-          abi: ADAPTER_EXECUTE_ABI,
-          functionName: 'execute',
-          args: [normalizeExecutionParams(leg.executionParams), [{
-            permitType: tokenInput.permitType,
-            token: leg.tokenInAddress,
-            amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
-            permitCalldata: tokenInput.permitCalldata,
-          }], leg.signature],
-        })
-        const swapTx = await sendBufferedTx(ethereum, { from, to: prepared.adapterContract, data: executeData, value: '0x0' })
-        await waitForReceipt(ethereum, swapTx)
-        steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
+        // Stablecoin service leg: preflight → permit/approve → execute adapter
+        await runAdapterLeg({ ethereum, owner: from, spender: prepared.adapterContract, leg, steps })
       } else if (leg.provider === 'arcox-amm') {
         // AMM leg: approve the registered pool, then call pool.swap directly.
         const tokenInInfo = tokenMap[leg.tokenIn]
@@ -195,30 +174,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   }
   const steps: any[] = []
   for (const leg of prepared.legs) {
-    const tokenInput = await buildTokenInput({
-      ethereum,
-      owner: from,
-      spender: prepared.adapterContract,
-      token: leg.tokenInAddress,
-      tokenSymbol: leg.tokenIn,
-      amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
-    })
-    if (tokenInput.approvalTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: tokenInput.approvalTx })
-    if (tokenInput.permitType === 1) steps.push({ name: `Permit ${leg.tokenIn}`, state: 'success' })
-
-    const executeData = encodeFunctionData({
-      abi: ADAPTER_EXECUTE_ABI,
-      functionName: 'execute',
-      args: [normalizeExecutionParams(leg.executionParams), [{
-        permitType: tokenInput.permitType,
-        token: leg.tokenInAddress,
-        amount: requiredPositiveUint(leg.amountBaseUnits, 'swap amount'),
-        permitCalldata: tokenInput.permitCalldata,
-      }], leg.signature],
-    })
-    const swapTx = await sendBufferedTx(ethereum, { from, to: prepared.adapterContract, data: executeData, value: '0x0' })
-    await waitForReceipt(ethereum, swapTx)
-    steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
+    await runAdapterLeg({ ethereum, owner: from, spender: prepared.adapterContract, leg, steps })
   }
   const txHash = steps.filter(step => step.name.includes('→')).at(-1)?.txHash || ''
   return {
@@ -257,8 +213,10 @@ async function buildTokenInput(args: {
   token: string
   tokenSymbol: string
   amount: bigint
+  /** Paksa jalur approve ERC-20; dipakai saat permit ditandatangani tapi ditolak adapter. */
+  skipPermit?: boolean
 }) {
-  if (args.tokenSymbol === 'USDC') {
+  if (args.tokenSymbol === 'USDC' && !args.skipPermit) {
     try {
       const nonceData = encodeFunctionData({
         abi: [{ type: 'function', name: 'nonces', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] }],
@@ -413,6 +371,77 @@ async function readTokenBalance(ethereum: Eip1193Provider, owner: string, token:
   return rpcUint(result, 'token balance')
 }
 
+/**
+ * Simulasi calldata `execute` lewat wallet sebelum dikirim.
+ *
+ * Mengembalikan alasan revert bila revert-nya bisa dibaca, dan `null` bila
+ * simulasi tidak konklusif (mis. wallet tidak mendukung `eth_call`). Pemanggil
+ * hanya memblokir pengiriman ketika alasan revert benar-benar terbaca,
+ * sehingga jalur yang selama ini berhasil tidak ikut diregresikan.
+ */
+async function simulateExecute(ethereum: Eip1193Provider, from: string, to: string, data: `0x${string}`): Promise<string | null> {
+  try {
+    await withWalletTimeout(ethereum.request({ method: 'eth_call', params: [{ from, to, data }, 'latest'] }), 'Simulasi swap')
+    return null
+  } catch (error: any) {
+    const decoded = revertReasonFromError(error)
+    if (decoded) return decoded
+    if (/tidak merespons/.test(String(error?.message || ''))) return String(error.message)
+    // Sebagian wallet hanya mengirim pesan "execution reverted: <alasan>" tanpa
+    // data revert mentah; alasan itu tetap berguna untuk pengguna.
+    const text = String(error?.shortMessage || error?.message || '')
+    const match = text.match(/execution reverted:?\s*(.+)/i)
+    return match ? match[1].trim().slice(0, 160) : null
+  }
+}
+
+/**
+ * Jalankan satu leg adapter Stablecoin Service: preflight → permit/approve →
+ * execute. Fallback permit→approve dipakai bila wallet menandatangani permit
+ * tetapi adapter tetap menolaknya; jalur approve + `permitType: 0` inilah yang
+ * sudah terbukti lolos di `scripts/e2e-eoa-swap-mainnet.mjs`.
+ */
+async function runAdapterLeg(args: {
+  ethereum: Eip1193Provider
+  owner: string
+  spender: string
+  leg: any
+  steps: any[]
+}): Promise<string> {
+  const { ethereum, owner, spender, leg, steps } = args
+  const amount = requiredPositiveUint(leg.amountBaseUnits, 'swap amount')
+  const encodeExecute = (tokenInput: { permitType: number; permitCalldata: string }) => encodeFunctionData({
+    abi: ADAPTER_EXECUTE_ABI,
+    functionName: 'execute',
+    args: [normalizeExecutionParams(leg.executionParams), [{
+      permitType: tokenInput.permitType,
+      token: leg.tokenInAddress,
+      amount,
+      permitCalldata: tokenInput.permitCalldata,
+    }], leg.signature],
+  } as any) as `0x${string}`
+
+  const tokenArgs = { ethereum, owner, spender, token: leg.tokenInAddress, tokenSymbol: leg.tokenIn, amount }
+  let tokenInput = await buildTokenInput(tokenArgs)
+  let executeData = encodeExecute(tokenInput)
+  let revert = await simulateExecute(ethereum, owner, spender, executeData)
+  if (revert && tokenInput.permitType === 1) {
+    tokenInput = await buildTokenInput({ ...tokenArgs, skipPermit: true })
+    executeData = encodeExecute(tokenInput)
+    revert = await simulateExecute(ethereum, owner, spender, executeData)
+  }
+  if (tokenInput.approvalTx) steps.push({ name: `Approve ${leg.tokenIn}`, state: 'success', txHash: tokenInput.approvalTx })
+  else if (tokenInput.permitType === 1) steps.push({ name: `Permit ${leg.tokenIn}`, state: 'success' })
+
+  if (revert) {
+    throw new Error(`Simulasi swap ${leg.tokenIn} → ${leg.tokenOut} gagal sebelum dikirim ke wallet: ${revert}`)
+  }
+  const swapTx = await sendBufferedTx(ethereum, { from: owner, to: spender, data: executeData, value: '0x0' })
+  await waitForReceipt(ethereum, swapTx)
+  steps.push({ name: `${leg.tokenIn} → ${leg.tokenOut}`, state: 'success', txHash: swapTx, amountOut: leg.amountOut })
+  return swapTx
+}
+
 function normalizeExecutionParams(params: any) {
   return {
     instructions: (params?.instructions || []).map((instruction: any) => ({
@@ -450,16 +479,19 @@ async function sendBufferedTx(ethereum: Eip1193Provider, tx: any): Promise<strin
 
 async function bufferedFees(ethereum: Eip1193Provider, tx: any, multiplier: bigint) {
   const out: any = {}
+  // Semua pembacaan lewat provider wallet dibatasi deadline: RPC wallet yang
+  // menggantung sebelumnya membuat alur berhenti sebelum popup konfirmasi
+  // muncul, tanpa error apa pun.
   try {
-    const gasHex = await ethereum.request({ method: 'eth_estimateGas', params: [tx] })
+    const gasHex = await withWalletTimeout(ethereum.request({ method: 'eth_estimateGas', params: [tx] }), 'Estimasi gas')
     out.gas = toHex((rpcUint(gasHex, 'estimated gas') * 13n) / 10n + 10_000n)
   } catch {}
   try {
-    const block = await ethereum.request({ method: 'eth_getBlockByNumber', params: ['latest', false] })
+    const block = await withWalletTimeout(ethereum.request({ method: 'eth_getBlockByNumber', params: ['latest', false] }), 'Pembacaan blok')
     const baseFee = block?.baseFeePerGas ? rpcUint(block.baseFeePerGas, 'base fee', true) : 0n
     if (baseFee > 0n) {
       let tip = 0n
-      try { tip = rpcUint(await ethereum.request({ method: 'eth_maxPriorityFeePerGas' }), 'priority fee', true) } catch {}
+      try { tip = rpcUint(await withWalletTimeout(ethereum.request({ method: 'eth_maxPriorityFeePerGas' }), 'Priority fee'), 'priority fee', true) } catch {}
       if (tip < 1_500_000n) tip = 1_500_000n
       out.maxPriorityFeePerGas = toHex(tip)
       out.maxFeePerGas = toHex(baseFee * multiplier + tip * 2n)
@@ -467,7 +499,7 @@ async function bufferedFees(ethereum: Eip1193Provider, tx: any, multiplier: bigi
     }
   } catch {}
   try {
-    const gasPrice = rpcUint(await ethereum.request({ method: 'eth_gasPrice' }), 'gas price')
+    const gasPrice = rpcUint(await withWalletTimeout(ethereum.request({ method: 'eth_gasPrice' }), 'Gas price'), 'gas price')
     out.gasPrice = toHex(gasPrice * multiplier)
   } catch {}
   return out
