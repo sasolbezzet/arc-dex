@@ -400,8 +400,11 @@ async function simulateExecute(ethereum: Eip1193Provider, from: string, to: stri
  * execute. Fallback permit→approve dipakai bila wallet menandatangani permit
  * tetapi adapter tetap menolaknya; jalur approve + `permitType: 0` inilah yang
  * sudah terbukti lolos di `scripts/e2e-eoa-swap-mainnet.mjs`.
+ *
+ * Diekspor supaya urutan preflight/fallback-nya bisa diuji langsung tanpa
+ * memanggil backend atau wallet sungguhan (`swapPreflight.test.ts`).
  */
-async function runAdapterLeg(args: {
+export async function runAdapterLeg(args: {
   ethereum: Eip1193Provider
   owner: string
   spender: string
