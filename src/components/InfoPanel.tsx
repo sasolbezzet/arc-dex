@@ -8,6 +8,7 @@ import { ChainLogo, TokenLogo } from './CompactPickers'
 import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletProvider'
 import { rpcUint } from '../utils/rpcQuantity'
 import { acquireMintLock, releaseMintLock } from '../services/autoMintWorker'
+import { WebhookInboxPanel } from './WebhookInboxPanel'
 const EXPLORER = 'https://explorer.arc.io'
 const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const INITIAL_FEE_MULTIPLIER = 3n
@@ -371,6 +372,7 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
           <div style={{color:'#64748b',fontSize:12,textAlign:'center',padding:'12px 0'}}>{t('info.noHistory')}</div>
         ):filteredHistory.slice(0,30).map(rec=><HistoryRow key={rec.id} rec={rec} />)}
       </div>
+      <WebhookInboxPanel />
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🌐 Arc Mainnet</div>
         {[['Chain ID','5042'],['Finality','⚡ Sub-second'],['Gas token','USDC'],['RPC','Private backend proxy']].map(([k,v])=>(
