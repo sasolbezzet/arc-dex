@@ -9,7 +9,7 @@
 //              (Circle Orbit Forwarder relay attestation ke on-chain)
 
 import { AppKit, SwapChain, TransferSpeed } from '@circle-fin/app-kit'
-import { Arbitrum, Base, Ethereum, Solana, resolveChainIdentifier } from '@circle-fin/bridge-kit'
+import { Solana, resolveChainIdentifier } from '@circle-fin/bridge-kit'
 import { ViemAdapter } from '@circle-fin/adapter-viem-v2'
 import { SolanaKitAdapter } from '@circle-fin/adapter-solana-kit'
 import { address as solanaAddress, compileTransaction, createSolanaRpc, getBase58Decoder, getBase64EncodedWireTransaction } from '@solana/kit'
@@ -21,6 +21,7 @@ import { ARC_MAINNET_ADD_PARAMS, ARC_MAINNET_CHAIN_ID, ARC_MAINNET_RPC_URLS, swi
 import { getArcToken } from './domain/tokens'
 import { findChain } from './chains'
 import { findConnectedWalletProvider, getWalletProvider, normalizeWalletProvider } from './walletProvider'
+import { evmAdapterCapabilities } from './services/appKitCapabilities'
 import { unifiedBalanceShortfallError, type UnifiedBalanceShortfall } from './services/unifiedBalanceErrors'
 
 declare global {
@@ -114,19 +115,9 @@ export function detectSolanaKind(): 'solflare' | 'phantom' | null {
   return _solanaKind
 }
 
-// Circle AppKit v1.8.1 hard-codes Arc's rate-limited public endpoint.
+// Circle AppKit v1.8.1 hard-codes Arc's rate-limited public endpoint, jadi RPC
+// publik Arc selalu lewat proxy kita (lihat `publicRpcUrls`).
 const ARC_RPC_PROXY = new URL('/api/rpc/arc', window.location.origin).href
-
-// Circle App Kit/Bridge Kit sejak 1.15.x mengekspor Arc mainnet (`Arc`, judul
-// "Arc Mainnet") sesuai docs.arc.io/app-kit, jadi jalur SDK memakai chain Arc
-// resmi. Chain lokal di bawah tetap dipakai untuk adapter/wallet switch agar
-// RPC browser selalu lewat proxy kita.
-const ARC_MAINNET_APPKIT = defineChain({
-  id: 5042,
-  name: 'Arc Mainnet',
-  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: { default: { http: [ARC_RPC_PROXY] } },
-})
 
 // Gateway/Unified Balance mainnet mendukung Arc sama seperti Base/Ethereum/
 // Arbitrum (domain Arc 26, diverifikasi lewat GET https://gateway-api.circle.com/v1/info).
@@ -205,7 +196,7 @@ export async function buildEvmAdapter() {
   const provider = await findConnectedWalletProvider()
   if (!provider) throw new Error('Wallet EVM tidak terdeteksi.')
   const normalizedProvider = normalizeWalletProvider(provider)
-  const capabilities = { addressContext: 'user-controlled' as const, supportedChains: [ARC_MAINNET_APPKIT, Base, Ethereum, Arbitrum] as any[] }
+  const capabilities = evmAdapterCapabilities()
   return new ViemAdapter({
     getWalletClient: async ({ chain }: any) => {
       const safeChain = normalizeViemChain(chain)
@@ -235,7 +226,7 @@ export async function buildEvmAdapter() {
         transport: fallback(rpcUrls.map(url => http(url, { timeout: 10_000, retryCount: 1 }))),
       })
     },
-  }, capabilities as any)
+  }, capabilities)
 }
 
 function normalizeViemChain(chain: any) {
