@@ -21,6 +21,19 @@ export type TxRecord = {
   error?: string
   note?: string
   owner?: string
+  // Agent Wallet (MSCA) bridge rows come from the backend bridge history and
+  // carry the settlement/auto-mint metadata below.
+  approvalId?: string
+  agent?: string
+  walletAddress?: string
+  fromChainKey?: string
+  toChainKey?: string
+  settlementStatus?: string
+  settlementPhase?: string
+  safeToRetry?: boolean
+  pendingMint?: boolean
+  sourceApprovalUserOpHash?: string
+  destinationUserOpHash?: string
 }
 
 type ChainName = string

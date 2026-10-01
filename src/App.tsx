@@ -16,6 +16,7 @@ import { PaySandbox } from './components/PaySandbox'
 
 import { IntelPanel } from './components/IntelPanel'
 import { UnifiedBalancePanel } from './components/UnifiedBalancePanel'
+import { MultiChainBalances } from './components/MultiChainBalances'
 import { AiRouterPanel } from './components/AiRouterPanel'
 // PluginPanel is deprecated and intentionally not rendered — see the header
 // comment in src/components/PluginPanel.tsx. PluginPage owns the Plugin route.
@@ -615,6 +616,21 @@ function PortfolioPage({ address, circleWallet, balances, eoaBalances, balanceLo
         {balanceLoading.circle && <p className='pay-muted'>{t('portfolio.refreshCircle')}</p>}
         {balanceError.circle && <div className='inline-error'>{balanceError.circle}</div>}
       </section>
+      {circleWallet?.address && (
+        <section className='portfolio-section'>
+          <div className='portfolio-section-head'>
+            <div>
+              <h3>{t('info.agentWalletChains')}</h3>
+              {/* The Circle section above is the Arc balance only. Without this
+                  per-chain read, an empty Base wallet looked like a balance that
+                  the frontend failed to detect. */}
+              <p>{t('portfolio.agentChainsCopy')}</p>
+            </div>
+            <span>{t('portfolio.chainCount', { count: 4 })}</span>
+          </div>
+          <MultiChainBalances walletAddress={circleWallet.address} />
+        </section>
+      )}
       <section className='portfolio-section'>
         <div className='portfolio-section-head'>
           <div>

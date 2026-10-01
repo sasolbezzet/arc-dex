@@ -9,6 +9,8 @@ import { findConnectedWalletProvider, normalizeWalletProvider } from '../walletP
 import { rpcUint } from '../utils/rpcQuantity'
 import { acquireMintLock, releaseMintLock } from '../services/autoMintWorker'
 import { WebhookInboxPanel } from './WebhookInboxPanel'
+import { MultiChainBalances } from './MultiChainBalances'
+import { filterHistory, type HistoryChainFilter, type HistoryStatusFilter } from '../services/historyFilters'
 const EXPLORER = 'https://explorer.arc.io'
 const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const INITIAL_FEE_MULTIPLIER = 3n
@@ -36,7 +38,11 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
   const [copiedReceipt, setCopiedReceipt] = useState(false)
   const color = rec.status === 'success' ? '#10b981' : rec.status === 'error' ? '#f87171' : '#f59e0b'
   const icon = rec.status === 'success' ? '✓' : rec.status === 'error' ? '✗' : '⏳'
-  const canRetry = Boolean((rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana' && rec.status !== 'success')
+  // Agent-driven bridges (source 'agent-mcp') are settled by the MSCA auto-mint
+  // worker / arcox_retry_bridge_mint. Offering a MetaMask receiveMessage here
+  // would race that worker and could report a false failure, so those rows only
+  // show the settlement hint below.
+  const canRetry = Boolean((rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana' && rec.status !== 'success' && rec.source !== 'agent-mcp')
   const short = (value?: string) => value ? `${value.slice(0, 10)}...${value.slice(-6)}` : '-'
   const action = rec.action || 'bridge'
   const evmRequest = async (request: { method: string; params?: unknown[] | object }) => {
@@ -210,6 +216,23 @@ function HistoryRow({ rec }: { rec: TxRecord }) {
             <span style={{ color: '#64748b' }}>{t('info.domain')}</span>
             <span style={{ fontFamily: 'monospace' }}>{rec.srcDomain} → {rec.dstDomain}</span>
           </div>}
+          {rec.agent && (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#64748b' }}>{t('info.agent')}</span>
+              <span style={{ color: '#c7d2fe', fontFamily: 'monospace', fontSize: 11 }}>{rec.agent}</span>
+            </div>
+          )}
+          {rec.settlementPhase && (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#64748b' }}>{t('info.settlement')}</span>
+              <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{rec.settlementPhase}{rec.settlementStatus ? ` · ${rec.settlementStatus}` : ''}</span>
+            </div>
+          )}
+          {rec.pendingMint && (
+            <div style={{ color: '#f59e0b', fontSize: 11 }}>
+              {rec.safeToRetry ? t('info.pendingMintRetryable') : t('info.pendingMintAuto')}
+            </div>
+          )}
           {rec.error && <div style={{ color: '#f87171', fontSize: 11 }}>{rec.error}</div>}
           {retryError && <div style={{ color: '#f87171', fontSize: 11 }}>{retryError}</div>}
           {rec.note && <div style={{ color: '#94a3b8', fontSize: 11, whiteSpace: 'pre-wrap' }}>{rec.note}</div>}
@@ -232,6 +255,8 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
   const [copied, setCopied] = useState<string|null>(null)
   const [history, setHistory] = useState<TxRecord[]>(() => txHistory.list())
   const [historyFilter, setHistoryFilter] = useState<'all'|'pending'|'bridge'|'swap'|'send'|'agent'>('all')
+  const [historyChain, setHistoryChain] = useState<HistoryChainFilter>('all')
+  const [historyStatus, setHistoryStatus] = useState<HistoryStatusFilter>('all')
   const [solanaAddress, setSolanaAddress] = useState<string|null>(null)
   const [solanaUsdc, setSolanaUsdc] = useState('0')
   useEffect(() => {
@@ -278,12 +303,8 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
   ]
   const pending = history.filter(rec => rec.status !== 'success')
   const retryable = history.filter(rec => (rec.action || 'bridge') === 'bridge' && rec.burnTx && rec.to !== 'Solana' && rec.status !== 'success')
-  const filteredHistory = history.filter(rec => {
-    if (historyFilter === 'all') return true
-    if (historyFilter === 'pending') return rec.status !== 'success'
-    if (historyFilter === 'agent') return rec.source === 'agent-mcp'
-    return (rec.action || 'bridge') === historyFilter
-  })
+  const filteredHistory = filterHistory(history, { kind: historyFilter, chain: historyChain, status: historyStatus })
+  const historyFilterActive = historyFilter !== 'all' || historyChain !== 'all' || historyStatus !== 'all'
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       {circleWallet&&(
@@ -327,6 +348,15 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
           <button onClick={connectSolana} style={{width:'100%',background:'rgba(167,139,250,0.15)',color:'#a78bfa',border:'1px solid rgba(167,139,250,0.4)',padding:'8px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600}}>{t('bridge.connectSolana')}</button>
         )}
       </div>
+      {circleWallet?.address && (
+        <div className='glass' style={{borderRadius:12,padding:'14px'}}>
+          <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>🔗 {t('info.agentWalletChains')}</div>
+          {/* Base/Arbitrum/Ethereum balances of the Agent Wallet live here: the
+              Arc-only panel below never showed them, so an empty Base wallet
+              looked like a failed balance read. */}
+          <MultiChainBalances walletAddress={circleWallet.address} />
+        </div>
+      )}
       <div className='glass' style={{borderRadius:12,padding:14}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10,color:'#e2e8f0'}}>💰 {t('info.allBalances')}</div>
         {tokens.map(t=>(
@@ -367,6 +397,19 @@ export function InfoPanel({ address, circleWallet, balances, eoaBalances, onRefr
           {(['all','pending','bridge','swap','send','agent'] as const).map(filter=>(
             <button key={filter} onClick={()=>setHistoryFilter(filter)} style={{fontSize:11,textTransform:'capitalize',background:historyFilter===filter?'rgba(99,102,241,0.22)':'rgba(18,18,26,0.8)',color:historyFilter===filter?'#c7d2fe':'#94a3b8',border:historyFilter===filter?'1px solid rgba(99,102,241,0.55)':'1px solid #1e1e2e',padding:'5px 8px',borderRadius:8,cursor:'pointer'}}>{filter}</button>
           ))}
+        </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
+          <select aria-label={t('info.filterChain')} value={historyChain} onChange={e=>setHistoryChain(e.target.value as HistoryChainFilter)} style={{fontSize:11,background:'rgba(18,18,26,0.8)',color:'#cbd5e1',border:'1px solid #1e1e2e',padding:'5px 8px',borderRadius:8,cursor:'pointer'}}>
+            <option value='all'>{t('info.allChains')}</option>
+            {(['Arc','Base','Arbitrum','Ethereum'] as const).map(chain=><option key={chain} value={chain}>{chain}</option>)}
+          </select>
+          <select aria-label={t('info.filterStatus')} value={historyStatus} onChange={e=>setHistoryStatus(e.target.value as HistoryStatusFilter)} style={{fontSize:11,background:'rgba(18,18,26,0.8)',color:'#cbd5e1',border:'1px solid #1e1e2e',padding:'5px 8px',borderRadius:8,cursor:'pointer'}}>
+            <option value='all'>{t('info.allStatuses')}</option>
+            <option value='pending'>{t('info.statusPending')}</option>
+            <option value='success'>{t('info.statusSuccess')}</option>
+            <option value='error'>{t('info.statusError')}</option>
+          </select>
+          {historyFilterActive && <span style={{color:'#64748b',fontSize:11}}>{t('info.showingCount', { count: filteredHistory.length })}</span>}
         </div>
         {filteredHistory.length===0?(
           <div style={{color:'#64748b',fontSize:12,textAlign:'center',padding:'12px 0'}}>{t('info.noHistory')}</div>

@@ -28,10 +28,38 @@ const TOKENS = ['USDC', 'ETH', 'EURC'] as const
 type ChainKey = typeof CHAIN_KEYS[number]
 type Token = typeof TOKENS[number]
 
+interface ChainBalanceData {
+  USDC?: string | null
+  EURC?: string | null
+  USYC?: string | null
+  cirBTC?: string | null
+  /** Native gas token (18 decimals on EVM chains). */
+  nativeBalance?: string | null
+  nativeSymbol?: string | null
+  status?: string
+  errors?: string[]
+}
+
 interface Balance {
-  [chainKey: string]: {
-    [token: string]: string
+  [chainKey: string]: ChainBalanceData | undefined
+}
+
+/**
+ * Read one displayed asset from the /api/multi-balance payload. ERC-20 tokens
+ * live in flat keys (USDC/EURC), while the gas token only exists as
+ * nativeBalance: Base/Arbitrum ETH would otherwise silently render 0.
+ * An absent key means the token is not deployed on that chain, which must be
+ * distinguishable from a real zero balance.
+ */
+export function chainTokenValue(chain: ChainBalanceData | undefined, token: Token): { value: string | undefined; supported: boolean } {
+  if (!chain) return { value: undefined, supported: false }
+  if (token === 'ETH') {
+    const symbol = String(chain.nativeSymbol || '').trim().toUpperCase()
+    if (symbol !== 'ETH') return { value: undefined, supported: false }
+    return { value: chain.nativeBalance ?? '0', supported: true }
   }
+  if (!(token in chain)) return { value: undefined, supported: false }
+  return { value: (chain as unknown as Record<string, string | null>)[token] ?? undefined, supported: true }
 }
 
 interface Props {
@@ -122,9 +150,14 @@ export function MultiChainBalances({ walletAddress }: Props) {
   for (const token of TOKENS) {
     totalByToken[token] = '0'
     for (const chainKey of CHAIN_KEYS) {
-      totalByToken[token] = addDecimals(totalByToken[token], balances[chainKey]?.[token])
+      const entry = chainTokenValue(balances[chainKey], token)
+      if (!entry.supported) continue
+      totalByToken[token] = addDecimals(totalByToken[token], entry.value)
     }
   }
+  const activeChainError = balances[activeChain]?.status && balances[activeChain]?.status !== 'ok' && balances[activeChain]?.status !== 'partial'
+    ? (balances[activeChain]?.errors?.[0] || t('balance.noChainBalance'))
+    : ''
 
   const copyAddress = async () => {
     try {
@@ -225,8 +258,14 @@ export function MultiChainBalances({ walletAddress }: Props) {
                     {CHAIN_NAMES[key]}
                   </span>
                 </div>
-                <div style={{ color: selected ? accent : '#64748b', fontSize: 10, marginTop: 5 }}>
-                  {selected ? t('balance.selected') : t('balance.viewBalance')}
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6, marginTop: 5 }}>
+                  <span style={{ color: selected ? accent : '#64748b', fontSize: 10 }}>
+                    {selected ? t('balance.selected') : t('balance.viewBalance')}
+                  </span>
+                  {/* Always show the USDC figure so an empty chain reads as a real 0 instead of a missing balance. */}
+                  <span title={`USDC ${formatBalance(chainTokenValue(balances[key], 'USDC').value, 'USDC', true)}`} style={{ color: normalizeDecimal(chainTokenValue(balances[key], 'USDC').value) === '0' ? '#64748b' : (selected ? accent : '#cbd5e1'), fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    {chainTokenValue(balances[key], 'USDC').supported ? `${formatBalance(chainTokenValue(balances[key], 'USDC').value, 'USDC', true)} USDC` : '—'}
+                  </span>
                 </div>
               </button>
             )
@@ -246,21 +285,33 @@ export function MultiChainBalances({ walletAddress }: Props) {
           </div>
           {loading && <span style={{ color: activeAccent, fontSize: 10, whiteSpace: 'nowrap' }}>{t('balance.updating')}</span>}
         </div>
-        {error && (
+        {(error || activeChainError) && (
           <div role='alert' style={{ marginBottom: 9, padding: '8px 10px', borderRadius: 8, color: '#fca5a5', background: 'rgba(127,29,29,0.22)', border: '1px solid rgba(248,113,113,0.24)', fontSize: 11, lineHeight: 1.35 }}>
-            {error}
+            {error || activeChainError}
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 7 }}>
-          {TOKENS.map(token => (
-            <div key={token} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0, padding: '9px 10px', borderRadius: 8, background: 'rgba(30,41,59,0.55)' }}>
-              <span style={{ color: '#94a3b8', fontSize: 11, fontWeight: 600 }}>{token}</span>
-              <span title={balances[activeChain]?.[token] || '0'} style={{ minWidth: 0, color: '#f8fafc', fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontVariantNumeric: 'tabular-nums', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {formatBalance(balances[activeChain]?.[token], token)}
-              </span>
-            </div>
-          ))}
+          {TOKENS.map(token => {
+            const entry = chainTokenValue(balances[activeChain], token)
+            const isNative = token === 'ETH' && entry.supported
+            const zero = entry.supported && normalizeDecimal(entry.value) === '0'
+            return (
+              <div key={token} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0, padding: '9px 10px', borderRadius: 8, background: 'rgba(30,41,59,0.55)' }}>
+                <span style={{ color: '#94a3b8', fontSize: 11, fontWeight: 600 }}>
+                  {token}
+                  {isNative && <small style={{ color: '#64748b', fontSize: 9, marginLeft: 4 }}>{t('balance.gasToken')}</small>}
+                </span>
+                <span
+                  title={entry.supported ? (zero ? t('balance.emptyChain') : (entry.value || '0')) : t('balance.tokenUnavailable')}
+                  style={{ minWidth: 0, color: entry.supported ? (zero ? '#94a3b8' : '#f8fafc') : '#475569', fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontVariantNumeric: 'tabular-nums', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  {entry.supported ? formatBalance(entry.value, token) : '—'}
+                </span>
+              </div>
+            )
+          })}
         </div>
+        <div style={{ color: '#64748b', fontSize: 10, marginTop: 8 }}>{t('balance.zeroHint')}</div>
       </div>
     </div>
   )
