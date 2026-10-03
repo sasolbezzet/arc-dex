@@ -7,6 +7,23 @@ import { revertReasonFromError, withWalletTimeout } from './txPreflight'
 
 const API = ''
 const ARC_CHAIN_ID = 5042
+
+// Ringkasan chain dari `GET /api/swap/chains` (backend) yang dibutuhkan wallet
+// EOA untuk pindah jaringan: chainId hex, RPC, explorer, dan native currency.
+export type SwapChainMeta = {
+  key: string
+  name: string
+  /** True untuk chain Arc yang sedang aktif (wallet Circle-nya sudah dimuat App). */
+  active?: boolean
+  chainId: number
+  chainIdHex: string
+  rpcUrls: string[]
+  explorerUrl: string
+  circleWalletSupported?: boolean
+  nativeCurrency?: { name?: string; symbol?: string; decimals?: number }
+  tokens?: Record<string, { address: string; decimals: number | null }>
+}
+
 const ADAPTER_EXECUTE_ABI = [{
   type: 'function',
   name: 'execute',
@@ -57,25 +74,33 @@ const ADAPTER_EXECUTE_ABI = [{
   outputs: [],
 }] as const
 
-export async function quoteCircleSwap(args: {
-  metamaskAddress: string | null
-  tokenIn: string
-  tokenOut: string
-  amountIn: string
-}) {
+type SwapTokenArgs = { tokenIn: string; tokenOut: string; amountIn: string; chain?: string }
+
+/** Info token dari payload prepare (symbol maupun paste CA). */
+function preparedTokenInfo(prepared: any, side: 'tokenIn' | 'tokenOut', fallback?: { address: string; decimals: number }) {
+  const payload = prepared?.tokens?.[side]
+  const address = String(payload?.address || fallback?.address || '')
+  const decimals = Number.isInteger(payload?.decimals) ? payload.decimals : fallback?.decimals
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address) || !Number.isInteger(decimals)) return null
+  return { address: address as `0x${string}`, decimals: decimals as number }
+}
+
+/** Link explorer transaksi mengikuti chain dari respons prepare (bukan Arc-only). */
+function explorerTxUrl(prepared: any, txHash: string) {
+  if (!txHash) return ''
+  const base = String(prepared?.explorerUrl || ARC_MAINNET_EXPLORER_TX).replace(/\/+$/, '')
+  return `${base}/tx/${txHash}`
+}
+
+export async function quoteCircleSwap(args: { metamaskAddress: string | null } & SwapTokenArgs) {
   return safePost(API, '/api/quote', args)
 }
 
-export async function swapFromCircleWallet(args: {
-  metamaskAddress: string
-  tokenIn: string
-  tokenOut: string
-  amountIn: string
-}) {
+export async function swapFromCircleWallet(args: { metamaskAddress: string } & SwapTokenArgs) {
   return safePost(API, '/api/swap', args)
 }
 
-export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: string; tokenOut: string; amountIn: string }) {
+export async function swapFromEoa(args: { metamaskAddress: string; chainMeta?: SwapChainMeta } & SwapTokenArgs) {
   const connectedProvider = await findConnectedWalletProvider(args.metamaskAddress)
   if (!connectedProvider) throw new Error('Wallet EOA tidak terdeteksi.')
   const ethereum = normalizeWalletProvider(connectedProvider)
@@ -83,21 +108,27 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
   const from = accounts?.[0]
   if (!from) throw new Error('Wallet EOA belum terhubung.')
   if (from.toLowerCase() !== args.metamaskAddress.toLowerCase()) throw new Error('Wallet aktif berbeda dengan wallet login.')
-  await ensureArcChain(ethereum)
-  const prepared = await safePost(API, '/api/eoa-swap-prepare', args)
+  await ensureEvmChain(ethereum, args.chainMeta)
+  const prepared = await safePost(API, '/api/eoa-swap-prepare', {
+    metamaskAddress: args.metamaskAddress,
+    tokenIn: args.tokenIn,
+    tokenOut: args.tokenOut,
+    amountIn: args.amountIn,
+    chain: args.chain,
+  })
   if ((prepared?.source === 'arcox-amm-router' || prepared?.source === 'arcox-amm-router-2leg') && prepared?.ammRouter) {
+    // Swap AMM on-chain (kini hanya Arc Testnet). Alamat/desimal selalu diambil
+    // dari payload prepare yang chain-aware; map di bawah hanya fallback.
     const tokenMap: Record<string, { address: `0x${string}`; decimals: number }> = {
       USDC: { address: '0x3600000000000000000000000000000000000000', decimals: 6 },
       EURC: { address: '0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1', decimals: 6 },
-      // cirBTC belum ada di Arc mainnet — sengaja tidak dipetakan supaya swap
-      // cirBTC gagal dengan pesan jelas, bukan memanggil alamat kosong.
-
+      cirBTC: { address: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF', decimals: 8 },
     }
     // Single-leg AMM swap (USDC↔cirBTC). The deployed router's swapWithFee
     // double-pulls from the caller, so execute against its registered pool.
     if (prepared?.source === 'arcox-amm-router') {
-      const token = tokenMap[args.tokenIn]
-      const outToken = tokenMap[args.tokenOut]
+      const token = preparedTokenInfo(prepared, 'tokenIn', tokenMap[args.tokenIn])
+      const outToken = preparedTokenInfo(prepared, 'tokenOut', tokenMap[args.tokenOut])
       if (!token || !outToken) throw new Error('Token cirBTC swap tidak dikenal.')
       const amountUnits = parseUnits(String(args.amountIn), token.decimals)
       const swapAmountUnits = parseUnits(String(prepared.ammSwapAmount || prepared.platformFee?.swapAmountIn || args.amountIn), token.decimals)
@@ -118,18 +149,19 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
         tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn,
         grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
         txHash: swapTx, transactionHash: swapTx,
-        explorerUrl: `${ARC_MAINNET_EXPLORER_TX}${swapTx}`,
+        explorerUrl: explorerTxUrl(prepared, swapTx),
         approveTx, feeTx, platformFee: prepared.platformFee,
         raw: { ...prepared, approveTx, feeTx, swapTx },
       }
     }
     // Two-leg AMM route (EURC↔cirBTC via USDC)
     const steps: any[] = []
-    const firstToken = tokenMap[args.tokenIn]
+    const firstToken = preparedTokenInfo(prepared, 'tokenIn', tokenMap[args.tokenIn])
     const feeUnits = prepared.platformFee?.amount && firstToken
       ? parseUnits(String(prepared.platformFee.amount), firstToken.decimals)
       : 0n
     if (feeUnits > 0n) {
+      if (!firstToken) throw new Error('Token input route AMM tidak dikenal.')
       const feeTx = await transferToken(ethereum, from, firstToken.address, prepared.platformFee.treasury, feeUnits)
       steps.push({ name: `Platform fee ${args.tokenIn}`, state: 'success', txHash: feeTx })
     }
@@ -139,8 +171,12 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
         await runAdapterLeg({ ethereum, owner: from, spender: prepared.adapterContract, leg, steps })
       } else if (leg.provider === 'arcox-amm') {
         // AMM leg: approve the registered pool, then call pool.swap directly.
-        const tokenInInfo = tokenMap[leg.tokenIn]
-        const tokenOutInfo = tokenMap[leg.tokenOut]
+        const tokenInInfo = leg.tokenInAddress
+          ? { address: leg.tokenInAddress as `0x${string}`, decimals: tokenMap[leg.tokenIn]?.decimals ?? 6 }
+          : tokenMap[leg.tokenIn]
+        const tokenOutInfo = leg.tokenOutAddress
+          ? { address: leg.tokenOutAddress as `0x${string}`, decimals: tokenMap[leg.tokenOut]?.decimals ?? 8 }
+          : tokenMap[leg.tokenOut]
         if (!tokenInInfo || !tokenOutInfo || !prepared.ammPool) throw new Error(`Token atau AMM pool ${leg.tokenIn}/${leg.tokenOut} tidak dikenal.`)
         const quotedAmountUnits = parseUnits(String(leg.amountIn), tokenInInfo.decimals)
         // Use the actual token balance in case the previous leg produced slightly less (fees, rounding).
@@ -164,7 +200,7 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
       tokenIn: args.tokenIn, tokenOut: args.tokenOut, amountIn: args.amountIn,
       grossAmountIn: args.amountIn, amountOut: prepared.amountOut || '',
       txHash: lastTx, transactionHash: lastTx,
-      explorerUrl: lastTx ? `${ARC_MAINNET_EXPLORER_TX}${lastTx}` : '',
+      explorerUrl: lastTx ? explorerTxUrl(prepared, lastTx) : '',
       platformFee: prepared.platformFee,
       raw: { ...prepared, steps },
     }
@@ -188,13 +224,13 @@ export async function swapFromEoa(args: { metamaskAddress: string; tokenIn: stri
     amountOut: prepared.amountOut || '',
     txHash,
     transactionHash: txHash,
-    explorerUrl: txHash ? `${ARC_MAINNET_EXPLORER_TX}${txHash}` : '',
+    explorerUrl: explorerTxUrl(prepared, txHash),
     raw: { ...prepared, steps },
     platformFee: prepared.platformFee,
   }
 }
 
-export async function quoteEoaSwap(args: { metamaskAddress: string | null; tokenIn: string; tokenOut: string; amountIn: string }) {
+export async function quoteEoaSwap(args: { metamaskAddress: string | null } & SwapTokenArgs) {
   try {
     return await safePost(API, '/api/eoa-swap-quote', args)
   } catch (error) {
@@ -518,16 +554,34 @@ async function waitForReceipt(ethereum: Eip1193Provider, hash: string) {
   throw new Error(`Transaction submitted but not confirmed: ${hash}`)
 }
 
-async function ensureArcChain(ethereum: Eip1193Provider) {
+/**
+ * Pindahkan wallet EOA ke chain swap yang dipilih. Tanpa `chainMeta` (mis.
+ * jalur lama BridgePanel) tetap default Arc Mainnet.
+ */
+async function ensureEvmChain(ethereum: Eip1193Provider, chainMeta?: SwapChainMeta) {
+  const chainId = String(chainMeta?.chainIdHex || ARC_MAINNET_CHAIN_ID).toLowerCase()
+  const addParams = chainMeta
+    ? {
+        chainId: chainMeta.chainIdHex,
+        chainName: chainMeta.name,
+        nativeCurrency: {
+          name: chainMeta.nativeCurrency?.name || 'Ether',
+          symbol: chainMeta.nativeCurrency?.symbol || 'ETH',
+          decimals: chainMeta.nativeCurrency?.decimals ?? 18,
+        },
+        rpcUrls: chainMeta.rpcUrls,
+        blockExplorerUrls: [chainMeta.explorerUrl],
+      }
+    : ARC_MAINNET_ADD_PARAMS
   const current = String(await ethereum.request({ method: 'eth_chainId' })).toLowerCase()
-  if (current !== ARC_MAINNET_CHAIN_ID) {
+  if (current !== chainId) {
     try {
-      await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_MAINNET_CHAIN_ID }] })
+      await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] })
     } catch (error: any) {
       if (error?.code !== 4902 && error?.code !== -32603) throw error
-      await ethereum.request({ method: 'wallet_addEthereumChain', params: [ARC_MAINNET_ADD_PARAMS] })
+      await ethereum.request({ method: 'wallet_addEthereumChain', params: [addParams] })
     }
   }
   const active = String(await ethereum.request({ method: 'eth_chainId' })).toLowerCase()
-  if (active !== ARC_MAINNET_CHAIN_ID) throw new Error(`Wallet chain ${active} is not Arc Mainnet ${ARC_MAINNET_CHAIN_ID}.`)
+  if (active !== chainId) throw new Error(`Wallet chain ${active} tidak cocok dengan ${chainMeta?.name || 'Arc Mainnet'} (${chainId}).`)
 }

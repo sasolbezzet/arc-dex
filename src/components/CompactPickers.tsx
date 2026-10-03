@@ -55,6 +55,38 @@ const CHAIN_META: Record<string,LogoMeta> = {
     mark:'A',
     logo:'https://www.arc.io/favicon.ico',
   },
+  // Kunci dari /api/swap/chains memakai chain key (mis. arc-mainnet), bukan
+  // nama SDK Circle, jadi ikon chain perlu alias agar picker tetap bergambar.
+  'arc-mainnet': {
+    short:'Arc',
+    color:'#0f172a',
+    mark:'A',
+    logo:'https://www.arc.io/favicon.ico',
+  },
+  'arc-testnet': {
+    short:'Arc Testnet',
+    color:'#0f172a',
+    mark:'A',
+    logo:'https://www.arc.io/favicon.ico',
+  },
+  'ethereum-mainnet': {
+    short:'Ethereum',
+    color:'#627eea',
+    mark:'Ξ',
+    logo:'https://cryptologos.cc/logos/ethereum-eth-logo.svg',
+  },
+  'base-mainnet': {
+    short:'Base',
+    color:'#0052ff',
+    mark:'B',
+    logo:'https://icons.llamao.fi/icons/chains/rsz_base.jpg',
+  },
+  'arbitrum-mainnet': {
+    short:'Arbitrum',
+    color:'#28a0f0',
+    mark:'A',
+    logo:'https://cryptologos.cc/logos/arbitrum-arb-logo.svg',
+  },
   Ethereum: {
     short:'Ethereum',
     color:'#627eea',
@@ -116,6 +148,13 @@ export function ChainLogo({ chain, size = 18 }: { chain:string; size?:number }) 
   return <AssetLogo meta={meta} size={size} />
 }
 
+// Token arbitrary (paste CA) ditampilkan singkat supaya tombol picker tidak
+// meluber; simbol biasa dibiarkan apa adanya.
+export function formatTokenLabel(value:string) {
+  if (/^0x[0-9a-fA-F]{40}$/.test(value)) return `${value.slice(0,6)}…${value.slice(-4)}`
+  return value
+}
+
 export function CompactTokenPicker({ value, options, onChange, width = 96 }: { value:string; options:string[]; onChange:(token:string)=>void; width?:number }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -125,7 +164,7 @@ export function CompactTokenPicker({ value, options, onChange, width = 96 }: { v
       <button ref={triggerRef} type='button' onClick={()=>setOpen(v=>!v)} className='input' aria-haspopup='listbox' aria-expanded={open} style={{height:34,width:'100%',padding:'0 7px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:5,cursor:'pointer',fontSize:12}}>
         <span style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}>
           <TokenLogo token={value} size={18} />
-          <span style={{fontWeight:700,fontSize:11,whiteSpace:'nowrap'}}>{value}</span>
+          <span style={{fontWeight:700,fontSize:11,whiteSpace:'nowrap'}}>{formatTokenLabel(value)}</span>
         </span>
         <span style={{color:'#64748b',fontSize:9}}>⌄</span>
       </button>
@@ -135,8 +174,8 @@ export function CompactTokenPicker({ value, options, onChange, width = 96 }: { v
             <button key={t} type='button' role='option' aria-selected={t===value} onClick={()=>{onChange(t);setOpen(false)}} style={{width:'100%',display:'flex',alignItems:'center',gap:7,padding:'8px',borderRadius:7,border:'none',background:t===value?'rgba(99,102,241,0.16)':'transparent',color:'#e2e8f0',cursor:'pointer',textAlign:'left'}}>
               <TokenLogo token={t} size={20} />
               <span style={{display:'flex',flexDirection:'column',lineHeight:1.1}}>
-                <span style={{fontSize:11,fontWeight:700}}>{t}</span>
-                <span style={{fontSize:9,color:'#64748b'}}>{TOKEN_META[t]?.name}</span>
+                <span style={{fontSize:11,fontWeight:700}}>{formatTokenLabel(t)}</span>
+                <span style={{fontSize:9,color:'#64748b'}}>{TOKEN_META[t]?.name || (t.startsWith('0x') ? 'Imported token' : '')}</span>
               </span>
             </button>
           ))}
