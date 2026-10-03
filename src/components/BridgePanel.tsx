@@ -120,9 +120,18 @@ const SOLANA_MINT_CLIENT_VERSION = 'cctp-v2-solana-mint-20260601-09'
 const CCTP_FAST_FINALITY_THRESHOLD = 1000n
 const INITIAL_FEE_MULTIPLIER = 3n
 const MAX_FEE_MULTIPLIER = 4n
-// Fee Router mainnet di-deploy dengan feeBps 500 (5%), jadi default frontend
-// disamakan dengan on-chain; VITE_ARCOX_ROUTER_FEE_BPS tetap bisa menimpanya.
-const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 500)
+// Fee platform off-chain (jalur tanpa Fee Router: Solana / chain tanpa router)
+// sekarang 50 bps = 0,5%. Jalur lewat Fee Router memakai bps immutable milik
+// kontrak, jadi tampilannya dibaca on-chain lewat `feeBps()` (ROUTER_FEE_BPS_SELECTOR)
+// — nilai env tetap dipakai sebagai fallback kalau RPC tidak bisa dihubungi.
+const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 50)
+// keccak256('feeBps()') — getter publik kontrak Fee Router ARCOX.
+const ROUTER_FEE_BPS_SELECTOR = '0x24a9d853'
+const ROUTER_RPC: Record<string,string> = {
+  Arc: 'https://rpc.mainnet.arc.io',
+  Base: 'https://mainnet.base.org',
+  Arbitrum: 'https://arb1.arbitrum.io/rpc',
+}
 
 async function runtimeTreasury(kind: 'evm' | 'solana') {
   const status = await getTreasuryStatus()
@@ -169,6 +178,30 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const [nativeGasEstimate, setNativeGasEstimate] = useState('')
   const [nativeQuote, setNativeQuote] = useState<{estimatedReceive:string;platformFee:string;poolFee:number}|null>(null)
   const [nativeQuoteLoading, setNativeQuoteLoading] = useState(false)
+  const [routerFeeBps, setRouterFeeBps] = useState<number|null>(null)
+
+  // Fee jalur bridge lewat Fee Router diambil dari kontraknya sendiri: `feeBps`
+  // immutable, jadi env tidak bisa mengubahnya. Nilai on-chain ini yang
+  // ditampilkan ke user; env hanya fallback kalau RPC tidak bisa dibaca.
+  useEffect(() => {
+    const routerAddr = ARCOX_ROUTER[fromChain]
+    const rpc = ROUTER_RPC[fromChain]
+    if (!routerAddr || !rpc) { setRouterFeeBps(null); return }
+    let cancelled = false
+    fetch(rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: routerAddr, data: ROUTER_FEE_BPS_SELECTOR }, 'latest'] }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled || !data?.result || data.result === '0x') return
+        const bps = Number(BigInt(data.result))
+        if (Number.isFinite(bps) && bps >= 0 && bps <= 1_000) setRouterFeeBps(bps)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [fromChain])
   const BRIDGE_TOKENS = ['USDC','EURC','cirBTC']
   const [token, setToken] = useState('USDC')
   const [receiveToken, setReceiveToken] = useState<BridgeRegistryToken>('USDC')
@@ -219,8 +252,12 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const cctpFee = amount ? '0.000010' : '-'
   const gatewayForwardingEnabled = false
   const forwardingFee = gatewayForwardingEnabled && (isFromSolana || isToSolana) ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
+  // Tampilan fee jalur router memakai bps kontrak on-chain (immutable), bukan
+  // asumsi env; jalur non-router tetap memakai PLATFORM_FEE_BPS yang dipungut
+  // frontend sendiri.
+  const effectiveFeeBps = routerFeeBps !== null ? routerFeeBps : PLATFORM_FEE_BPS
   const platformFee = amount
-    ? (parseFloat(amount) * (PLATFORM_FEE_BPS / 10000)).toFixed(6)
+    ? (parseFloat(amount) * (effectiveFeeBps / 10000)).toFixed(6)
     : '-'
   const routerFee = !isFromSolana && ARCOX_ROUTER[fromChain] ? platformFee : isFromSolana && token === 'USDC' ? platformFee : '-'
   const platformFeeLabel = isNativeBridgeToken
