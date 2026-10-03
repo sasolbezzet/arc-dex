@@ -121,9 +121,10 @@ const CCTP_FAST_FINALITY_THRESHOLD = 1000n
 const INITIAL_FEE_MULTIPLIER = 3n
 const MAX_FEE_MULTIPLIER = 4n
 // Fee platform off-chain (jalur tanpa Fee Router: Solana / chain tanpa router)
-// sekarang 50 bps = 0,5%. Jalur lewat Fee Router memakai bps immutable milik
-// kontrak, jadi tampilannya dibaca on-chain lewat `feeBps()` (ROUTER_FEE_BPS_SELECTOR)
-// — nilai env tetap dipakai sebagai fallback kalau RPC tidak bisa dihubungi.
+// sekarang 50 bps = 0,5%. Jalur lewat Fee Router memakai bps kontrak yang bisa
+// diubah owner (`setFeeBps`), jadi tampilannya dibaca on-chain lewat `feeBps()`
+// (ROUTER_FEE_BPS_SELECTOR) — nilai env tetap dipakai sebagai fallback kalau RPC
+// tidak bisa dihubungi.
 const PLATFORM_FEE_BPS = Number(import.meta.env.VITE_ARCOX_ROUTER_FEE_BPS || 50)
 // keccak256('feeBps()') — getter publik kontrak Fee Router ARCOX.
 const ROUTER_FEE_BPS_SELECTOR = '0x24a9d853'
@@ -181,8 +182,9 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const [routerFeeBps, setRouterFeeBps] = useState<number|null>(null)
 
   // Fee jalur bridge lewat Fee Router diambil dari kontraknya sendiri: `feeBps`
-  // immutable, jadi env tidak bisa mengubahnya. Nilai on-chain ini yang
-  // ditampilkan ke user; env hanya fallback kalau RPC tidak bisa dibaca.
+  // diubah owner lewat setFeeBps (bukan immutable), jadi env tidak bisa
+  // mengubahnya. Nilai on-chain ini yang ditampilkan ke user; env hanya
+  // fallback kalau RPC tidak bisa dibaca.
   useEffect(() => {
     const routerAddr = ARCOX_ROUTER[fromChain]
     const rpc = ROUTER_RPC[fromChain]
@@ -252,7 +254,7 @@ export function BridgePanel({ address, circleWallet, balances, eoaBalances, onRe
   const cctpFee = amount ? '0.000010' : '-'
   const gatewayForwardingEnabled = false
   const forwardingFee = gatewayForwardingEnabled && (isFromSolana || isToSolana) ? (amount ? (parseFloat(amount)*0.0002).toFixed(6) : '-') : '-'
-  // Tampilan fee jalur router memakai bps kontrak on-chain (immutable), bukan
+  // Tampilan fee jalur router memakai bps kontrak on-chain (owner-set), bukan
   // asumsi env; jalur non-router tetap memakai PLATFORM_FEE_BPS yang dipungut
   // frontend sendiri.
   const effectiveFeeBps = routerFeeBps !== null ? routerFeeBps : PLATFORM_FEE_BPS
